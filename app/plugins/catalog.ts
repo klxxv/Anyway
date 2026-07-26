@@ -1,6 +1,6 @@
-import type { PluginManifest, ThemeManifest } from "./research-types";
+import type { PluginManifest, ThemeManifest } from "../lib/research-types";
 
-export const pluginCatalog: PluginManifest[] = [
+export const builtInPluginCatalog: PluginManifest[] = [
   {
     id: "git-experiments",
     name: "Git Experiments",
@@ -52,7 +52,7 @@ export const pluginCatalog: PluginManifest[] = [
     version: "0.1.0-reserved",
     category: "agent",
     description:
-      "Reserved review-gated agent interface. Agents may propose GraphPatch objects but cannot silently mutate the graph.",
+      "Review-gated agent boundary. Agents may propose GraphPatch objects but cannot mutate the graph.",
     status: "reserved",
     permissions: ["GraphPatch proposal only"],
     capabilities: ["graph.patch.propose", "human.approval.required"],
@@ -71,11 +71,12 @@ export const pluginCatalog: PluginManifest[] = [
   },
 ];
 
-export const themeCatalog: ThemeManifest[] = [
+export const builtInThemeCatalog: ThemeManifest[] = [
   {
     id: "research-light",
     name: "Research Light",
     publisher: "Research Canvas",
+    source: "builtin",
     colors: {
       app: "#eef1f5",
       panel: "#ffffff",
@@ -90,6 +91,7 @@ export const themeCatalog: ThemeManifest[] = [
     id: "midnight-lab",
     name: "Midnight Lab",
     publisher: "Community Themes",
+    source: "builtin",
     colors: {
       app: "#11151d",
       panel: "#171d28",
@@ -104,6 +106,7 @@ export const themeCatalog: ThemeManifest[] = [
     id: "paper-sepia",
     name: "Paper Sepia",
     publisher: "Community Themes",
+    source: "builtin",
     colors: {
       app: "#eee9df",
       panel: "#faf6ed",

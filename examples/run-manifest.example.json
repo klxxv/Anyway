@@ -1,0 +1,17 @@
+{
+  "protocolVersion": "research-canvas-run/1",
+  "projectId": "example-project",
+  "projectRevision": 1,
+  "scenario": {
+    "id": "scenario-example",
+    "name": "Example reviewed scenario",
+    "disabledNodeIds": [],
+    "disabledEdgeIds": [],
+    "nodeOverrides": {},
+    "edgeOverrides": {},
+    "parameters": {
+      "exampleMetricValue": 0.941
+    }
+  },
+  "requestedAt": "2026-07-27T00:00:00.000Z"
+}

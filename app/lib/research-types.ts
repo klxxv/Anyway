@@ -34,7 +34,7 @@ export const EDGE_TYPES = [
 
 export type ResearchEdgeType = (typeof EDGE_TYPES)[number];
 export type ReviewStatus = "draft" | "confirmed" | "disputed" | "deprecated";
-export type EvidenceStatus = "candidate" | "verified" | "disputed";
+export type EvidenceStatus = "candidate" | "confirmed" | "verified" | "disputed";
 
 export interface Provenance {
   origin: "human" | "ai" | "import" | "python";
@@ -96,9 +96,12 @@ export interface EvidenceRecord {
   doi?: string;
   url?: string;
   locator: {
+    fileName?: string;
     page?: number;
     section?: string;
     quote?: string;
+    startOffset?: number;
+    endOffset?: number;
   };
   status: EvidenceStatus;
   provenance: Provenance;
@@ -141,6 +144,10 @@ export interface ProjectState {
   evidence: EvidenceRecord[];
   placements: PlacementRecord[];
   scenarios: ScenarioRecord[];
+  navigation?: {
+    recentNodeIds: string[];
+    pinnedNodeIds: string[];
+  };
   activity: Array<{
     id: string;
     label: string;
@@ -152,6 +159,7 @@ export interface ProjectState {
 export interface GraphSuggestion {
   id: string;
   kind: "node" | "edge";
+  operation?: "add" | "update" | "delete";
   title: string;
   description: string;
   confidence: number;
@@ -247,6 +255,10 @@ export interface ThemeManifest {
   id: string;
   name: string;
   publisher: string;
+  version?: string;
+  description?: string;
+  developer?: string;
+  source?: "builtin" | "myc";
   colors: {
     app: string;
     panel: string;

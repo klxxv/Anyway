@@ -1,6 +1,7 @@
 import resultsJson from "../data/mnist-experiment-results.json";
 import type {
   EvidenceRecord,
+  GraphSuggestion,
   ProjectState,
   ResearchEdge,
   ResearchNode,
@@ -350,3 +351,100 @@ export function createMnistProject(): ProjectState {
 
 export const mnistRunSummary = artifact;
 
+export const mnistSuggestions: GraphSuggestion[] = [
+  {
+    id: "mnist-suggestion-calibration",
+    kind: "node",
+    operation: "add",
+    title: "Add calibration error as a secondary metric",
+    description:
+      "Accuracy alone may hide confidence shifts between the normalized and raw-pixel variants.",
+    confidence: 0.82,
+    rationale: "A second metric would distinguish classification errors from confidence drift.",
+    evidenceLabel: "MNIST run artifact · metric gap · candidate",
+    status: "proposed",
+    node: {
+      type: "metric",
+      title: "Expected calibration error",
+      body: "Secondary metric proposed for each reviewed MNIST variant.",
+      tags: ["mnist", "calibration", "candidate"],
+      status: "draft",
+      evidenceIds: [],
+      data: { role: "secondary-output" },
+      provenance: {
+        origin: "ai",
+        modelId: "mnist-review-helper",
+        promptVersion: "ablation-review-v0.1",
+        sourceRefs: [`commit:${artifact.environment.gitCommit}`],
+      },
+    },
+  },
+  {
+    id: "mnist-suggestion-weight-decay",
+    kind: "node",
+    operation: "add",
+    title: "Represent weight decay as a control",
+    description:
+      "The MLP uses alpha=1e-4 in every run, but this fixed optimization variable is only present in the artifact.",
+    confidence: 0.94,
+    rationale: "A fair ablation should make every held-constant optimization parameter reviewable.",
+    evidenceLabel: `Git commit ${artifact.environment.gitCommit} · training script`,
+    status: "proposed",
+    node: {
+      type: "variable",
+      title: "Weight decay",
+      body: "L2 penalty alpha=1e-4 held constant across all four MNIST runs.",
+      tags: ["control", "optimization"],
+      status: "draft",
+      evidenceIds: [],
+      data: { role: "control", value: 0.0001 },
+      provenance: {
+        origin: "ai",
+        modelId: "mnist-review-helper",
+        promptVersion: "ablation-review-v0.1",
+        sourceRefs: [`commit:${artifact.environment.gitCommit}`],
+      },
+    },
+  },
+  {
+    id: "mnist-suggestion-tanh-edge",
+    kind: "edge",
+    operation: "update",
+    title: "Review the tanh refutation threshold",
+    description:
+      "The current 1.13-point change is treated as refuting unique necessity; the materiality threshold should remain explicit.",
+    confidence: 0.88,
+    rationale: "The edge exists, but its decision rule requires human confirmation.",
+    evidenceLabel: "Replace ReLU with tanh · completed run",
+    status: "proposed",
+    edge: {
+      source: "mnist-activation",
+      target: "mnist-representation",
+      type: "contradicts",
+      directed: true,
+      polarity: "negative",
+      confidence: 0.88,
+      conditions: ["materiality threshold = 1.5 percentage points"],
+      evidenceIds: ["evidence-mnist-tanh"],
+      note: "Candidate update: preserve the explicit refutation decision rule.",
+      experiment: {
+        id: tanh.id,
+        label: tanh.label,
+        metric: "test_accuracy",
+        baseline: baseline.accuracy,
+        value: tanh.accuracy,
+        delta: tanh.deltaAccuracy,
+        outcome: "refutes",
+        status: "completed",
+        commit: artifact.environment.gitCommit,
+        durationSeconds: tanh.durationSeconds,
+      },
+      provenance: {
+        origin: "ai",
+        modelId: "mnist-review-helper",
+        promptVersion: "ablation-review-v0.1",
+        sourceRefs: [`commit:${artifact.environment.gitCommit}`],
+      },
+    },
+  },
+];

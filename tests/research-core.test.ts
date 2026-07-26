@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cloneProject,
+  allShortestPaths,
   compareScenarioReachability,
   computeLayout,
   computeLogicChain,
   detectCycles,
+  evidenceBacklinks,
   exportCsv,
   exportJsonCanvas,
   exportMarkdown,
@@ -17,6 +19,7 @@ import {
 } from "../app/lib/research-core";
 import { initialProject } from "../app/lib/fixtures";
 import { createMnistProject } from "../app/lib/mnist-fixture";
+import { createSocialScienceProject } from "../app/lib/social-fixture";
 import type { ProjectState } from "../app/lib/research-types";
 
 test("BFS is deterministic and returns depth, parent, and tree-edge evidence", () => {
@@ -82,6 +85,29 @@ test("shortest path follows semantic direction and returns stable IDs", () => {
   assert.deepEqual(shortestPath(initialProject, "r1", "q1"), []);
 });
 
+test("all equally short paths and evidence backlinks remain deterministic", () => {
+  const project = cloneProject(initialProject);
+  project.edges.push({
+    id: "parallel-q1-r1",
+    source: "q1",
+    target: "r1",
+    type: "supports",
+    directed: true,
+    polarity: "positive",
+    confidence: 0.8,
+    conditions: [],
+    evidenceIds: ["ev1"],
+    provenance: { origin: "human" },
+  });
+  const paths = allShortestPaths(project, "q1", "r1");
+  const backlinks = evidenceBacklinks(project, "ev1");
+
+  assert.deepEqual(paths, [["q1", "r1"]]);
+  assert.ok(backlinks.nodeIds.includes("q1"));
+  assert.ok(backlinks.edgeIds.includes("parallel-q1-r1"));
+  assert.deepEqual(evidenceBacklinks(project, "missing"), { nodeIds: [], edgeIds: [] });
+});
+
 test("Obsidian JSON Canvas and Markdown exports preserve semantic references", () => {
   const canvas = exportJsonCanvas(initialProject);
   const markdown = exportMarkdown(initialProject);
@@ -141,6 +167,28 @@ test("BP-like propagation ranks normalization above the smaller width ablation",
       Math.abs(influence.scores["mnist-hidden"]),
   );
   assert.ok(influence.strongestEdgeIds.length > 0);
+});
+
+test("social-science acceptance fixture exposes mediation, filtering, cycles, and overlays", () => {
+  const project = createSocialScienceProject();
+  const upstream = traverseGraph(project, {
+    startId: "soc-polarization",
+    strategy: "bfs",
+    direction: "in",
+    maxDepth: 8,
+    edgeTypes: ["causes", "mediates"],
+  });
+  const cycles = detectCycles(project);
+  const diff = compareScenarioReachability(project, "soc-q", "soc-without-homophily");
+
+  assert.equal(project.nodes.length, 20);
+  assert.equal(project.evidence.length, 8);
+  assert.equal(project.scenarios.length, 2);
+  assert.ok(upstream.order.includes("soc-exposure"));
+  assert.ok(upstream.order.includes("soc-homophily"));
+  assert.ok(cycles.some((cycle) => cycle.nodeIds.includes("soc-trust")));
+  assert.ok(diff.disabledNodeIds.includes("soc-homophily"));
+  assert.equal(project.scenarios[1]?.nodeOverrides["soc-polarization"]?.data?.operationalization, "cross-group network distance");
 });
 
 test("indexed BFS handles the 5,000-node / 10,000-edge MVP target", () => {

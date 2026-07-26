@@ -1,0 +1,60 @@
+/* Components consume semantic tokens so declarative .myc themes remain data-only. */
+
+.plugin-theme-active .canvas-toolbar,
+.plugin-theme-active .tool-button,
+.plugin-theme-active .toolbar-button,
+.plugin-theme-active .icon-button,
+.plugin-theme-active .layout-control select,
+.plugin-theme-active .logic-control select,
+.plugin-theme-active .bottom-tabs,
+.plugin-theme-active .traversal-controls,
+.plugin-theme-active .traversal-results > *,
+.plugin-theme-active .algorithm-explanation,
+.plugin-theme-active .research-node,
+.plugin-theme-active .react-flow__minimap,
+.plugin-theme-active input,
+.plugin-theme-active textarea,
+.plugin-theme-active select {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.plugin-theme-active .tool-button:hover:not(:disabled),
+.plugin-theme-active .icon-button:hover:not(:disabled),
+.plugin-theme-active .toolbar-button:hover:not(:disabled),
+.plugin-theme-active .settings-nav button:hover,
+.plugin-theme-active .theme-grid button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.plugin-theme-active .tool-button.primary,
+.plugin-theme-active .primary-button,
+.plugin-theme-active .run-analysis-button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #17202a;
+}
+
+.plugin-theme-active .node-type,
+.plugin-theme-active .node-body,
+.plugin-theme-active .node-meta,
+.plugin-theme-active small,
+.plugin-theme-active .field-label {
+  color: var(--muted);
+}
+
+.plugin-theme-active .bottom-panel,
+.plugin-theme-active .settings-content,
+.plugin-theme-active .plugin-card,
+.plugin-theme-active .plugin-store-feature,
+.plugin-theme-active .display-status-card,
+.plugin-theme-active .readability-preview {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.plugin-theme-active .react-flow__background {
+  opacity: 0.38;
+}

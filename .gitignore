@@ -43,4 +43,8 @@ next-env.d.ts
 /work/
 /.playwright-cli/
 /.claude_resources.json
+/src-tauri/target/
+/src-tauri/gen/
+/plugins/installed/*
+!/plugins/installed/.gitkeep
 *.tsbuildinfo

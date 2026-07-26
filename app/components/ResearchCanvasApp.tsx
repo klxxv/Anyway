@@ -9,6 +9,7 @@ import {
   Handle,
   MarkerType,
   MiniMap,
+  NodeResizer,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -30,6 +31,8 @@ import {
   ArrowUpFromLine,
   Bot,
   Braces,
+  ClipboardCopy,
+  ClipboardPaste,
   Check,
   ChevronDown,
   ChevronRight,
@@ -45,14 +48,18 @@ import {
   GitFork,
   History,
   LayoutDashboard,
+  Languages,
   Link2,
   ListTree,
   Maximize2,
   Network,
   Palette,
+  PackageOpen,
   PanelLeftClose,
   PanelRightClose,
   Plus,
+  Pin,
+  PinOff,
   Redo2,
   RotateCcw,
   Search,
@@ -68,21 +75,40 @@ import {
 } from "lucide-react";
 import {
   cloneProject,
+  allShortestPaths,
   compareScenarioReachability,
   computeLayout,
   computeLogicChain,
   detectCycles,
+  evidenceBacklinks,
   exportCsv,
   exportJsonCanvas,
   exportMarkdown,
   makeId,
   migrateProject,
   propagateInfluence,
+  resolveEdges,
   traverseGraph,
 } from "../lib/research-core";
 import { initialProject, initialSuggestions } from "../lib/fixtures";
-import { createMnistProject, mnistRunSummary } from "../lib/mnist-fixture";
-import { pluginCatalog, themeCatalog } from "../lib/plugins";
+import {
+  createMnistProject,
+  mnistRunSummary,
+  mnistSuggestions,
+} from "../lib/mnist-fixture";
+import { createSocialScienceProject } from "../lib/social-fixture";
+import { normalizeLocale, translate, type Locale, type MessageKey } from "../i18n/catalog";
+import { builtInPluginCatalog, builtInThemeCatalog } from "../plugins/catalog";
+import {
+  isMycFileName,
+  normalizeInstalledTheme,
+  type InstalledMycPlugin,
+} from "../plugins/contracts";
+import {
+  installMycPlugin,
+  listInstalledMycPlugins,
+  listenForMycDrops,
+} from "../plugins/tauri-client";
 import {
   EDGE_TYPES,
   LAYOUT_MODES,
@@ -116,6 +142,10 @@ type CanvasNodeData = {
   chainState?: "effective" | "evidence" | "refutation";
   annotation?: string;
   influence?: number;
+  collapsed?: boolean;
+  pinned?: boolean;
+  onResizeStart?: () => void;
+  onResizeEnd?: () => void;
 };
 
 type CanvasNode = Node<CanvasNodeData, "researchNode">;
@@ -136,6 +166,37 @@ type HistoryEntry = {
   label: string;
   snapshot: ProjectState;
 };
+
+type SettingsSection = "display" | "canvas" | "integrations" | "shortcuts";
+type DisplayDensity = "auto" | "compact" | "comfortable" | "spacious";
+type DisplayProfile = {
+  scaleFactor: number;
+  dpi: number;
+  source: "tauri" | "browser";
+};
+
+type ProjectLibraryEntry = {
+  id: string;
+  title: string;
+  updatedAt: string;
+  nodeCount: number;
+  snapshot: ProjectState;
+};
+
+const displayDensityOptions: Array<{
+  id: DisplayDensity;
+  label: string;
+  description: string;
+}> = [
+  { id: "auto", label: "Auto", description: "Match this display" },
+  { id: "compact", label: "Compact", description: "More canvas space" },
+  { id: "comfortable", label: "Comfortable", description: "Balanced reading" },
+  { id: "spacious", label: "Spacious", description: "Largest controls" },
+];
+
+function recommendedUiScale(scaleFactor: number) {
+  return Math.min(1.44, Math.max(1.32, 1.32 + (scaleFactor - 1) * 0.08));
+}
 
 const nodeTypeLabels: Record<ResearchNodeType, string> = {
   question: "Question",
@@ -181,7 +242,19 @@ const edgeTypeLabels: Record<ResearchEdgeType, string> = {
 };
 
 function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
-  const { record, disabled, depth, traversed, chainState, annotation, influence } = data;
+  const {
+    record,
+    disabled,
+    depth,
+    traversed,
+    chainState,
+    annotation,
+    influence,
+    collapsed,
+    pinned,
+    onResizeStart,
+    onResizeEnd,
+  } = data;
   return (
     <div
       className={[
@@ -196,10 +269,25 @@ function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
         .join(" ")}
       data-testid={`node-${record.id}`}
     >
+      <NodeResizer
+        isVisible={selected}
+        minWidth={190}
+        minHeight={94}
+        maxWidth={520}
+        maxHeight={360}
+        onResizeStart={onResizeStart}
+        onResizeEnd={onResizeEnd}
+        lineClassName="research-node-resize-line"
+        handleClassName="research-node-resize-handle"
+      />
       <Handle type="target" position={Position.Left} className="research-handle" />
       <div className="node-card-topline">
         <span className="node-type-label">{nodeTypeLabels[record.type]}</span>
-        <span className={`status-dot status-${record.status}`} title={record.status} />
+        <span className="node-view-state">
+          {pinned && <Pin size={11} aria-label="Pinned node" />}
+          {collapsed && <span title="Collapsed subtree">collapsed</span>}
+          <span className={`status-dot status-${record.status}`} title={record.status} />
+        </span>
       </div>
       <div className="node-title">{record.title}</div>
       <div className="node-summary">{record.body}</div>
@@ -317,6 +405,96 @@ function stopEvent(event: React.SyntheticEvent) {
   event.stopPropagation();
 }
 
+function createBlankProject(title = "Untitled research project"): ProjectState {
+  const now = new Date().toISOString();
+  const questionId = makeId("question");
+  return {
+    schemaVersion: 1,
+    id: makeId("project"),
+    title,
+    discipline: "General research",
+    updatedAt: now,
+    revision: 1,
+    nodes: [
+      {
+        id: questionId,
+        type: "question",
+        title: "Research question",
+        body: "State the question this graph will investigate.",
+        tags: ["starting-point"],
+        status: "draft",
+        evidenceIds: [],
+        data: {},
+        provenance: { origin: "human", actorId: "local-researcher" },
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    edges: [],
+    evidence: [],
+    placements: [
+      {
+        id: `placement-${questionId}`,
+        viewId: "view-main",
+        nodeId: questionId,
+        x: 120,
+        y: 160,
+        width: 250,
+        height: 126,
+      },
+    ],
+    scenarios: [],
+    navigation: { recentNodeIds: [questionId], pinnedNodeIds: [] },
+    activity: [
+      {
+        id: makeId("activity"),
+        label: "Created project",
+        origin: "human",
+        createdAt: now,
+      },
+    ],
+  };
+}
+
+function validateEdgeConnection(
+  project: ProjectState,
+  sourceId: string,
+  targetId: string,
+  type: ResearchEdgeType,
+  ignoreEdgeId?: string,
+) {
+  if (!sourceId || !targetId || sourceId === targetId) {
+    return "A relation must connect two different nodes.";
+  }
+  if (
+    project.edges.some(
+      (edge) =>
+        edge.id !== ignoreEdgeId &&
+        edge.source === sourceId &&
+        edge.target === targetId &&
+        edge.type === type,
+    )
+  ) {
+    return "That typed relation already exists.";
+  }
+  const source = project.nodes.find((node) => node.id === sourceId);
+  const target = project.nodes.find((node) => node.id === targetId);
+  if (!source || !target) return "Both relation endpoints must exist.";
+  if (type === "controls" && !["variable", "method", "dataset"].includes(source.type)) {
+    return "A controls relation must start from a variable, method, or dataset.";
+  }
+  if (type === "measures" && !["metric", "result", "variable"].includes(target.type)) {
+    return "A measures relation must target a metric, result, or variable.";
+  }
+  if (
+    ["supports", "contradicts"].includes(type) &&
+    !["hypothesis", "result", "concept", "variable", "method", "metric"].includes(target.type)
+  ) {
+    return "Evidence relations must target a claim, result, variable, method, or metric.";
+  }
+  return "";
+}
+
 function AppShell() {
   const [project, setProject] = useState<ProjectState>(() => cloneProject(initialProject));
   const [suggestions, setSuggestions] = useState<GraphSuggestion[]>(() =>
@@ -341,6 +519,7 @@ function AppShell() {
   const [canvasFilterOpen, setCanvasFilterOpen] = useState(false);
   const [canvasNodeTypes, setCanvasNodeTypes] = useState<ResearchNodeType[]>([]);
   const [canvasEdgeTypes, setCanvasEdgeTypes] = useState<ResearchEdgeType[]>([]);
+  const [evidenceSourceFilter, setEvidenceSourceFilter] = useState("");
   const [minimumConfidence, setMinimumConfidence] = useState(0);
   const [experimentsOnly, setExperimentsOnly] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("neural-network");
@@ -350,9 +529,23 @@ function AppShell() {
   const [influence, setInfluence] = useState<InfluenceResult | null>(null);
   const [zenMode, setZenMode] = useState(false);
   const [themeId, setThemeId] = useState("research-light");
+  const [locale, setLocale] = useState<Locale>("en");
+  const [installedMycPlugins, setInstalledMycPlugins] = useState<InstalledMycPlugin[]>([]);
+  const [mycDropActive, setMycDropActive] = useState(false);
+  const [mycInstalling, setMycInstalling] = useState(false);
   const [snapEnabled, setSnapEnabled] = useState(true);
+  const [alignmentGuide, setAlignmentGuide] = useState<{ x?: number; y?: number } | null>(
+    null,
+  );
   const [trackpadPan, setTrackpadPan] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("display");
+  const [displayDensity, setDisplayDensity] = useState<DisplayDensity>("auto");
+  const [displayProfile, setDisplayProfile] = useState<DisplayProfile>({
+    scaleFactor: 1,
+    dpi: 96,
+    source: "browser",
+  });
   const [pluginStoreOpen, setPluginStoreOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [loadedPlugins, setLoadedPlugins] = useState<string[]>(["git-experiments"]);
@@ -369,6 +562,9 @@ function AppShell() {
   const [maxDepth, setMaxDepth] = useState(4);
   const [edgeTypeFilter, setEdgeTypeFilter] = useState<ResearchEdgeType[]>([]);
   const [traversal, setTraversal] = useState<TraversalResult | null>(null);
+  const [pathTargetId, setPathTargetId] = useState("r1");
+  const [shortestPaths, setShortestPaths] = useState<string[][]>([]);
+  const [graphExplanation, setGraphExplanation] = useState("");
   const [cycles, setCycles] = useState<ReturnType<typeof detectCycles>>([]);
   const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
   const [past, setPast] = useState<HistoryEntry[]>([]);
@@ -376,6 +572,9 @@ function AppShell() {
   const [modal, setModal] = useState<
     "new-node" | "new-edge" | "evidence" | "split-node" | null
   >(null);
+  const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
+  const [projectNameDraft, setProjectNameDraft] = useState("");
+  const [projectLibrary, setProjectLibrary] = useState<ProjectLibraryEntry[]>([]);
   const [exportOpen, setExportOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [newNode, setNewNode] = useState({
@@ -390,18 +589,67 @@ function AppShell() {
   });
   const [newEvidence, setNewEvidence] = useState({
     title: "",
+    authors: "",
+    year: "",
+    doi: "",
     page: "",
     section: "",
     quote: "",
     url: "",
+    fileName: "",
+    startOffset: "",
+    endOffset: "",
+    status: "confirmed" as "candidate" | "confirmed" | "disputed",
   });
+  const [selectedSourceText, setSelectedSourceText] = useState("");
+  const [editingSuggestionId, setEditingSuggestionId] = useState("");
+  const [scenarioOverrideKey, setScenarioOverrideKey] = useState("value");
+  const [scenarioOverrideValue, setScenarioOverrideValue] = useState("");
   const [splitParts, setSplitParts] = useState({ first: "", second: "" });
+  const clipboardNode = useRef<ResearchNode | null>(null);
   const dragSnapshot = useRef<ProjectState | null>(null);
+  const displayPreferencesHydrated = useRef(false);
+  const responsiveCompactRef = useRef<boolean | null>(null);
   const searchInput = useRef<HTMLInputElement | null>(null);
   const importInput = useRef<HTMLInputElement | null>(null);
   const runResultInput = useRef<HTMLInputElement | null>(null);
-  const { fitView, setCenter } = useReactFlow<CanvasNode, CanvasEdge>();
+  const evidenceFileInput = useRef<HTMLInputElement | null>(null);
+  const mycPluginInput = useRef<HTMLInputElement | null>(null);
+  const { fitView, setCenter, getViewport } = useReactFlow<CanvasNode, CanvasEdge>();
+  const t = useCallback((key: MessageKey) => translate(locale, key), [locale]);
+  const themeCatalog = useMemo(
+    () => [
+      ...builtInThemeCatalog,
+      ...installedMycPlugins
+        .map(normalizeInstalledTheme)
+        .filter((theme): theme is NonNullable<typeof theme> => Boolean(theme)),
+    ],
+    [installedMycPlugins],
+  );
+  const pluginCatalog = useMemo(
+    () => [
+      ...builtInPluginCatalog,
+      ...installedMycPlugins.map((plugin) => ({
+        id: plugin.manifest.metadata.id,
+        name: plugin.manifest.metadata.name,
+        version: plugin.manifest.metadata.version,
+        category: "theme" as const,
+        description: plugin.manifest.metadata.description,
+        status: "installed" as const,
+        permissions: plugin.manifest.spec.permissions,
+        capabilities: plugin.manifest.spec.capabilities,
+        publisher: plugin.manifest.metadata.publisher,
+      })),
+    ],
+    [installedMycPlugins],
+  );
   const activeTheme = themeCatalog.find((theme) => theme.id === themeId) ?? themeCatalog[0];
+  const uiScale = useMemo(() => {
+    if (displayDensity === "auto") return recommendedUiScale(displayProfile.scaleFactor);
+    if (displayDensity === "compact") return 1.2;
+    if (displayDensity === "comfortable") return 1.34;
+    return 1.48;
+  }, [displayDensity, displayProfile.scaleFactor]);
   const themeStyle = {
     "--app-bg": activeTheme.colors.app,
     "--panel": activeTheme.colors.panel,
@@ -412,6 +660,7 @@ function AppShell() {
     "--accent": activeTheme.colors.accent,
     "--border": activeTheme.colors.border,
     "--line": activeTheme.colors.border,
+    "--ui-scale": uiScale.toFixed(3),
   } as CSSProperties;
 
   useEffect(() => {
@@ -419,6 +668,7 @@ function AppShell() {
       try {
         const saved = localStorage.getItem("research-canvas-project-v1");
         const savedSuggestions = localStorage.getItem("research-canvas-suggestions-v1");
+        const savedLibrary = localStorage.getItem("research-canvas-project-library-v1");
         if (saved) {
           const restored = migrateProject(JSON.parse(saved));
           setProject(restored);
@@ -432,6 +682,15 @@ function AppShell() {
         if (savedSuggestions) {
           setSuggestions(JSON.parse(savedSuggestions) as GraphSuggestion[]);
         }
+        if (savedLibrary) {
+          const parsed = JSON.parse(savedLibrary) as ProjectLibraryEntry[];
+          setProjectLibrary(
+            parsed
+              .map((entry) => ({ ...entry, snapshot: migrateProject(entry.snapshot) }))
+              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+              .slice(0, 8),
+          );
+        }
       } catch {
         setToast("Local recovery data was invalid. Opened the verified demo instead.");
       }
@@ -443,10 +702,201 @@ function AppShell() {
     const handle = window.setTimeout(() => {
       localStorage.setItem("research-canvas-project-v1", JSON.stringify(project));
       localStorage.setItem("research-canvas-suggestions-v1", JSON.stringify(suggestions));
+      setProjectLibrary((current) => {
+        const entry: ProjectLibraryEntry = {
+          id: project.id,
+          title: project.title,
+          updatedAt: project.updatedAt,
+          nodeCount: project.nodes.length,
+          snapshot: cloneProject(project),
+        };
+        const next = [entry, ...current.filter((item) => item.id !== project.id)]
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+          .slice(0, 8);
+        localStorage.setItem("research-canvas-project-library-v1", JSON.stringify(next));
+        return next;
+      });
       setSaveState("saved");
     }, 450);
     return () => window.clearTimeout(handle);
   }, [project, suggestions]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      try {
+        const saved = localStorage.getItem("research-canvas-display-v1");
+        if (saved) {
+          const preferences = JSON.parse(saved) as {
+            density?: DisplayDensity;
+            themeId?: string;
+            snapEnabled?: boolean;
+            trackpadPan?: boolean;
+            locale?: Locale;
+          };
+          if (preferences.density) setDisplayDensity(preferences.density);
+          if (preferences.themeId) setThemeId(preferences.themeId);
+          setLocale(preferences.locale ?? normalizeLocale(navigator.language));
+          if (typeof preferences.snapEnabled === "boolean") {
+            setSnapEnabled(preferences.snapEnabled);
+          }
+          if (typeof preferences.trackpadPan === "boolean") {
+            setTrackpadPan(preferences.trackpadPan);
+          }
+        } else setLocale(normalizeLocale(navigator.language));
+      } catch {
+        setToast("Display preferences were reset because the saved data was invalid.");
+      } finally {
+        displayPreferencesHydrated.current = true;
+      }
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, []);
+
+  useEffect(() => {
+    if (!displayPreferencesHydrated.current) return;
+    localStorage.setItem(
+      "research-canvas-display-v1",
+      JSON.stringify({
+        density: displayDensity,
+        themeId,
+        snapEnabled,
+        trackpadPan,
+        locale,
+      }),
+    );
+  }, [displayDensity, locale, snapEnabled, themeId, trackpadPan]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    const updateProfile = (scaleFactor: number, source: DisplayProfile["source"]) => {
+      if (disposed || !Number.isFinite(scaleFactor) || scaleFactor <= 0) return;
+      setDisplayProfile({
+        scaleFactor,
+        dpi: Math.round(96 * scaleFactor),
+        source,
+      });
+    };
+
+    const detectDisplay = async () => {
+      if ("__TAURI_INTERNALS__" in window) {
+        try {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          const currentWindow = getCurrentWindow();
+          updateProfile(await currentWindow.scaleFactor(), "tauri");
+          unlisten = await currentWindow.onScaleChanged(({ payload }) => {
+            updateProfile(payload.scaleFactor, "tauri");
+          });
+          return;
+        } catch {
+          // Browser fallback below also supports restricted development webviews.
+        }
+      }
+
+      const updateBrowserProfile = () =>
+        updateProfile(window.devicePixelRatio || 1, "browser");
+      updateBrowserProfile();
+      window.addEventListener("resize", updateBrowserProfile);
+      unlisten = () => window.removeEventListener("resize", updateBrowserProfile);
+    };
+
+    void detectDisplay();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1040px)");
+    const applyResponsivePanels = () => {
+      if (responsiveCompactRef.current === media.matches) return;
+      responsiveCompactRef.current = media.matches;
+      setLeftCollapsed(media.matches);
+      setRightCollapsed(media.matches);
+    };
+    applyResponsivePanels();
+    media.addEventListener("change", applyResponsivePanels);
+    return () => media.removeEventListener("change", applyResponsivePanels);
+  }, []);
+
+  const registerInstalledPlugin = useCallback(
+    (plugin: InstalledMycPlugin, activateTheme = false) => {
+      setInstalledMycPlugins((current) => [
+        ...current.filter(
+          (item) =>
+            item.manifest.metadata.id !== plugin.manifest.metadata.id ||
+            item.manifest.metadata.version !== plugin.manifest.metadata.version,
+        ),
+        plugin,
+      ]);
+      setLoadedPlugins((current) =>
+        current.includes(plugin.manifest.metadata.id)
+          ? current
+          : [...current, plugin.manifest.metadata.id],
+      );
+      const theme = normalizeInstalledTheme(plugin);
+      if (theme && activateTheme) setThemeId(theme.id);
+    },
+    [],
+  );
+
+  const installMycPaths = useCallback(
+    async (paths: string[]) => {
+      const packages = paths.filter(isMycFileName);
+      if (!packages.length) return;
+      setMycInstalling(true);
+      try {
+        let latest: InstalledMycPlugin | null = null;
+        for (const path of packages) {
+          latest = await installMycPlugin(path);
+          registerInstalledPlugin(latest, true);
+        }
+        if (latest) {
+          setToast(`${t("plugins.installedToast")}: ${latest.manifest.metadata.name}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setToast(
+          message === "MYC_DESKTOP_REQUIRED" ? t("plugins.desktopOnly") : `Plugin error: ${message}`,
+        );
+      } finally {
+        setMycInstalling(false);
+        setMycDropActive(false);
+      }
+    },
+    [registerInstalledPlugin, t],
+  );
+
+  useEffect(() => {
+    let disposed = false;
+    void listInstalledMycPlugins()
+      .then((plugins) => {
+        if (disposed) return;
+        for (const plugin of plugins) registerInstalledPlugin(plugin);
+      })
+      .catch(() => {
+        // Browser preview and a missing plugin directory are both valid states.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [registerInstalledPlugin]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listenForMycDrops((paths) => {
+      if (pluginStoreOpen && paths.length) void installMycPaths(paths);
+    }).then((dispose) => {
+      unlisten = dispose;
+    });
+    return () => unlisten?.();
+  }, [installMycPaths, pluginStoreOpen]);
 
   useEffect(() => {
     if (!toast) return;
@@ -571,14 +1021,75 @@ function AppShell() {
   );
   const logicNodeIds = useMemo(() => new Set(logicChain?.nodeIds ?? []), [logicChain]);
   const logicEdgeIds = useMemo(() => new Set(logicChain?.edgeIds ?? []), [logicChain]);
+  const evidenceSources = useMemo(
+    () =>
+      [...new Map(project.evidence.map((item) => [item.sourceId, item])).values()].sort((a, b) =>
+        a.title.localeCompare(b.title),
+      ),
+    [project.evidence],
+  );
+  const collapsedNodeIds = useMemo(() => {
+    const hidden = new Set<string>();
+    for (const placement of project.placements) {
+      if (!placement.collapsed) continue;
+      const result = traverseGraph(project, {
+        startId: placement.nodeId,
+        strategy: "bfs",
+        direction: "out",
+        maxDepth: Number.MAX_SAFE_INTEGER,
+        edgeTypes: ["depends_on", "derived_from", "part_of", "uses", "measures", "supports"],
+        scenarioId: activeScenarioId || undefined,
+      });
+      result.order.slice(1).forEach((id) => hidden.add(id));
+    }
+    return hidden;
+  }, [project, activeScenarioId]);
+  const evidenceMatchedNodeIds = useMemo(() => {
+    if (!evidenceSourceFilter) return null;
+    const evidenceIds = new Set(
+      project.evidence
+        .filter((item) => item.sourceId === evidenceSourceFilter)
+        .map((item) => item.id),
+    );
+    const matched = new Set(
+      project.nodes
+        .filter((node) => node.evidenceIds.some((id) => evidenceIds.has(id)))
+        .map((node) => node.id),
+    );
+    for (const edge of project.edges) {
+      if (edge.evidenceIds.some((id) => evidenceIds.has(id))) {
+        matched.add(edge.source);
+        matched.add(edge.target);
+      }
+    }
+    return matched;
+  }, [project.nodes, project.edges, project.evidence, evidenceSourceFilter]);
+  const evidenceMatchedEdgeIds = useMemo(() => {
+    if (!evidenceSourceFilter) return null;
+    const evidenceIds = new Set(
+      project.evidence
+        .filter((item) => item.sourceId === evidenceSourceFilter)
+        .map((item) => item.id),
+    );
+    return new Set(
+      project.edges
+        .filter((edge) => edge.evidenceIds.some((id) => evidenceIds.has(id)))
+        .map((edge) => edge.id),
+    );
+  }, [project.edges, project.evidence, evidenceSourceFilter]);
   const visibleNodeIds = useMemo(() => {
     const typeSet = new Set(canvasNodeTypes);
     return new Set(
       project.nodes
-        .filter((node) => !typeSet.size || typeSet.has(node.type))
+        .filter(
+          (node) =>
+            !collapsedNodeIds.has(node.id) &&
+            (!typeSet.size || typeSet.has(node.type)) &&
+            (!evidenceMatchedNodeIds || evidenceMatchedNodeIds.has(node.id)),
+        )
         .map((node) => node.id),
     );
-  }, [project.nodes, canvasNodeTypes]);
+  }, [project.nodes, canvasNodeTypes, collapsedNodeIds, evidenceMatchedNodeIds]);
   const visibleEdgeRecords = useMemo(() => {
     const edgeSet = new Set(canvasEdgeTypes);
     return project.edges.filter(
@@ -586,6 +1097,7 @@ function AppShell() {
         visibleNodeIds.has(edge.source) &&
         visibleNodeIds.has(edge.target) &&
         (!edgeSet.size || edgeSet.has(edge.type)) &&
+        (!evidenceMatchedEdgeIds || evidenceMatchedEdgeIds.has(edge.id)) &&
         (edge.confidence ?? 0) >= minimumConfidence &&
         (!experimentsOnly || Boolean(edge.experiment)),
     );
@@ -593,6 +1105,7 @@ function AppShell() {
     project.edges,
     visibleNodeIds,
     canvasEdgeTypes,
+    evidenceMatchedEdgeIds,
     minimumConfidence,
     experimentsOnly,
   ]);
@@ -624,6 +1137,20 @@ function AppShell() {
                   record.data.role !== "input"))
                 ? influenceScore
                 : undefined,
+            collapsed: Boolean(placement?.collapsed),
+            pinned: Boolean(placement?.pinned),
+            onResizeStart: () => {
+              dragSnapshot.current = cloneProject(project);
+            },
+            onResizeEnd: () => {
+              if (!dragSnapshot.current) return;
+              setPast((items) => [
+                ...items.slice(-39),
+                { label: "Resize node", snapshot: dragSnapshot.current! },
+              ]);
+              setFuture([]);
+              dragSnapshot.current = null;
+            },
           },
           selected: selectedNodeId === record.id,
           draggable: true,
@@ -633,8 +1160,6 @@ function AppShell() {
         };
       }),
     [
-      project.nodes,
-      project.placements,
       disabledNodes,
       traversalNodes,
       traversal,
@@ -644,6 +1169,7 @@ function AppShell() {
       logicChain,
       layoutAnnotations,
       influence,
+      project,
     ],
   );
 
@@ -732,6 +1258,25 @@ function AppShell() {
         return next;
       });
     }
+    const dimensionChanges = changes.filter(
+      (
+        change,
+      ): change is Extract<NodeChange<CanvasNode>, { type: "dimensions" }> =>
+        change.type === "dimensions" && Boolean(change.dimensions),
+    );
+    if (dimensionChanges.length) {
+      setProject((current) => {
+        const next = cloneProject(current);
+        for (const change of dimensionChanges) {
+          const placement = next.placements.find((item) => item.nodeId === change.id);
+          if (placement && change.dimensions) {
+            placement.width = change.dimensions.width;
+            placement.height = change.dimensions.height;
+          }
+        }
+        return next;
+      });
+    }
     for (const change of changes) {
       if (change.type === "select" && change.selected) {
         setSelectedNodeId(change.id);
@@ -751,8 +1296,14 @@ function AppShell() {
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      if (!connection.source || !connection.target || connection.source === connection.target) {
-        setToast("Choose two different nodes to create a relation.");
+      const issue = validateEdgeConnection(
+        project,
+        connection.source ?? "",
+        connection.target ?? "",
+        "depends_on",
+      );
+      if (issue) {
+        setToast(issue);
         return;
       }
       commit("Connect nodes", (draft) => {
@@ -771,7 +1322,34 @@ function AppShell() {
       });
       setToast("Relation created as “depends on”. Edit it in the inspector.");
     },
-    [commit],
+    [commit, project],
+  );
+
+  const onReconnect = useCallback(
+    (oldEdge: CanvasEdge, connection: Connection) => {
+      const record = project.edges.find((edge) => edge.id === oldEdge.id);
+      if (!record) return;
+      const issue = validateEdgeConnection(
+        project,
+        connection.source ?? "",
+        connection.target ?? "",
+        record.type,
+        record.id,
+      );
+      if (issue) {
+        setToast(issue);
+        return;
+      }
+      commit("Reconnect typed relation", (draft) => {
+        const edge = draft.edges.find((item) => item.id === record.id);
+        if (edge) {
+          edge.source = connection.source!;
+          edge.target = connection.target!;
+        }
+      });
+      setToast("Relation endpoint reconnected.");
+    },
+    [commit, project],
   );
 
   const focusNode = useCallback(
@@ -780,6 +1358,15 @@ function AppShell() {
       if (!placement) return;
       setSelectedNodeId(nodeId);
       setSelectedEdgeId("");
+      setProject((current) => {
+        const next = cloneProject(current);
+        next.navigation ??= { recentNodeIds: [], pinnedNodeIds: [] };
+        next.navigation.recentNodeIds = [
+          nodeId,
+          ...next.navigation.recentNodeIds.filter((id) => id !== nodeId),
+        ].slice(0, 6);
+        return next;
+      });
       setCenter(placement.x + placement.width / 2, placement.y + placement.height / 2, {
         zoom: 1,
         duration: 450,
@@ -800,6 +1387,8 @@ function AppShell() {
       scenarioId: activeScenarioId || undefined,
     });
     setTraversal(result);
+    setShortestPaths([]);
+    setGraphExplanation("");
     setBottomTab("traversal");
     setBottomExpanded(true);
     setToast(`${traversalStrategy.toUpperCase()} found ${result.order.length} nodes.`);
@@ -813,6 +1402,96 @@ function AppShell() {
     nodeTypeFilter,
     activeScenarioId,
   ]);
+
+  const runShortestPath = useCallback(() => {
+    const sourceId = selectedNodeId || project.nodes[0]?.id;
+    if (!sourceId || !pathTargetId) {
+      setToast("Choose a source node and target node.");
+      return;
+    }
+    const paths = allShortestPaths(
+      project,
+      sourceId,
+      pathTargetId,
+      activeScenarioId || undefined,
+    );
+    setShortestPaths(paths);
+    if (!paths.length) {
+      setTraversal(null);
+      setGraphExplanation(
+        `No directed path exists from the selected source to the target under ${
+          activeScenario?.name ?? "the base graph"
+        }.`,
+      );
+      setToast("No directed path found.");
+      return;
+    }
+    const nodeIds = [...new Set(paths.flat())];
+    const edgeRecords = resolveEdges(project, activeScenarioId || undefined);
+    const edgeIds = new Set<string>();
+    for (const path of paths) {
+      for (let index = 0; index < path.length - 1; index += 1) {
+        const edge = edgeRecords.find(
+          (candidate) =>
+            candidate.source === path[index] && candidate.target === path[index + 1],
+        );
+        if (edge) edgeIds.add(edge.id);
+      }
+    }
+    const first = paths[0];
+    setTraversal({
+      strategy: "bfs",
+      startId: sourceId,
+      order: nodeIds,
+      edgeIds: [...edgeIds],
+      depth: Object.fromEntries(first.map((id, index) => [id, index])),
+      parent: Object.fromEntries(
+        first.map((id, index) => [id, index ? first[index - 1] : null]),
+      ),
+      treeEdgeIds: [...edgeIds],
+      crossEdgeIds: [],
+      backEdgeIds: [],
+      stoppedByDepth: [],
+      durationMs: 0,
+    });
+    setGraphExplanation(
+      `${paths.length} equally short directed path${paths.length === 1 ? "" : "s"} found at ${
+        first.length - 1
+      } relations. Scenario and evidence filters were applied before traversal.`,
+    );
+    setBottomTab("traversal");
+    setBottomExpanded(true);
+    setToast(`${paths.length} shortest path${paths.length === 1 ? "" : "s"} highlighted.`);
+  }, [activeScenario, activeScenarioId, pathTargetId, project, selectedNodeId]);
+
+  const explainSelectedNeighborhood = useCallback(() => {
+    if (!selectedNode) {
+      setGraphExplanation("Select a node before requesting a local explanation.");
+      return;
+    }
+    const incoming = project.edges.filter((edge) => edge.target === selectedNode.id);
+    const outgoing = project.edges.filter((edge) => edge.source === selectedNode.id);
+    const evidenceCount = new Set([
+      ...selectedNode.evidenceIds,
+      ...incoming.flatMap((edge) => edge.evidenceIds),
+      ...outgoing.flatMap((edge) => edge.evidenceIds),
+    ]).size;
+    const strongest = [...incoming, ...outgoing]
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
+    setGraphExplanation(
+      `${selectedNode.title} has ${incoming.length} incoming and ${outgoing.length} outgoing typed relations, backed by ${evidenceCount} distinct evidence record${
+        evidenceCount === 1 ? "" : "s"
+      }. ${
+        strongest
+          ? `The highest-confidence local relation is “${edgeTypeLabels[strongest.type]}” at ${Math.round(
+              (strongest.confidence ?? 0) * 100,
+            )}%.`
+          : "It is currently isolated."
+      } This explanation reads only the selected one-hop neighborhood.`,
+    );
+    setBottomTab("traversal");
+    setBottomExpanded(true);
+  }, [project.edges, selectedNode]);
 
   const runCycleDetection = useCallback(() => {
     const found = detectCycles(project, activeScenarioId || undefined);
@@ -871,6 +1550,7 @@ function AppShell() {
   const loadMnistStudy = useCallback(() => {
     const next = createMnistProject();
     setProject(cloneProject(next));
+    setSuggestions(JSON.parse(JSON.stringify(mnistSuggestions)) as GraphSuggestion[]);
     setPast([]);
     setFuture([]);
     setTraversal(null);
@@ -899,10 +1579,247 @@ function AppShell() {
       setInfluence(propagateInfluence(next, "mnist-accuracy"));
       setBottomTab("influence");
       setBottomExpanded(true);
-      fitView({ padding: 0.16, duration: 550 });
+      window.setTimeout(() => fitView({ padding: 0.16, duration: 550 }), 100);
     }, 80);
     setToast(`Git plugin loaded MNIST study at ${mnistRunSummary.environment.gitCommit}.`);
   }, [fitView]);
+
+  const loadSocialScienceStudy = useCallback(() => {
+    const next = createSocialScienceProject();
+    setProject(cloneProject(next));
+    setSuggestions([]);
+    setPast([]);
+    setFuture([]);
+    setTraversal(null);
+    setCycles([]);
+    setInfluence(null);
+    setLogicChain(null);
+    setSelectedNodeId("soc-polarization");
+    setSelectedEdgeId("");
+    setLayoutMode("evidence-chain");
+    setPluginStoreOpen(false);
+    window.setTimeout(() => {
+      const layout = computeLayout(next, "evidence-chain", "soc-q");
+      setProject((current) => {
+        const laidOut = cloneProject(current);
+        for (const [nodeId, position] of Object.entries(layout.positions)) {
+          const placement = laidOut.placements.find((item) => item.nodeId === nodeId);
+          if (placement) Object.assign(placement, position);
+        }
+        return laidOut;
+      });
+      setLayoutAnnotations(layout.annotations);
+      window.setTimeout(() => fitView({ padding: 0.16, duration: 550 }), 100);
+    }, 80);
+    setToast("Social-science acceptance fixture loaded.");
+  }, [fitView]);
+
+  const openProjectLibrary = useCallback(() => {
+    setProjectNameDraft(project.title);
+    setProjectLibraryOpen(true);
+  }, [project.title]);
+
+  const startNewProject = useCallback(() => {
+    const next = createBlankProject("Untitled research project");
+    setProject(next);
+    setPast([]);
+    setFuture([]);
+    setSelectedNodeId(next.nodes[0]?.id ?? "");
+    setSelectedEdgeId("");
+    setActiveScenarioId("");
+    setTraversal(null);
+    setLogicChain(null);
+    setInfluence(null);
+    setProjectNameDraft(next.title);
+    setProjectLibraryOpen(false);
+    setToast("New local project created.");
+  }, []);
+
+  const openLibraryProject = useCallback((entry: ProjectLibraryEntry) => {
+    const next = migrateProject(entry.snapshot);
+    setProject(cloneProject(next));
+    setPast([]);
+    setFuture([]);
+    setSelectedNodeId(
+      next.navigation?.recentNodeIds[0] ??
+        next.nodes.find((node) => node.type === "question")?.id ??
+        next.nodes[0]?.id ??
+        "",
+    );
+    setSelectedEdgeId("");
+    setActiveScenarioId("");
+    setProjectNameDraft(next.title);
+    setProjectLibraryOpen(false);
+    setToast(`Opened “${next.title}”.`);
+  }, []);
+
+  const renameCurrentProject = useCallback(() => {
+    const title = projectNameDraft.trim();
+    if (!title || title === project.title) return;
+    commit("Rename project", (draft) => {
+      draft.title = title;
+    });
+    setToast("Project renamed.");
+  }, [commit, project.title, projectNameDraft]);
+
+  const toggleCollapsedSubtree = useCallback(() => {
+    if (!selectedNode) return;
+    commit("Toggle collapsed subtree", (draft) => {
+      const placement = draft.placements.find((item) => item.nodeId === selectedNode.id);
+      if (placement) placement.collapsed = !placement.collapsed;
+    });
+    window.setTimeout(() => fitView({ padding: 0.16, duration: 350 }), 60);
+  }, [commit, fitView, selectedNode]);
+
+  const togglePinnedNode = useCallback(() => {
+    if (!selectedNode) return;
+    commit("Toggle pinned node", (draft) => {
+      const placement = draft.placements.find((item) => item.nodeId === selectedNode.id);
+      if (!placement) return;
+      placement.pinned = !placement.pinned;
+      draft.navigation ??= { recentNodeIds: [], pinnedNodeIds: [] };
+      draft.navigation.pinnedNodeIds = placement.pinned
+        ? [
+            selectedNode.id,
+            ...draft.navigation.pinnedNodeIds.filter((id) => id !== selectedNode.id),
+          ]
+        : draft.navigation.pinnedNodeIds.filter((id) => id !== selectedNode.id);
+    });
+  }, [commit, selectedNode]);
+
+  const copySelectedNode = useCallback(() => {
+    if (!selectedNode) return;
+    clipboardNode.current = JSON.parse(JSON.stringify(selectedNode)) as ResearchNode;
+    setToast("Node copied to the Research Canvas clipboard.");
+  }, [selectedNode]);
+
+  const pasteCopiedNode = useCallback(() => {
+    const copied = clipboardNode.current;
+    if (!copied) {
+      setToast("Copy a node before pasting.");
+      return;
+    }
+    const id = makeId("node");
+    commit("Paste node", (draft) => {
+      draft.nodes.push({
+        ...JSON.parse(JSON.stringify(copied)),
+        id,
+        title: `${copied.title} copy`,
+        status: "draft",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      const sourcePlacement = draft.placements.find((item) => item.nodeId === copied.id);
+      draft.placements.push({
+        id: `placement-${id}`,
+        viewId: "view-main",
+        nodeId: id,
+        x: (sourcePlacement?.x ?? 320) + 44,
+        y: (sourcePlacement?.y ?? 260) + 44,
+        width: sourcePlacement?.width ?? 230,
+        height: sourcePlacement?.height ?? 116,
+      });
+    });
+    setSelectedNodeId(id);
+    setSelectedEdgeId("");
+  }, [commit]);
+
+  const stageSelectionAsSuggestions = useCallback(() => {
+    const text = selectedSourceText.trim();
+    if (!text) {
+      setToast("Paste or select source text first.");
+      return;
+    }
+    const candidates = text
+      .split(/\n|[.;。；]/)
+      .map((value) => value.trim())
+      .filter((value) => value.length >= 8)
+      .slice(0, 4);
+    const createdAt = new Date().toISOString();
+    const staged: GraphSuggestion[] = candidates.map((value, index) => ({
+      id: makeId(`selection-${index}`),
+      kind: "node",
+      operation: "add",
+      title: value.length > 58 ? `${value.slice(0, 55)}…` : value,
+      description: value,
+      confidence: Math.max(0.58, 0.78 - index * 0.04),
+      rationale:
+        "This phrase names a potentially testable research object. The researcher must verify its type and scope.",
+      evidenceLabel: `Selected text · ${createdAt.slice(0, 10)} · candidate`,
+      status: "proposed",
+      node: {
+        type: index === 0 ? "hypothesis" : "variable",
+        title: value.length > 58 ? `${value.slice(0, 55)}…` : value,
+        body: value,
+        tags: ["text-extraction", "candidate"],
+        status: "draft",
+        evidenceIds: [],
+        data: { selectedText: text },
+        provenance: {
+          origin: "ai",
+          modelId: "local-extraction-adapter",
+          promptVersion: "selected-text-v0.1",
+          sourceRefs: [`selection:${createdAt}`],
+        },
+      },
+    }));
+    setSuggestions((items) => [...staged, ...items]);
+    setSelectedSourceText("");
+    setToast(`${staged.length} structured candidates staged; the graph is unchanged.`);
+  }, [selectedSourceText]);
+
+  const applyScenarioOverride = useCallback(() => {
+    if (!activeScenario || !selectedNode || !scenarioOverrideKey.trim()) {
+      setToast("Choose an active scenario and a node before applying an override.");
+      return;
+    }
+    const raw = scenarioOverrideValue.trim();
+    const numeric = Number(raw);
+    const value: unknown =
+      raw === "true" ? true : raw === "false" ? false : raw && Number.isFinite(numeric) ? numeric : raw;
+    commit("Set scenario property override", (draft) => {
+      const scenario = draft.scenarios.find((item) => item.id === activeScenario.id);
+      if (!scenario) return;
+      const existing = scenario.nodeOverrides[selectedNode.id] ?? {};
+      scenario.nodeOverrides[selectedNode.id] = {
+        ...existing,
+        data: {
+          ...selectedNode.data,
+          ...((existing.data as Record<string, unknown> | undefined) ?? {}),
+          [scenarioOverrideKey.trim()]: value,
+        },
+      };
+    });
+    setToast("Scenario-only property override saved.");
+  }, [
+    activeScenario,
+    commit,
+    scenarioOverrideKey,
+    scenarioOverrideValue,
+    selectedNode,
+  ]);
+
+  const toggleSelectionInScenario = useCallback(() => {
+    if (!activeScenario || (!selectedNodeId && !selectedEdgeId)) {
+      setToast("Choose an active scenario and select a node or relation.");
+      return;
+    }
+    commit("Toggle scenario disabled item", (draft) => {
+      const scenario = draft.scenarios.find((item) => item.id === activeScenario.id);
+      if (!scenario) return;
+      if (selectedNodeId) {
+        scenario.disabledNodeIds = scenario.disabledNodeIds.includes(selectedNodeId)
+          ? scenario.disabledNodeIds.filter((id) => id !== selectedNodeId)
+          : [...scenario.disabledNodeIds, selectedNodeId];
+      }
+      if (selectedEdgeId) {
+        scenario.disabledEdgeIds = scenario.disabledEdgeIds.includes(selectedEdgeId)
+          ? scenario.disabledEdgeIds.filter((id) => id !== selectedEdgeId)
+          : [...scenario.disabledEdgeIds, selectedEdgeId];
+      }
+    });
+    setToast("Scenario overlay updated; the base graph is unchanged.");
+  }, [activeScenario, commit, selectedEdgeId, selectedNodeId]);
 
   const splitSelectedNode = useCallback(() => {
     if (!selectedNode || !splitParts.first.trim() || !splitParts.second.trim()) return;
@@ -1018,7 +1935,16 @@ function AppShell() {
   }, [newNode, commit]);
 
   const createEdge = useCallback(() => {
-    if (!newEdge.source || !newEdge.target || newEdge.source === newEdge.target) return;
+    const issue = validateEdgeConnection(
+      project,
+      newEdge.source,
+      newEdge.target,
+      newEdge.type,
+    );
+    if (issue) {
+      setToast(issue);
+      return;
+    }
     commit("Create typed relation", (draft) => {
       draft.edges.push({
         id: makeId("edge"),
@@ -1032,7 +1958,7 @@ function AppShell() {
       });
     });
     setModal(null);
-  }, [newEdge, commit]);
+  }, [newEdge, commit, project]);
 
   const createEvidence = useCallback(() => {
     if (!selectedNode || !newEvidence.title.trim()) return;
@@ -1043,19 +1969,40 @@ function AppShell() {
         sourceType: "paper",
         sourceId: makeId("source"),
         title: newEvidence.title.trim(),
+        authors: newEvidence.authors.trim() || undefined,
+        year: newEvidence.year ? Number(newEvidence.year) : undefined,
+        doi: newEvidence.doi.trim() || undefined,
         url: newEvidence.url.trim() || undefined,
         locator: {
+          fileName: newEvidence.fileName || undefined,
           page: newEvidence.page ? Number(newEvidence.page) : undefined,
           section: newEvidence.section.trim() || undefined,
           quote: newEvidence.quote.trim() || undefined,
+          startOffset: newEvidence.startOffset
+            ? Number(newEvidence.startOffset)
+            : undefined,
+          endOffset: newEvidence.endOffset ? Number(newEvidence.endOffset) : undefined,
         },
-        status: "verified",
+        status: newEvidence.status,
         provenance: { origin: "human", actorId: "local-researcher" },
       });
       const node = draft.nodes.find((item) => item.id === selectedNode.id);
       node?.evidenceIds.push(evidenceId);
     });
-    setNewEvidence({ title: "", page: "", section: "", quote: "", url: "" });
+    setNewEvidence({
+      title: "",
+      authors: "",
+      year: "",
+      doi: "",
+      page: "",
+      section: "",
+      quote: "",
+      url: "",
+      fileName: "",
+      startOffset: "",
+      endOffset: "",
+      status: "confirmed",
+    });
     setModal(null);
     setActiveInspectorTab("evidence");
   }, [selectedNode, newEvidence, commit]);
@@ -1115,15 +2062,24 @@ function AppShell() {
             });
           }
           if (suggestion.kind === "edge" && suggestion.edge) {
-            draft.edges.push({
+            const reviewedEdge = {
               ...suggestion.edge,
-              id: makeId("edge"),
               provenance: {
                 ...suggestion.edge.provenance,
                 reviewedBy: "local-researcher",
                 reviewedAt: new Date().toISOString(),
               },
-            });
+            };
+            const existing =
+              suggestion.operation === "update"
+                ? draft.edges.find(
+                    (edge) =>
+                      edge.source === suggestion.edge!.source &&
+                      edge.target === suggestion.edge!.target,
+                  )
+                : undefined;
+            if (existing) Object.assign(existing, reviewedEdge);
+            else draft.edges.push({ ...reviewedEdge, id: makeId("edge") });
           }
         },
         "ai",
@@ -1169,7 +2125,25 @@ function AppShell() {
             });
           }
           if (suggestion.kind === "edge" && suggestion.edge) {
-            draft.edges.push({ ...suggestion.edge, id: makeId(`edge-${index}`) });
+            const existing =
+              suggestion.operation === "update"
+                ? draft.edges.find(
+                    (edge) =>
+                      edge.source === suggestion.edge!.source &&
+                      edge.target === suggestion.edge!.target,
+                  )
+                : undefined;
+            if (existing) {
+              Object.assign(existing, suggestion.edge, {
+                provenance: {
+                  ...suggestion.edge.provenance,
+                  reviewedBy: "local-researcher",
+                  reviewedAt: new Date().toISOString(),
+                },
+              });
+            } else {
+              draft.edges.push({ ...suggestion.edge, id: makeId(`edge-${index}`) });
+            }
           }
         });
       },
@@ -1295,11 +2269,29 @@ function AppShell() {
           metric?: string;
           value?: number;
           summary?: string;
+          artifact?: Record<string, unknown>;
         };
         const id = makeId("result");
+        const evidenceId = makeId("evidence");
         commit(
           "Import external run result",
           (draft) => {
+            draft.evidence.push({
+              id: evidenceId,
+              sourceType: "experiment",
+              sourceId: result.scenarioId ?? file.name,
+              title: result.metric
+                ? `External run: ${result.metric}`
+                : "External connector run",
+              locator: {
+                fileName: file.name,
+                quote:
+                  result.summary ??
+                  "Structured RunResult imported through the connector protocol.",
+              },
+              status: "candidate",
+              provenance: { origin: "python", sourceRefs: [file.name] },
+            });
             draft.nodes.push({
               id,
               type: "result",
@@ -1307,7 +2299,7 @@ function AppShell() {
               body: result.summary ?? "External result imported through the connector protocol.",
               tags: ["run-result", result.scenarioId ?? activeScenarioId].filter(Boolean),
               status: "draft",
-              evidenceIds: [],
+              evidenceIds: [evidenceId],
               data: result,
               provenance: { origin: "python", sourceRefs: [file.name] },
               createdAt: new Date().toISOString(),
@@ -1365,9 +2357,36 @@ function AppShell() {
         runTraversal();
         return;
       }
+      if (command && event.key.toLowerCase() === "c" && selectedNodeId && !editing) {
+        event.preventDefault();
+        copySelectedNode();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "v" && !editing) {
+        event.preventDefault();
+        pasteCopiedNode();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "d" && selectedNodeId && !editing) {
+        event.preventDefault();
+        duplicateSelected();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "z" && !editing) {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "y" && !editing) {
+        event.preventDefault();
+        redo();
+        return;
+      }
       if (event.key === "Escape") {
         setModal(null);
         setPluginStoreOpen(false);
+        setProjectLibraryOpen(false);
         setSettingsOpen(false);
         setShortcutsOpen(false);
         setCanvasFilterOpen(false);
@@ -1386,11 +2405,25 @@ function AppShell() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleteSelected, fitView, runTraversal, selectedEdgeId, selectedNodeId, toggleZenMode]);
+  }, [
+    copySelectedNode,
+    deleteSelected,
+    duplicateSelected,
+    fitView,
+    pasteCopiedNode,
+    redo,
+    runTraversal,
+    selectedEdgeId,
+    selectedNodeId,
+    toggleZenMode,
+    undo,
+  ]);
 
   return (
     <main
-      className={`app-shell ${zenMode ? "zen-mode" : ""}`}
+      className={`app-shell ${zenMode ? "zen-mode" : ""} ${
+        activeTheme.source === "myc" ? "plugin-theme-active" : ""
+      }`}
       data-testid="research-canvas-app"
       data-theme={activeTheme.id}
       style={themeStyle}
@@ -1401,10 +2434,15 @@ function AppShell() {
             <Network size={18} strokeWidth={2.4} />
           </div>
           <div>
-            <div className="brand-name">Research Canvas</div>
-            <div className="project-breadcrumb">
-              Workspace <ChevronRight size={11} /> {project.title}
-            </div>
+            <div className="brand-name">{t("app.name")}</div>
+            <button
+              className="project-breadcrumb"
+              onClick={openProjectLibrary}
+              data-testid="project-switcher"
+            >
+              {t("app.workspace")} <ChevronRight size={11} /> {project.title}
+              <ChevronDown size={11} />
+            </button>
           </div>
         </div>
 
@@ -1412,7 +2450,7 @@ function AppShell() {
           <span className="discipline-chip">{project.discipline}</span>
           <span className="save-status" aria-live="polite">
             <span className={`save-dot ${saveState}`} />
-            {saveState === "saved" ? "Saved locally" : "Saving…"}
+            {saveState === "saved" ? t("status.saved") : t("status.saving")}
           </span>
         </div>
 
@@ -1442,30 +2480,30 @@ function AppShell() {
             </select>
             <button className="toolbar-button" onClick={applyTreeLayout} data-testid="apply-layout">
               <LayoutDashboard size={15} />
-              Layout
+              <span className="responsive-label">{t("toolbar.layout")}</span>
             </button>
           </div>
           <button
             className="icon-button"
             onClick={toggleZenMode}
-            title="Zen mode (Z)"
-            aria-label="Toggle zen mode"
+            title={`${t("toolbar.zen")} (Z)`}
+            aria-label={t("toolbar.zen")}
           >
             <Focus size={16} />
           </button>
           <button
             className="icon-button"
             onClick={() => setPluginStoreOpen(true)}
-            title="Plugin store (Ctrl/Cmd+Shift+P)"
-            aria-label="Open plugin store"
+            title={`${t("toolbar.plugins")} (Ctrl/Cmd+Shift+P)`}
+            aria-label={t("toolbar.plugins")}
           >
             <ShoppingBag size={16} />
           </button>
           <button
             className="icon-button"
             onClick={() => setSettingsOpen(true)}
-            title="Settings"
-            aria-label="Open settings"
+            title={t("toolbar.settings")}
+            aria-label={t("toolbar.settings")}
           >
             <Settings2 size={16} />
           </button>
@@ -1476,7 +2514,7 @@ function AppShell() {
               data-testid="export-button"
             >
               <Download size={15} />
-              Export
+              <span className="responsive-label">{t("toolbar.export")}</span>
               <ChevronDown size={13} />
             </button>
             {exportOpen && (
@@ -1503,14 +2541,18 @@ function AppShell() {
                       "long-context-ablation.canvas",
                       JSON.stringify(exportJsonCanvas(project), null, 2),
                     );
+                    downloadText(
+                      "long-context-ablation.research.json",
+                      JSON.stringify(project, null, 2),
+                    );
                     setExportOpen(false);
-                    setToast("Obsidian JSON Canvas exported.");
+                    setToast("Obsidian Canvas and semantic sidecar exported.");
                   }}
                 >
                   <Braces size={16} />
                   <span>
-                    <strong>Obsidian Canvas</strong>
-                    <small>JSON Canvas 1.0</small>
+                    <strong>Obsidian bundle</strong>
+                    <small>.canvas + semantic sidecar</small>
                   </span>
                 </button>
                 <button
@@ -1586,6 +2628,32 @@ function AppShell() {
                     <small>Connector-ready JSON</small>
                   </span>
                 </button>
+                {activeScenario && (
+                  <button
+                    onClick={() => {
+                      downloadText(
+                        `${activeScenario.id}.scenario.json`,
+                        JSON.stringify(
+                          {
+                            schemaVersion: 1,
+                            projectId: project.id,
+                            projectRevision: project.revision,
+                            scenario: activeScenario,
+                          },
+                          null,
+                          2,
+                        ),
+                      );
+                      setExportOpen(false);
+                    }}
+                  >
+                    <CircleDotDashed size={16} />
+                    <span>
+                      <strong>Active scenario</strong>
+                      <small>Stable overlay JSON</small>
+                    </span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1604,7 +2672,7 @@ function AppShell() {
       >
         <aside className="left-sidebar">
           <div className="sidebar-head">
-            <span>Navigator</span>
+            <span>{t("nav.navigator")}</span>
             <button
               className="icon-button ghost"
               onClick={() => setLeftCollapsed(true)}
@@ -1619,7 +2687,7 @@ function AppShell() {
               ref={searchInput}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search nodes, tags, notes…"
+              placeholder={t("nav.search")}
               aria-label="Search graph"
             />
             <kbd>⌘K</kbd>
@@ -1628,28 +2696,78 @@ function AppShell() {
           <div className="sidebar-scroll">
             <section className="sidebar-section">
               <div className="section-label">
-                Views <span>3</span>
+                {t("nav.views")} <span>3</span>
               </div>
               <button className="nav-row active">
                 <Network size={15} />
-                Research map
+                {t("nav.researchMap")}
                 <span className="count-badge">{project.nodes.length}</span>
               </button>
               <button className="nav-row" onClick={applyTreeLayout}>
                 <ListTree size={15} />
-                Dependency tree
+                {t("nav.dependencyTree")}
                 <span className="muted-badge">BFS</span>
               </button>
               <button className="nav-row" onClick={() => setActiveInspectorTab("evidence")}>
                 <FileText size={15} />
-                Evidence map
+                {t("nav.evidenceMap")}
                 <span className="count-badge">{project.evidence.length}</span>
               </button>
             </section>
 
             <section className="sidebar-section">
               <div className="section-label">
-                Scenarios <span>{project.scenarios.length + 1}</span>
+                {t("nav.pinnedRecent")} <Pin size={12} />
+              </div>
+              {(project.navigation?.pinnedNodeIds ?? []).slice(0, 4).map((id) => {
+                const node = project.nodes.find((item) => item.id === id);
+                return node ? (
+                  <button className="node-result pinned" key={`pinned-${id}`} onClick={() => focusNode(id)}>
+                    <Pin size={12} />
+                    <span>{node.title}</span>
+                  </button>
+                ) : null;
+              })}
+              {(project.navigation?.recentNodeIds ?? [])
+                .filter((id) => !project.navigation?.pinnedNodeIds.includes(id))
+                .slice(0, 4)
+                .map((id) => {
+                  const node = project.nodes.find((item) => item.id === id);
+                  return node ? (
+                    <button className="node-result" key={`recent-${id}`} onClick={() => focusNode(id)}>
+                      <History size={12} />
+                      <span>{node.title}</span>
+                    </button>
+                  ) : null;
+                })}
+              {!project.navigation?.recentNodeIds.length &&
+                !project.navigation?.pinnedNodeIds.length && (
+                  <p className="sidebar-empty">Visited and pinned nodes appear here.</p>
+                )}
+            </section>
+
+            <section className="sidebar-section">
+              <div className="section-label">
+                {t("nav.evidenceSource")} <FileText size={12} />
+              </div>
+              <select
+                className="sidebar-select"
+                value={evidenceSourceFilter}
+                onChange={(event) => setEvidenceSourceFilter(event.target.value)}
+                aria-label="Filter by evidence source"
+              >
+                <option value="">All evidence sources</option>
+                {evidenceSources.map((source) => (
+                  <option key={source.sourceId} value={source.sourceId}>
+                    {source.title}
+                  </option>
+                ))}
+              </select>
+            </section>
+
+            <section className="sidebar-section">
+              <div className="section-label">
+                {t("nav.scenarios")} <span>{project.scenarios.length + 1}</span>
               </div>
               <button
                 className={`scenario-row ${activeScenarioId === "" ? "active" : ""}`}
@@ -1692,7 +2810,7 @@ function AppShell() {
 
             <section className="sidebar-section">
               <div className="section-label">
-                Node types <Filter size={12} />
+                {t("nav.nodeTypes")} <Filter size={12} />
               </div>
               <button
                 className={`type-filter ${nodeTypeFilter === "all" ? "active" : ""}`}
@@ -1755,11 +2873,11 @@ function AppShell() {
           <div className="canvas-toolbar">
             <button className="tool-button primary" onClick={() => setModal("new-node")}>
               <Plus size={15} />
-              Node
+              <span>{t("toolbar.node")}</span>
             </button>
             <button className="tool-button" onClick={() => setModal("new-edge")}>
               <Link2 size={15} />
-              Relation
+              <span>{t("toolbar.relation")}</span>
             </button>
             <div className="canvas-filter-wrap">
               <button
@@ -1768,9 +2886,10 @@ function AppShell() {
                 data-testid="canvas-filter"
               >
                 <SlidersHorizontal size={15} />
-                Filter
+                <span>{t("toolbar.filter")}</span>
                 {(canvasNodeTypes.length ||
                   canvasEdgeTypes.length ||
+                  evidenceSourceFilter ||
                   minimumConfidence ||
                   experimentsOnly) && <span className="filter-active-dot" />}
               </button>
@@ -1782,6 +2901,7 @@ function AppShell() {
                       onClick={() => {
                         setCanvasNodeTypes([]);
                         setCanvasEdgeTypes([]);
+                        setEvidenceSourceFilter("");
                         setMinimumConfidence(0);
                         setExperimentsOnly(false);
                       }}
@@ -1827,6 +2947,20 @@ function AppShell() {
                       </button>
                     ))}
                   </div>
+                  <label className="field-label compact-filter-field">
+                    Evidence source
+                    <select
+                      value={evidenceSourceFilter}
+                      onChange={(event) => setEvidenceSourceFilter(event.target.value)}
+                    >
+                      <option value="">Any source</option>
+                      {evidenceSources.map((source) => (
+                        <option key={source.sourceId} value={source.sourceId}>
+                          {source.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label className="filter-range">
                     Minimum confidence {Math.round(minimumConfidence * 100)}%
                     <input
@@ -1861,18 +2995,35 @@ function AppShell() {
               </select>
               <button className="tool-button" onClick={highlightLogicChain}>
                 <Sparkles size={15} />
-                Highlight chain
+                <span>{t("toolbar.highlight")}</span>
               </button>
             </div>
             <div className="toolbar-divider" />
             <button
               className="tool-button"
+              onClick={copySelectedNode}
+              disabled={!selectedNode}
+              title="Copy selected node (Ctrl/Cmd+C)"
+              aria-label="Copy selected node"
+            >
+              <ClipboardCopy size={15} />
+            </button>
+            <button
+              className="tool-button"
+              onClick={pasteCopiedNode}
+              title="Paste copied node (Ctrl/Cmd+V)"
+              aria-label="Paste copied node"
+            >
+              <ClipboardPaste size={15} />
+            </button>
+            <button
+              className="tool-button"
               onClick={duplicateSelected}
               disabled={!selectedNode}
               title="Duplicate selected node"
+              aria-label="Duplicate selected node"
             >
               <GitFork size={15} />
-              Duplicate
             </button>
             <button
               className="tool-button"
@@ -1886,9 +3037,9 @@ function AppShell() {
               }}
               disabled={!selectedNode}
               title="Split selected node"
+              aria-label="Split selected node"
             >
               <Scissors size={15} />
-              Split
             </button>
             <button
               className="tool-button danger-ghost"
@@ -1899,9 +3050,13 @@ function AppShell() {
               <Trash2 size={15} />
             </button>
             <div className="toolbar-spacer" />
-            <button className="tool-button" onClick={() => fitView({ padding: 0.16, duration: 450 })}>
+            <button
+              className="tool-button"
+              onClick={() => fitView({ padding: 0.16, duration: 450 })}
+              aria-label="Fit view"
+              title="Fit view"
+            >
               <Maximize2 size={15} />
-              Fit view
             </button>
             <span className="canvas-stat">
               {project.nodes.length} nodes · {project.edges.length} relations
@@ -1915,10 +3070,22 @@ function AppShell() {
             edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
+            onReconnect={onReconnect}
+            edgesReconnectable
+            reconnectRadius={18}
             onNodeClick={(_, node) => {
               setSelectedNodeId(node.id);
               setSelectedEdgeId("");
               setActiveInspectorTab("properties");
+              setProject((current) => {
+                const next = cloneProject(current);
+                next.navigation ??= { recentNodeIds: [], pinnedNodeIds: [] };
+                next.navigation.recentNodeIds = [
+                  node.id,
+                  ...next.navigation.recentNodeIds.filter((id) => id !== node.id),
+                ].slice(0, 6);
+                return next;
+              });
             }}
             onEdgeClick={(_, edge) => {
               setSelectedEdgeId(edge.id);
@@ -1932,7 +3099,34 @@ function AppShell() {
             onNodeDragStart={() => {
               dragSnapshot.current = cloneProject(project);
             }}
+            onNodeDrag={(_, node) => {
+              if (!snapEnabled) return;
+              const alignedX = project.placements.find(
+                (item) =>
+                  item.nodeId !== node.id && Math.abs(item.x - node.position.x) <= 8,
+              )?.x;
+              const alignedY = project.placements.find(
+                (item) =>
+                  item.nodeId !== node.id && Math.abs(item.y - node.position.y) <= 8,
+              )?.y;
+              const viewport = getViewport();
+              setAlignmentGuide(
+                typeof alignedX === "number" || typeof alignedY === "number"
+                  ? {
+                      x:
+                        typeof alignedX === "number"
+                          ? alignedX * viewport.zoom + viewport.x
+                          : undefined,
+                      y:
+                        typeof alignedY === "number"
+                          ? alignedY * viewport.zoom + viewport.y
+                          : undefined,
+                    }
+                  : null,
+              );
+            }}
             onNodeDragStop={() => {
+              setAlignmentGuide(null);
               if (dragSnapshot.current) {
                 setPast((items) => [
                   ...items.slice(-39),
@@ -1959,6 +3153,20 @@ function AppShell() {
             proOptions={{ hideAttribution: true }}
             className="research-flow"
           >
+            {typeof alignmentGuide?.x === "number" && (
+              <div
+                className="alignment-guide vertical"
+                style={{ left: alignmentGuide.x }}
+                aria-hidden="true"
+              />
+            )}
+            {typeof alignmentGuide?.y === "number" && (
+              <div
+                className="alignment-guide horizontal"
+                style={{ top: alignmentGuide.y }}
+                aria-hidden="true"
+              />
+            )}
             <Background
               variant={BackgroundVariant.Dots}
               gap={20}
@@ -1980,7 +3188,11 @@ function AppShell() {
                 };
                 return colors[type ?? "note"] ?? "#8a94a4";
               }}
-              maskColor="rgba(247, 248, 250, 0.78)"
+              maskColor={
+                activeTheme.source === "myc"
+                  ? "rgba(30, 34, 42, 0.78)"
+                  : "rgba(247, 248, 250, 0.78)"
+              }
               pannable
               zoomable
             />
@@ -2144,6 +3356,22 @@ function AppShell() {
                     <Scissors size={15} />
                     Split node
                   </button>
+                  <button className="secondary-button" onClick={toggleCollapsedSubtree}>
+                    <ListTree size={15} />
+                    {project.placements.find((item) => item.nodeId === selectedNode.id)?.collapsed
+                      ? "Expand subtree"
+                      : "Collapse subtree"}
+                  </button>
+                  <button className="secondary-button" onClick={togglePinnedNode}>
+                    {project.placements.find((item) => item.nodeId === selectedNode.id)?.pinned ? (
+                      <PinOff size={15} />
+                    ) : (
+                      <Pin size={15} />
+                    )}
+                    {project.placements.find((item) => item.nodeId === selectedNode.id)?.pinned
+                      ? "Unpin node"
+                      : "Pin node"}
+                  </button>
                   {layoutMode === "neural-network" && (
                     <button className="secondary-button" onClick={runInfluencePropagation}>
                       <BrainCircuit size={15} />
@@ -2224,6 +3452,16 @@ function AppShell() {
                     </small>
                   </div>
                 )}
+                <button
+                  className="secondary-button"
+                  onClick={toggleSelectionInScenario}
+                  disabled={!activeScenario}
+                >
+                  <CircleDotDashed size={15} />
+                  {activeScenario?.disabledEdgeIds.includes(selectedEdge.id)
+                    ? "Enable in scenario"
+                    : "Disable in scenario"}
+                </button>
                 <button className="danger-button" onClick={deleteSelected}>
                   <Trash2 size={15} />
                   Delete relation
@@ -2245,9 +3483,11 @@ function AppShell() {
                   <div>
                     <span className="eyebrow">Traceable sources</span>
                     <strong>
-                      {selectedNode
-                        ? `${selectedNode.evidenceIds.length} bound records`
-                        : "Select a node"}
+                      {selectedNode || selectedEdge
+                        ? `${
+                            selectedNode?.evidenceIds.length ?? selectedEdge?.evidenceIds.length ?? 0
+                          } bound records`
+                        : "Select a node or relation"}
                     </strong>
                   </div>
                   <button
@@ -2258,9 +3498,10 @@ function AppShell() {
                     <Plus size={13} /> Add
                   </button>
                 </div>
-                {selectedNode?.evidenceIds.map((evidenceId) => {
+                {(selectedNode?.evidenceIds ?? selectedEdge?.evidenceIds ?? []).map((evidenceId) => {
                   const evidence = project.evidence.find((item) => item.id === evidenceId);
                   if (!evidence) return null;
+                  const backlinks = evidenceBacklinks(project, evidence.id);
                   return (
                     <article className="evidence-card" key={evidence.id}>
                       <div className="evidence-card-head">
@@ -2280,16 +3521,32 @@ function AppShell() {
                       )}
                       <div className="evidence-locator">
                         <FileText size={13} />
-                        {evidence.locator.section ?? evidence.sourceType}
+                        {[
+                          evidence.locator.fileName,
+                          evidence.locator.section ?? evidence.sourceType,
+                          typeof evidence.locator.startOffset === "number"
+                            ? `${evidence.locator.startOffset}–${evidence.locator.endOffset ?? "?"}`
+                            : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </div>
+                      <div className="evidence-backlinks">
+                        Used by {backlinks.nodeIds.length} node
+                        {backlinks.nodeIds.length === 1 ? "" : "s"} and{" "}
+                        {backlinks.edgeIds.length} relation
+                        {backlinks.edgeIds.length === 1 ? "" : "s"}
                       </div>
                     </article>
                   );
                 })}
-                {selectedNode && selectedNode.evidenceIds.length === 0 && (
+                {(selectedNode || selectedEdge) &&
+                  (selectedNode?.evidenceIds.length ?? selectedEdge?.evidenceIds.length ?? 0) ===
+                    0 && (
                   <div className="empty-inline">
                     No evidence bound yet. Add a paper, page, section, and exact quote.
                   </div>
-                )}
+                  )}
               </div>
             )}
 
@@ -2301,6 +3558,33 @@ function AppShell() {
                     <strong>AI can only propose changes</strong>
                     <p>Nothing enters the formal graph until you review it.</p>
                   </div>
+                </div>
+                <div className="selection-extractor">
+                  <label className="field-label">
+                    Selected paper text
+                    <textarea
+                      rows={4}
+                      value={selectedSourceText}
+                      onChange={(event) => setSelectedSourceText(event.target.value)}
+                      placeholder="Paste a precise passage. Extraction creates staged candidates only."
+                    />
+                  </label>
+                  <button className="secondary-button" onClick={stageSelectionAsSuggestions}>
+                    <Sparkles size={14} />
+                    Extract candidates
+                  </button>
+                </div>
+                <div className="graph-patch-summary">
+                  {(["add", "update", "delete"] as const).map((operation) => (
+                    <span key={operation} className={`operation-${operation}`}>
+                      {operation}{" "}
+                      {
+                        suggestions.filter(
+                          (item) => (item.operation ?? "add") === operation,
+                        ).length
+                      }
+                    </span>
+                  ))}
                 </div>
                 <div className="suggestion-toolbar">
                   <span>
@@ -2317,14 +3601,59 @@ function AppShell() {
                     <div className="suggestion-head">
                       <span className="suggestion-kind">
                         {suggestion.kind === "node" ? <Plus size={12} /> : <Link2 size={12} />}
-                        {suggestion.kind}
+                        {suggestion.operation ?? "add"} {suggestion.kind}
                       </span>
                       <span className="confidence">
                         {Math.round(suggestion.confidence * 100)}%
                       </span>
                     </div>
-                    <h3>{suggestion.title}</h3>
-                    <p>{suggestion.description}</p>
+                    {editingSuggestionId === suggestion.id ? (
+                      <>
+                        <input
+                          className="suggestion-edit-title"
+                          value={suggestion.title}
+                          onChange={(event) =>
+                            setSuggestions((items) =>
+                              items.map((item) =>
+                                item.id === suggestion.id
+                                  ? {
+                                      ...item,
+                                      title: event.target.value,
+                                      node: item.node
+                                        ? { ...item.node, title: event.target.value }
+                                        : item.node,
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                        <textarea
+                          rows={3}
+                          value={suggestion.description}
+                          onChange={(event) =>
+                            setSuggestions((items) =>
+                              items.map((item) =>
+                                item.id === suggestion.id
+                                  ? {
+                                      ...item,
+                                      description: event.target.value,
+                                      node: item.node
+                                        ? { ...item.node, body: event.target.value }
+                                        : item.node,
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <h3>{suggestion.title}</h3>
+                        <p>{suggestion.description}</p>
+                      </>
+                    )}
                     <div className="suggestion-source">
                       <FileText size={13} />
                       {suggestion.evidenceLabel}
@@ -2339,7 +3668,16 @@ function AppShell() {
                           <Check size={14} />
                           Accept
                         </button>
-                        <button className="edit-button">Edit</button>
+                        <button
+                          className="edit-button"
+                          onClick={() =>
+                            setEditingSuggestionId((current) =>
+                              current === suggestion.id ? "" : suggestion.id,
+                            )
+                          }
+                        >
+                          {editingSuggestionId === suggestion.id ? "Done" : "Edit"}
+                        </button>
                         <button
                           className="reject-button"
                           onClick={() => rejectSuggestion(suggestion.id)}
@@ -2478,6 +3816,19 @@ function AppShell() {
                     onChange={(event) => setMaxDepth(Number(event.target.value))}
                   />
                 </label>
+                <label className="path-target-control">
+                  Path target
+                  <select
+                    value={pathTargetId}
+                    onChange={(event) => setPathTargetId(event.target.value)}
+                  >
+                    {project.nodes.map((node) => (
+                      <option key={node.id} value={node.id}>
+                        {node.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <div className="edge-filter-pills">
                   {(["depends_on", "controls", "supports", "measures"] as ResearchEdgeType[]).map(
                     (type) => (
@@ -2502,6 +3853,14 @@ function AppShell() {
                 <button className="secondary-button compact" onClick={runCycleDetection}>
                   <RotateCcw size={14} />
                   Detect cycles
+                </button>
+                <button className="secondary-button compact" onClick={runShortestPath}>
+                  <Link2 size={14} />
+                  Shortest path
+                </button>
+                <button className="secondary-button compact" onClick={explainSelectedNeighborhood}>
+                  <Sparkles size={14} />
+                  Explain local graph
                 </button>
               </div>
 
@@ -2560,6 +3919,32 @@ function AppShell() {
                     </p>
                   )}
                 </div>
+                <div className="algorithm-explanation">
+                  <span className="eyebrow">Algorithm explanation</span>
+                  <strong>
+                    {shortestPaths.length
+                      ? `${shortestPaths.length} equally short path${
+                          shortestPaths.length === 1 ? "" : "s"
+                        }`
+                      : `${traversalStrategy.toUpperCase()} · ${traversalDirection} · depth ${maxDepth}`}
+                  </strong>
+                  <p>
+                    {graphExplanation ||
+                      (traversal
+                        ? `Applied ${
+                            edgeTypeFilter.length
+                              ? edgeTypeFilter.map((type) => edgeTypeLabels[type]).join(", ")
+                              : "all relation types"
+                          } in ${
+                            activeScenario?.name ?? "the base graph"
+                          }. ${
+                            traversal.stoppedByDepth.length
+                              ? `${traversal.stoppedByDepth.length} branch(es) stopped at the depth limit.`
+                              : "No branch was stopped by the depth limit."
+                          }`
+                        : "Run an analysis to see its parameters, filters, and stopping reason.")}
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -2606,16 +3991,81 @@ function AppShell() {
                 </div>
               </div>
               {activeScenario && (
-                <div className="scenario-notes">
-                  <div>
-                    <span>Hypothesis</span>
-                    <p>{activeScenario.hypothesis}</p>
+                <>
+                  <div className="scenario-notes">
+                    <div>
+                      <span>Hypothesis</span>
+                      <p>{activeScenario.hypothesis}</p>
+                    </div>
+                    <div>
+                      <span>Expected effect</span>
+                      <p>{activeScenario.expectedEffect}</p>
+                    </div>
                   </div>
-                  <div>
-                    <span>Expected effect</span>
-                    <p>{activeScenario.expectedEffect}</p>
-                  </div>
-                </div>
+                  <details className="scenario-override-editor">
+                    <summary>
+                      <span>
+                        <strong>Scenario overrides</strong>
+                        <small>
+                          {Object.keys(activeScenario.nodeOverrides).length +
+                            Object.keys(activeScenario.edgeOverrides).length}{" "}
+                          overridden object(s) · base graph stays unchanged
+                        </small>
+                      </span>
+                      <ChevronDown size={15} />
+                    </summary>
+                    <div className="scenario-override-form">
+                      <label>
+                        Property
+                        <input
+                          value={scenarioOverrideKey}
+                          onChange={(event) => setScenarioOverrideKey(event.target.value)}
+                          placeholder="value"
+                        />
+                      </label>
+                      <label>
+                        Scenario value
+                        <input
+                          value={scenarioOverrideValue}
+                          onChange={(event) => setScenarioOverrideValue(event.target.value)}
+                          placeholder="e.g. 16, tanh, false"
+                        />
+                      </label>
+                      <button
+                        className="secondary-button"
+                        onClick={applyScenarioOverride}
+                        disabled={!selectedNode}
+                      >
+                        Apply to selected
+                      </button>
+                      <button className="secondary-button" onClick={toggleSelectionInScenario}>
+                        <CircleDotDashed size={14} />
+                        Toggle selected
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() =>
+                          downloadText(
+                            `${activeScenario.id}.scenario.json`,
+                            JSON.stringify(
+                              {
+                                schemaVersion: 1,
+                                projectId: project.id,
+                                projectRevision: project.revision,
+                                scenario: activeScenario,
+                              },
+                              null,
+                              2,
+                            ),
+                          )
+                        }
+                      >
+                        <Download size={14} />
+                        Export
+                      </button>
+                    </div>
+                  </details>
+                </>
               )}
             </div>
           )}
@@ -2771,6 +4221,18 @@ function AppShell() {
         type="file"
         accept="application/json,.json"
         onChange={handleRunResultImport}
+      />
+      <input
+        ref={mycPluginInput}
+        className="hidden-input"
+        type="file"
+        accept=".myc,application/zip"
+        onChange={(event) => {
+          const file = event.target.files?.[0] as (File & { path?: string }) | undefined;
+          if (file?.path) void installMycPaths([file.path]);
+          else if (file) setToast(t("plugins.desktopOnly"));
+          event.target.value = "";
+        }}
       />
 
       {modal && (
@@ -2942,6 +4404,71 @@ function AppShell() {
                 </label>
                 <div className="field-grid">
                   <label className="field-label">
+                    Authors
+                    <input
+                      value={newEvidence.authors}
+                      onChange={(event) =>
+                        setNewEvidence((current) => ({
+                          ...current,
+                          authors: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="field-label">
+                    Year
+                    <input
+                      type="number"
+                      min="1000"
+                      max="2100"
+                      value={newEvidence.year}
+                      onChange={(event) =>
+                        setNewEvidence((current) => ({ ...current, year: event.target.value }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="field-grid">
+                  <label className="field-label">
+                    DOI
+                    <input
+                      value={newEvidence.doi}
+                      onChange={(event) =>
+                        setNewEvidence((current) => ({ ...current, doi: event.target.value }))
+                      }
+                      placeholder="10.xxxx/..."
+                    />
+                  </label>
+                  <label className="field-label">
+                    Review status
+                    <select
+                      value={newEvidence.status}
+                      onChange={(event) =>
+                        setNewEvidence((current) => ({
+                          ...current,
+                          status: event.target.value as typeof current.status,
+                        }))
+                      }
+                    >
+                      <option value="candidate">Candidate</option>
+                      <option value="confirmed">User confirmed</option>
+                      <option value="disputed">Disputed</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="pdf-reference-row">
+                  <button
+                    className="secondary-button"
+                    onClick={() => evidenceFileInput.current?.click()}
+                    type="button"
+                  >
+                    <Upload size={14} />
+                    Choose PDF reference
+                  </button>
+                  <span>{newEvidence.fileName || "No local PDF reference selected"}</span>
+                </div>
+                <div className="field-grid">
+                  <label className="field-label">
                     Page
                     <input
                       type="number"
@@ -2964,6 +4491,36 @@ function AppShell() {
                     />
                   </label>
                 </div>
+                <div className="field-grid">
+                  <label className="field-label">
+                    Start offset
+                    <input
+                      type="number"
+                      min="0"
+                      value={newEvidence.startOffset}
+                      onChange={(event) =>
+                        setNewEvidence((current) => ({
+                          ...current,
+                          startOffset: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="field-label">
+                    End offset
+                    <input
+                      type="number"
+                      min="0"
+                      value={newEvidence.endOffset}
+                      onChange={(event) =>
+                        setNewEvidence((current) => ({
+                          ...current,
+                          endOffset: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
                 <label className="field-label">
                   Exact quote
                   <textarea
@@ -2976,7 +4533,7 @@ function AppShell() {
                   />
                 </label>
                 <label className="field-label">
-                  URL or DOI
+                  URL
                   <input
                     value={newEvidence.url}
                     onChange={(event) =>
@@ -2984,6 +4541,22 @@ function AppShell() {
                     }
                   />
                 </label>
+                <input
+                  ref={evidenceFileInput}
+                  className="hidden-input"
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      setNewEvidence((current) => ({
+                        ...current,
+                        fileName: file.name,
+                      }));
+                    }
+                    event.target.value = "";
+                  }}
+                />
                 <div className="modal-footer">
                   <button className="secondary-button" onClick={() => setModal(null)}>
                     Cancel
@@ -3049,6 +4622,76 @@ function AppShell() {
         </div>
       )}
 
+      {projectLibraryOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setProjectLibraryOpen(false)}>
+          <div
+            className="modal-card wide project-library"
+            onMouseDown={stopEvent}
+            role="dialog"
+            aria-modal="true"
+            data-testid="project-library"
+          >
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">Local workspace</span>
+                <h2>Projects</h2>
+                <p>Create, rename, or reopen a locally saved research graph.</p>
+              </div>
+              <button className="icon-button ghost" onClick={() => setProjectLibraryOpen(false)}>
+                <X size={17} />
+              </button>
+            </div>
+            <div className="project-library-current">
+              <div>
+                <span className="eyebrow">Current project</span>
+                <strong>{project.title}</strong>
+                <small>
+                  {project.nodes.length} nodes · revision {project.revision}
+                </small>
+              </div>
+              <label className="field-label">
+                Project name
+                <input
+                  value={projectNameDraft}
+                  onChange={(event) => setProjectNameDraft(event.target.value)}
+                />
+              </label>
+              <button className="secondary-button" onClick={renameCurrentProject}>
+                Rename
+              </button>
+              <button className="primary-button" onClick={startNewProject}>
+                <Plus size={15} />
+                New project
+              </button>
+            </div>
+            <div className="recent-project-grid">
+              {projectLibrary.map((entry) => (
+                <button
+                  key={entry.id}
+                  className={entry.id === project.id ? "active" : ""}
+                  onClick={() => openLibraryProject(entry)}
+                >
+                  <FileJson size={18} />
+                  <span>
+                    <strong>{entry.title}</strong>
+                    <small>
+                      {entry.nodeCount} nodes ·{" "}
+                      {new Date(entry.updatedAt).toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </small>
+                  </span>
+                  {entry.id === project.id ? <Check size={15} /> : <ChevronRight size={15} />}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {pluginStoreOpen && (
         <div className="modal-backdrop" onMouseDown={() => setPluginStoreOpen(false)}>
           <div
@@ -3060,12 +4703,50 @@ function AppShell() {
           >
             <div className="modal-head">
               <div>
-                <span className="eyebrow">Extension boundary</span>
-                <h2>Research Canvas Plugin Store</h2>
-                <p>VS Code-style manifests with explicit capabilities and permissions.</p>
+                <span className="eyebrow">{t("plugins.eyebrow")}</span>
+                <h2>{t("plugins.title")}</h2>
+                <p>{t("plugins.subtitle")}</p>
               </div>
               <button className="icon-button ghost" onClick={() => setPluginStoreOpen(false)}>
                 <X size={17} />
+              </button>
+            </div>
+            <div
+              className={`myc-drop-zone ${mycDropActive ? "active" : ""}`}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setMycDropActive(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setMycDropActive(true);
+              }}
+              onDragLeave={(event) => {
+                if (event.currentTarget === event.target) setMycDropActive(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setMycDropActive(false);
+                const paths = Array.from(event.dataTransfer.files)
+                  .filter((file) => isMycFileName(file.name))
+                  .map((file) => (file as File & { path?: string }).path)
+                  .filter((path): path is string => Boolean(path));
+                if (paths.length) void installMycPaths(paths);
+                else setToast(t("plugins.desktopOnly"));
+              }}
+              data-testid="myc-drop-zone"
+            >
+              <PackageOpen size={24} />
+              <div>
+                <strong>{mycInstalling ? t("plugins.installing") : t("plugins.dropTitle")}</strong>
+                <small>{t("plugins.dropHint")}</small>
+              </div>
+              <button
+                className="secondary-button"
+                onClick={() => mycPluginInput.current?.click()}
+                disabled={mycInstalling}
+              >
+                {t("plugins.browse")}
               </button>
             </div>
             <div className="plugin-store-feature">
@@ -3080,15 +4761,26 @@ function AppShell() {
                   CPU MNIST runs, metric evidence, scenarios, and experiment edges.
                 </p>
               </div>
-              <button className="primary-button" onClick={loadMnistStudy} data-testid="load-mnist">
-                Load MNIST study
-              </button>
+              <div className="fixture-load-actions">
+                <button className="primary-button" onClick={loadMnistStudy} data-testid="load-mnist">
+                  {t("plugins.loadMnist")}
+                </button>
+                <button className="secondary-button" onClick={loadSocialScienceStudy}>
+                  {t("plugins.loadSocial")}
+                </button>
+              </div>
             </div>
             <div className="plugin-grid">
               {pluginCatalog.map((plugin) => (
                 <article className="plugin-card" key={plugin.id}>
                   <div className="plugin-card-head">
-                    <span className={`plugin-status ${plugin.status}`}>{plugin.status}</span>
+                    <span className={`plugin-status ${plugin.status}`}>
+                      {plugin.status === "installed"
+                        ? t("plugins.installed")
+                        : plugin.status === "reserved"
+                          ? t("plugins.reserved")
+                          : t("plugins.available")}
+                    </span>
                     <small>{plugin.category}</small>
                   </div>
                   <h3>{plugin.name}</h3>
@@ -3111,7 +4803,9 @@ function AppShell() {
                         setToast(`${plugin.name} enabled for this workspace.`);
                       }}
                     >
-                      {loadedPlugins.includes(plugin.id) ? "Enabled" : "Enable"}
+                      {loadedPlugins.includes(plugin.id)
+                        ? t("plugins.enabled")
+                        : t("plugins.enable")}
                     </button>
                   )}
                 </article>
@@ -3130,101 +4824,332 @@ function AppShell() {
             aria-modal="true"
             data-testid="settings-modal"
           >
-            <div className="modal-head">
+            <div className="modal-head settings-modal-head">
               <div>
-                <span className="eyebrow">Workspace preferences</span>
-                <h2>Settings</h2>
+                <span className="eyebrow">{t("settings.eyebrow")}</span>
+                <div className="settings-heading-row">
+                  <h2>{t("settings.title")}</h2>
+                  <span className="display-detected-badge">
+                    {displayProfile.source === "tauri" ? "Windows display" : "Browser preview"}
+                    {" · "}
+                    {Math.round(displayProfile.scaleFactor * 100)}%
+                  </span>
+                </div>
+                <p>{t("settings.subtitle")}</p>
               </div>
-              <button className="icon-button ghost" onClick={() => setSettingsOpen(false)}>
-                <X size={17} />
+              <button
+                className="icon-button ghost settings-close"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Close settings"
+              >
+                <X size={20} />
               </button>
             </div>
-            <div className="settings-section">
-              <div className="settings-title">
-                <Palette size={17} />
-                <div>
-                  <strong>Color theme</strong>
-                  <small>Theme manifests use stable semantic color tokens.</small>
-                </div>
-              </div>
-              <div className="theme-grid">
-                {themeCatalog.map((theme) => (
+            <div className="settings-layout">
+              <nav className="settings-nav" aria-label="Settings sections">
+                {(
+                  [
+                    ["display", Gauge, t("settings.display"), t("settings.displayHint")],
+                    ["canvas", SlidersHorizontal, t("settings.canvas"), t("settings.canvasHint")],
+                    [
+                      "integrations",
+                      Settings2,
+                      t("settings.integrations"),
+                      t("settings.integrationsHint"),
+                    ],
+                    [
+                      "shortcuts",
+                      Binary,
+                      t("settings.shortcuts"),
+                      t("settings.shortcutsHint"),
+                    ],
+                  ] as const
+                ).map(([id, Icon, label, hint]) => (
                   <button
-                    key={theme.id}
-                    className={themeId === theme.id ? "active" : ""}
-                    onClick={() => setThemeId(theme.id)}
+                    key={id}
+                    className={settingsSection === id ? "active" : ""}
+                    onClick={() => setSettingsSection(id)}
                   >
-                    <span className="theme-swatch" style={{ background: theme.colors.canvas }}>
-                      <i style={{ background: theme.colors.accent }} />
-                    </span>
+                    <Icon size={18} />
                     <span>
-                      <strong>{theme.name}</strong>
-                      <small>{theme.publisher}</small>
+                      <strong>{label}</strong>
+                      <small>{hint}</small>
                     </span>
+                    <ChevronRight size={15} />
                   </button>
                 ))}
-              </div>
-            </div>
-            <div className="settings-section">
-              <div className="settings-title">
-                <SlidersHorizontal size={17} />
-                <div>
-                  <strong>Canvas interaction</strong>
-                  <small>Windows and macOS trackpad-friendly defaults.</small>
+                <div className="settings-nav-note">
+                  <span>{t("settings.localFirst")}</span>
+                  {t("settings.localFirstHint")}
                 </div>
+              </nav>
+
+              <div className="settings-content">
+                {settingsSection === "display" && (
+                  <>
+                    <section className="settings-section settings-section-first">
+                      <div className="settings-title">
+                        <Gauge size={20} />
+                        <div>
+                          <strong>Display & readability</strong>
+                          <small>
+                            Tauri listens for Windows scale changes and updates the interface
+                            automatically.
+                          </small>
+                        </div>
+                      </div>
+
+                      <div className="display-status-card">
+                        <div className="display-status-icon">
+                          <LayoutDashboard size={22} />
+                        </div>
+                        <div>
+                          <span>Current display</span>
+                          <strong>
+                            {Math.round(displayProfile.scaleFactor * 100)}% Windows scaling
+                            <small>≈ {displayProfile.dpi} DPI</small>
+                          </strong>
+                        </div>
+                        <span className="auto-status">
+                          <Check size={14} />
+                          {displayProfile.source === "tauri" ? "Live detected" : "Preview detected"}
+                        </span>
+                      </div>
+
+                      <div className="density-heading">
+                        <div>
+                          <strong>Interface size</strong>
+                          <small>Effective scale: {Math.round(uiScale * 100)}%</small>
+                        </div>
+                        {displayDensity === "auto" && <span>Recommended</span>}
+                      </div>
+                      <div className="density-grid">
+                        {displayDensityOptions.map((option) => (
+                          <button
+                            key={option.id}
+                            className={displayDensity === option.id ? "active" : ""}
+                            onClick={() => setDisplayDensity(option.id)}
+                            aria-pressed={displayDensity === option.id}
+                          >
+                            <span className={`density-aa density-${option.id}`}>Aa</span>
+                            <strong>{option.label}</strong>
+                            <small>{option.description}</small>
+                            {displayDensity === option.id && (
+                              <span className="density-check">
+                                <Check size={13} />
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="readability-preview">
+                        <div>
+                          <span className="eyebrow">Live preview</span>
+                          <strong>Evidence chain remains legible at a glance</strong>
+                          <p>
+                            Variable labels, experiment outcomes, and citations use a consistent
+                            reading scale.
+                          </p>
+                        </div>
+                        <span>Supports · Δ +1.84 pp</span>
+                      </div>
+                    </section>
+
+                    <section className="settings-section">
+                      <div className="settings-title">
+                        <Languages size={20} />
+                        <div>
+                          <strong>{t("settings.language")}</strong>
+                          <small>{t("settings.languageHint")}</small>
+                        </div>
+                      </div>
+                      <div className="language-grid" role="radiogroup" aria-label={t("settings.language")}>
+                        {(
+                          [
+                            ["en", "EN", t("settings.english")],
+                            ["zh-CN", "中", t("settings.chinese")],
+                          ] as const
+                        ).map(([id, badge, label]) => (
+                          <button
+                            key={id}
+                            className={locale === id ? "active" : ""}
+                            onClick={() => {
+                              setLocale(id);
+                              setToast(translate(id, "locale.changed"));
+                            }}
+                            role="radio"
+                            aria-checked={locale === id}
+                          >
+                            <span>{badge}</span>
+                            <strong>{label}</strong>
+                            {locale === id && <Check size={16} />}
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className="settings-section">
+                      <div className="settings-title">
+                        <Palette size={20} />
+                        <div>
+                          <strong>Color theme</strong>
+                          <small>VS Code-style manifests use stable semantic color tokens.</small>
+                        </div>
+                      </div>
+                      <div className="theme-grid">
+                        {themeCatalog.map((theme) => (
+                          <button
+                            key={theme.id}
+                            className={themeId === theme.id ? "active" : ""}
+                            onClick={() => setThemeId(theme.id)}
+                          >
+                            <span
+                              className="theme-swatch"
+                              style={{ background: theme.colors.canvas }}
+                            >
+                              <i style={{ background: theme.colors.accent }} />
+                            </span>
+                            <span>
+                              <strong>{theme.name}</strong>
+                              <small>
+                                {theme.publisher}
+                                {theme.source === "myc" ? " · .myc" : ""}
+                              </small>
+                            </span>
+                            {themeId === theme.id && <Check size={16} />}
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  </>
+                )}
+
+                {settingsSection === "canvas" && (
+                  <section className="settings-section settings-section-first">
+                    <div className="settings-title">
+                      <SlidersHorizontal size={20} />
+                      <div>
+                        <strong>Canvas interaction</strong>
+                        <small>Native-feeling defaults for Windows and macOS trackpads.</small>
+                      </div>
+                    </div>
+                    <label className="settings-toggle">
+                      <span>
+                        <strong>Two-finger pan</strong>
+                        <small>Wheel and trackpad gestures pan; pinch zoom remains enabled.</small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={trackpadPan}
+                        onChange={(event) => setTrackpadPan(event.target.checked)}
+                      />
+                      <i aria-hidden="true" />
+                    </label>
+                    <label className="settings-toggle">
+                      <span>
+                        <strong>Snap to 16 px grid</strong>
+                        <small>Applied only while committing node placements.</small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={snapEnabled}
+                        onChange={(event) => setSnapEnabled(event.target.checked)}
+                      />
+                      <i aria-hidden="true" />
+                    </label>
+                    <div className="settings-tip">
+                      <Focus size={18} />
+                      <div>
+                        <strong>Zen mode</strong>
+                        <p>Press Z to hide panels and keep only the research canvas in view.</p>
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                {settingsSection === "integrations" && (
+                  <section className="settings-section settings-section-first">
+                    <div className="settings-title">
+                      <Settings2 size={20} />
+                      <div>
+                        <strong>Reserved integrations</strong>
+                        <small>Every connector will request an explicit, reviewable grant.</small>
+                      </div>
+                    </div>
+                    <div className="integration-settings-grid">
+                      {pluginCatalog
+                        .filter((plugin) => plugin.status === "reserved")
+                        .map((plugin) => (
+                          <article key={plugin.id}>
+                            <div>
+                              <strong>{plugin.name}</strong>
+                              <small>{plugin.category}</small>
+                            </div>
+                            <span>Not connected</span>
+                            <p>{plugin.description}</p>
+                          </article>
+                        ))}
+                    </div>
+                  </section>
+                )}
+
+                {settingsSection === "shortcuts" && (
+                  <section className="settings-section settings-section-first">
+                    <div className="settings-title">
+                      <Binary size={20} />
+                      <div>
+                        <strong>Keyboard shortcuts</strong>
+                        <small>Fast navigation for graph editing and analysis.</small>
+                      </div>
+                    </div>
+                    <div className="shortcut-settings-preview">
+                      {[
+                        ["Ctrl / Cmd + K", "Focus search"],
+                        ["Ctrl / Cmd + Enter", "Run graph analysis"],
+                        ["Ctrl / Cmd + C / V", "Copy or paste a node"],
+                        ["Ctrl / Cmd + Z", "Undo last change"],
+                        ["F", "Fit graph"],
+                        ["Z", "Zen mode"],
+                      ].map(([keys, action]) => (
+                        <div key={keys}>
+                          <kbd>{keys}</kbd>
+                          <span>{action}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      className="secondary-button settings-shortcut-button"
+                      onClick={() => {
+                        setSettingsOpen(false);
+                        setShortcutsOpen(true);
+                      }}
+                    >
+                      <Binary size={16} />
+                      Open full shortcut reference
+                    </button>
+                  </section>
+                )}
               </div>
-              <label className="settings-toggle">
-                <span>
-                  <strong>Two-finger pan</strong>
-                  <small>Wheel and trackpad gestures pan; pinch zoom remains enabled.</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={trackpadPan}
-                  onChange={(event) => setTrackpadPan(event.target.checked)}
-                />
-              </label>
-              <label className="settings-toggle">
-                <span>
-                  <strong>Snap to 16 px grid</strong>
-                  <small>Applied only while committing node placements.</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={snapEnabled}
-                  onChange={(event) => setSnapEnabled(event.target.checked)}
-                />
-              </label>
             </div>
-            <div className="settings-section">
-              <div className="settings-title">
-                <Settings2 size={17} />
-                <div>
-                  <strong>Reserved integrations</strong>
-                  <small>MCP, Agent, Zotero, and Python require explicit future grants.</small>
-                </div>
-              </div>
-              <div className="reserved-row">
-                {pluginCatalog
-                  .filter((plugin) => plugin.status === "reserved")
-                  .map((plugin) => (
-                    <span key={plugin.id}>{plugin.name}</span>
-                  ))}
-              </div>
-            </div>
-            <div className="modal-footer">
+            <div className="modal-footer settings-footer">
               <button
-                className="secondary-button"
+                className="settings-reset"
                 onClick={() => {
-                  setSettingsOpen(false);
-                  setShortcutsOpen(true);
+                  setDisplayDensity("auto");
+                  setThemeId("research-light");
+                  setLocale(normalizeLocale(navigator.language));
+                  setTrackpadPan(true);
+                  setSnapEnabled(true);
+                  setToast("Display and canvas preferences restored.");
                 }}
               >
-                <Binary size={15} />
-                Keyboard shortcuts
+                <RotateCcw size={16} />
+                {t("settings.restore")}
               </button>
+              <span>{t("settings.autoSaved")}</span>
               <button className="primary-button" onClick={() => setSettingsOpen(false)}>
-                Done
+                {t("settings.done")}
               </button>
             </div>
           </div>
@@ -3248,6 +5173,11 @@ function AppShell() {
                 ["Ctrl/Cmd K", "Focus search"],
                 ["Ctrl/Cmd Enter", "Run BFS/DFS"],
                 ["Ctrl/Cmd Shift P", "Plugin store"],
+                ["Ctrl/Cmd C", "Copy selected node"],
+                ["Ctrl/Cmd V", "Paste copied node"],
+                ["Ctrl/Cmd D", "Duplicate selected node"],
+                ["Ctrl/Cmd Z", "Undo"],
+                ["Ctrl/Cmd Shift Z / Y", "Redo"],
                 ["N", "New node"],
                 ["E", "New relation"],
                 ["F", "Fit graph"],

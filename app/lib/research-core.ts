@@ -74,6 +74,13 @@ export function migrateProject(input: unknown): ProjectState {
           parameters: scenario.parameters ?? {},
         }))
       : [],
+    navigation:
+      candidate.navigation &&
+      typeof candidate.navigation === "object" &&
+      Array.isArray((candidate.navigation as ProjectState["navigation"])?.recentNodeIds) &&
+      Array.isArray((candidate.navigation as ProjectState["navigation"])?.pinnedNodeIds)
+        ? (candidate.navigation as ProjectState["navigation"])
+        : { recentNodeIds: [], pinnedNodeIds: [] },
     activity: Array.isArray(candidate.activity) ? candidate.activity : [],
   };
 }
@@ -362,6 +369,79 @@ export function shortestPath(
   return path;
 }
 
+export function allShortestPaths(
+  project: ProjectState,
+  sourceId: string,
+  targetId: string,
+  scenarioId?: string,
+) {
+  if (sourceId === targetId) return [[sourceId]];
+  const edges = resolveEdges(project, scenarioId);
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) {
+    const list = outgoing.get(edge.source) ?? [];
+    list.push(edge.target);
+    outgoing.set(edge.source, list);
+    if (!edge.directed) {
+      const reverse = outgoing.get(edge.target) ?? [];
+      reverse.push(edge.source);
+      outgoing.set(edge.target, reverse);
+    }
+  }
+  for (const neighbors of outgoing.values()) {
+    neighbors.sort((a, b) => a.localeCompare(b));
+  }
+
+  const distance = new Map<string, number>([[sourceId, 0]]);
+  const parents = new Map<string, string[]>();
+  const queue = [sourceId];
+  let queueIndex = 0;
+  while (queueIndex < queue.length) {
+    const current = queue[queueIndex++]!;
+    const nextDistance = distance.get(current)! + 1;
+    for (const next of outgoing.get(current) ?? []) {
+      if (!distance.has(next)) {
+        distance.set(next, nextDistance);
+        parents.set(next, [current]);
+        queue.push(next);
+      } else if (distance.get(next) === nextDistance) {
+        const values = parents.get(next) ?? [];
+        if (!values.includes(current)) values.push(current);
+        values.sort((a, b) => a.localeCompare(b));
+        parents.set(next, values);
+      }
+    }
+  }
+  if (!distance.has(targetId)) return [];
+
+  const paths: string[][] = [];
+  const build = (nodeId: string, suffix: string[]) => {
+    if (nodeId === sourceId) {
+      paths.push([sourceId, ...suffix]);
+      return;
+    }
+    for (const parent of parents.get(nodeId) ?? []) {
+      build(parent, [nodeId, ...suffix]);
+      if (paths.length >= 100) return;
+    }
+  };
+  build(targetId, []);
+  return paths;
+}
+
+export function evidenceBacklinks(project: ProjectState, evidenceId: string) {
+  return {
+    nodeIds: project.nodes
+      .filter((node) => node.evidenceIds.includes(evidenceId))
+      .map((node) => node.id)
+      .sort(),
+    edgeIds: project.edges
+      .filter((edge) => edge.evidenceIds.includes(evidenceId))
+      .map((edge) => edge.id)
+      .sort(),
+  };
+}
+
 export function compareScenarioReachability(
   project: ProjectState,
   rootId: string,
@@ -504,7 +584,7 @@ export function exportCsv(project: ProjectState, kind: "nodes" | "edges") {
         edge.evidenceIds.length,
         edge.experiment?.id,
         edge.experiment?.delta,
-        edge.experiment?.verdict,
+        edge.experiment?.outcome,
       ]
         .map(csvCell)
         .join(","),

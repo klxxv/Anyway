@@ -1,0 +1,19 @@
+{
+  "id": "researchcanvas.onedarkpro",
+  "name": "One Dark Pro",
+  "publisher": "Research Canvas Community",
+  "version": "1.0.0",
+  "description": "One Dark Pro-inspired semantic colors for Research Canvas.",
+  "developer": "Research Canvas Theme Lab",
+  "source": "myc",
+  "colors": {
+    "app": "#1e222a",
+    "panel": "#282c34",
+    "canvas": "#21252b",
+    "text": "#abb2bf",
+    "muted": "#7f8797",
+    "accent": "#61afef",
+    "border": "#3e4451"
+  }
+}
+
