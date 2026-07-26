@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "task": "MNIST small-MLP ablation",
+  "dataset": {
+    "name": "MNIST",
+    "source": "https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz",
+    "trainSamples": 6000,
+    "testSamples": 1500,
+    "inputShape": [
+      28,
+      28
+    ],
+    "classes": 10
+  },
+  "environment": {
+    "runtime": "scikit-learn MLPClassifier",
+    "device": "CPU",
+    "randomState": 42,
+    "gitCommit": "b7e21ac",
+    "repository": "research-canvas/mnist-ablation-demo"
+  },
+  "results": [
+    {
+      "id": "mnist-baseline",
+      "label": "Baseline \u00b7 64 ReLU units",
+      "hypothesis": "A normalized 64-unit hidden representation is a sufficient baseline.",
+      "normalized": true,
+      "hiddenUnits": 64,
+      "activation": "relu",
+      "accuracy": 0.9273,
+      "logLoss": 0.2717,
+      "iterations": 12,
+      "durationSeconds": 4.16,
+      "finalTrainingLoss": 0.14666,
+      "deltaAccuracy": 0.0,
+      "evidenceOutcome": "baseline"
+    },
+    {
+      "id": "mnist-no-normalization",
+      "label": "Ablate pixel normalization",
+      "hypothesis": "Pixel normalization is required for stable optimization.",
+      "normalized": false,
+      "hiddenUnits": 64,
+      "activation": "relu",
+      "accuracy": 0.8627,
+      "logLoss": 1.5488,
+      "iterations": 11,
+      "durationSeconds": 4.39,
+      "finalTrainingLoss": 0.18317,
+      "deltaAccuracy": -0.0646,
+      "evidenceOutcome": "supports"
+    },
+    {
+      "id": "mnist-bottleneck-16",
+      "label": "Reduce hidden width to 16",
+      "hypothesis": "A 16-unit bottleneck materially reduces test accuracy.",
+      "normalized": true,
+      "hiddenUnits": 16,
+      "activation": "relu",
+      "accuracy": 0.9053,
+      "logLoss": 0.3427,
+      "iterations": 12,
+      "durationSeconds": 0.83,
+      "finalTrainingLoss": 0.26653,
+      "deltaAccuracy": -0.022,
+      "evidenceOutcome": "supports"
+    },
+    {
+      "id": "mnist-tanh",
+      "label": "Replace ReLU with tanh",
+      "hypothesis": "ReLU is uniquely necessary for this small MNIST model.",
+      "normalized": true,
+      "hiddenUnits": 64,
+      "activation": "tanh",
+      "accuracy": 0.916,
+      "logLoss": 0.2947,
+      "iterations": 12,
+      "durationSeconds": 1.56,
+      "finalTrainingLoss": 0.17483,
+      "deltaAccuracy": -0.0113,
+      "evidenceOutcome": "refutes"
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+import type { PluginManifest, ThemeManifest } from "./research-types";
+
+export const pluginCatalog: PluginManifest[] = [
+  {
+    id: "git-experiments",
+    name: "Git Experiments",
+    version: "0.1.0",
+    category: "connector",
+    description:
+      "Loads a versioned repository snapshot and binds commits to experiment evidence.",
+    status: "installed",
+    permissions: ["Read bundled repository metadata", "Read experiment artifacts"],
+    capabilities: ["git.commit.read", "experiment.import", "provenance.bind"],
+    publisher: "Research Canvas",
+  },
+  {
+    id: "python-connector",
+    name: "Python Connector",
+    version: "0.1.0-reserved",
+    category: "connector",
+    description: "Reserved adapter for reviewed run manifests and structured RunResult artifacts.",
+    status: "reserved",
+    permissions: ["Local process access (future opt-in)"],
+    capabilities: ["run.manifest", "run.result"],
+    publisher: "Research Canvas",
+  },
+  {
+    id: "zotero-source",
+    name: "Zotero Source",
+    version: "0.1.0-reserved",
+    category: "source",
+    description: "Reserved source adapter for collections, citations, PDFs, and stable item keys.",
+    status: "reserved",
+    permissions: ["Zotero library read (future opt-in)"],
+    capabilities: ["paper.import", "evidence.locator"],
+    publisher: "Research Canvas",
+  },
+  {
+    id: "mcp-bridge",
+    name: "MCP Bridge",
+    version: "0.1.0-reserved",
+    category: "connector",
+    description: "Reserved boundary for Model Context Protocol servers and explicit tool grants.",
+    status: "reserved",
+    permissions: ["Per-server grants (future opt-in)"],
+    capabilities: ["mcp.server", "graph.patch.propose"],
+    publisher: "Research Canvas",
+  },
+  {
+    id: "agent-runtime",
+    name: "Agent Runtime",
+    version: "0.1.0-reserved",
+    category: "agent",
+    description:
+      "Reserved review-gated agent interface. Agents may propose GraphPatch objects but cannot silently mutate the graph.",
+    status: "reserved",
+    permissions: ["GraphPatch proposal only"],
+    capabilities: ["graph.patch.propose", "human.approval.required"],
+    publisher: "Research Canvas",
+  },
+  {
+    id: "graph-audit",
+    name: "Graph Audit",
+    version: "0.1.0",
+    category: "analysis",
+    description: "Checks cycles, unsupported claims, broken evidence paths, and alternate routes.",
+    status: "available",
+    permissions: ["Read current project"],
+    capabilities: ["graph.validate", "chain.score"],
+    publisher: "Research Canvas Labs",
+  },
+];
+
+export const themeCatalog: ThemeManifest[] = [
+  {
+    id: "research-light",
+    name: "Research Light",
+    publisher: "Research Canvas",
+    colors: {
+      app: "#eef1f5",
+      panel: "#ffffff",
+      canvas: "#f8f9fb",
+      text: "#172033",
+      muted: "#697386",
+      accent: "#6750d8",
+      border: "#dfe3e9",
+    },
+  },
+  {
+    id: "midnight-lab",
+    name: "Midnight Lab",
+    publisher: "Community Themes",
+    colors: {
+      app: "#11151d",
+      panel: "#171d28",
+      canvas: "#0f141c",
+      text: "#e7ebf3",
+      muted: "#99a4b7",
+      accent: "#8b7cff",
+      border: "#2c3442",
+    },
+  },
+  {
+    id: "paper-sepia",
+    name: "Paper Sepia",
+    publisher: "Community Themes",
+    colors: {
+      app: "#eee9df",
+      panel: "#faf6ed",
+      canvas: "#f6f0e4",
+      text: "#312d27",
+      muted: "#766f62",
+      accent: "#9b5f32",
+      border: "#d8cebd",
+    },
+  },
+];
+
