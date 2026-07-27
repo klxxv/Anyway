@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "./styles/responsive.css";
 import "./styles/theme-tokens.css";
+import "./styles/graph-renderers.css";
 
 export const metadata: Metadata = {
   title: {

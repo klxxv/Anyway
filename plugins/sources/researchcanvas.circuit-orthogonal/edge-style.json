@@ -1,0 +1,45 @@
+{
+  "id": "researchcanvas.circuit-orthogonal",
+  "name": "Circuit Orthogonal",
+  "publisher": "Research Canvas Community",
+  "version": "1.0.0",
+  "description": "Crisp 90-degree routing for experiment and evidence maps.",
+  "developer": "Research Canvas Visual Systems",
+  "source": "myc",
+  "routing": "orthogonal",
+  "stroke": {
+    "color": "#61afef",
+    "width": 1.8,
+    "selectedWidth": 3,
+    "opacity": 0.94,
+    "cornerRadius": 0,
+    "offset": 26
+  },
+  "relations": {
+    "supports": {
+      "color": "#56b6c2",
+      "width": 2.1
+    },
+    "contradicts": {
+      "color": "#e06c75",
+      "width": 2.1,
+      "dash": [8, 4]
+    },
+    "depends_on": {
+      "color": "#61afef",
+      "width": 1.8
+    },
+    "controls": {
+      "color": "#7f8797",
+      "dash": [3, 4]
+    },
+    "measures": {
+      "color": "#c678dd",
+      "width": 1.9
+    }
+  },
+  "marker": {
+    "type": "closed-arrow",
+    "size": 16
+  }
+}

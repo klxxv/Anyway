@@ -65,6 +65,7 @@ pub struct InstalledMycPlugin {
     manifest: MycPluginManifest,
     install_path: String,
     theme: Option<ThemeManifest>,
+    edge_style: Option<serde_json::Value>,
 }
 
 fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
@@ -107,22 +108,42 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     }
     validate_slug(&manifest.metadata.id, "plugin id")?;
     validate_slug(&manifest.metadata.version, "plugin version")?;
-    if manifest.kind != "ThemePlugin" {
-        return Err("MVP installer currently accepts ThemePlugin packages only".to_string());
-    }
-    if manifest.spec.entry != "theme.json" {
-        return Err("ThemePlugin entry must be theme.json".to_string());
-    }
-    if !manifest
-        .spec
-        .capabilities
-        .iter()
-        .any(|capability| capability == "theme.register")
-    {
-        return Err("ThemePlugin must declare theme.register".to_string());
+    match manifest.kind.as_str() {
+        "ThemePlugin" => {
+            if manifest.spec.entry != "theme.json" {
+                return Err("ThemePlugin entry must be theme.json".to_string());
+            }
+            if !manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|capability| capability == "theme.register")
+            {
+                return Err("ThemePlugin must declare theme.register".to_string());
+            }
+        }
+        "EdgeStylePlugin" => {
+            if manifest.spec.entry != "edge-style.json" {
+                return Err("EdgeStylePlugin entry must be edge-style.json".to_string());
+            }
+            if !manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|capability| capability == "edge.style.register")
+            {
+                return Err("EdgeStylePlugin must declare edge.style.register".to_string());
+            }
+        }
+        _ => {
+            return Err(
+                "MVP installer currently accepts ThemePlugin and EdgeStylePlugin packages only"
+                    .to_string(),
+            );
+        }
     }
     if !manifest.spec.permissions.is_empty() {
-        return Err("Theme plugins cannot request permissions in the MVP".to_string());
+        return Err("Declarative visual plugins cannot request permissions in the MVP".to_string());
     }
     Ok(())
 }
@@ -135,19 +156,26 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         serde_yaml::from_str(&manifest_text).map_err(|error| error.to_string())?;
     validate_manifest(&manifest)?;
 
-    let theme_path = directory.join(&manifest.spec.entry);
-    let theme = if theme_path.is_file() {
-        let theme_text = fs::read_to_string(&theme_path)
-            .map_err(|error| format!("Could not read {}: {error}", theme_path.display()))?;
-        Some(serde_json::from_str(&theme_text).map_err(|error| error.to_string())?)
-    } else {
-        None
+    let entry_path = directory.join(&manifest.spec.entry);
+    let entry_text = fs::read_to_string(&entry_path)
+        .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+    let (theme, edge_style) = match manifest.kind.as_str() {
+        "ThemePlugin" => (
+            Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+            None,
+        ),
+        "EdgeStylePlugin" => (
+            None,
+            Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+        ),
+        _ => (None, None),
     };
 
     Ok(InstalledMycPlugin {
         manifest,
         install_path: directory.to_string_lossy().into_owned(),
         theme,
+        edge_style,
     })
 }
 

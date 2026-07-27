@@ -243,7 +243,7 @@ export interface PluginManifest {
   id: string;
   name: string;
   version: string;
-  category: "source" | "connector" | "analysis" | "theme" | "agent";
+  category: "source" | "connector" | "analysis" | "theme" | "style" | "agent";
   description: string;
   status: "installed" | "available" | "reserved";
   permissions: string[];
@@ -267,5 +267,41 @@ export interface ThemeManifest {
     muted: string;
     accent: string;
     border: string;
+  };
+}
+
+export type BlockStyleId = "research-card" | "compact-block" | "signal-block";
+
+export type EdgeRoutingMode = "bezier" | "smooth-step" | "orthogonal" | "straight";
+
+export interface EdgeStrokeStyle {
+  color?: string;
+  width?: number;
+  selectedWidth?: number;
+  opacity?: number;
+  dash?: number[];
+}
+
+export interface EdgeStyleManifest {
+  id: string;
+  name: string;
+  publisher: string;
+  version?: string;
+  description?: string;
+  developer?: string;
+  source?: "builtin" | "myc";
+  routing: EdgeRoutingMode;
+  stroke: EdgeStrokeStyle & {
+    color: string;
+    width: number;
+    selectedWidth: number;
+    opacity: number;
+    cornerRadius?: number;
+    offset?: number;
+  };
+  relations?: Partial<Record<ResearchEdgeType, EdgeStrokeStyle>>;
+  marker: {
+    type: "arrow" | "closed-arrow" | "none";
+    size: number;
   };
 }

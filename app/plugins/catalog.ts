@@ -1,4 +1,8 @@
-import type { PluginManifest, ThemeManifest } from "../lib/research-types";
+import type {
+  EdgeStyleManifest,
+  PluginManifest,
+  ThemeManifest,
+} from "../lib/research-types";
 
 export const builtInPluginCatalog: PluginManifest[] = [
   {
@@ -119,3 +123,69 @@ export const builtInThemeCatalog: ThemeManifest[] = [
   },
 ];
 
+export const builtInEdgeStyleCatalog: EdgeStyleManifest[] = [
+  {
+    id: "research-bezier",
+    name: "Research Bezier",
+    publisher: "Research Canvas",
+    source: "builtin",
+    description: "Quiet curved connectors for freeform human-led canvases.",
+    routing: "bezier",
+    stroke: {
+      color: "#98a2b3",
+      width: 1.5,
+      selectedWidth: 2.6,
+      opacity: 0.88,
+    },
+    relations: {
+      supports: { color: "#25836f", width: 1.8 },
+      contradicts: { color: "#c14457", width: 1.8, dash: [7, 4] },
+      controls: { color: "#7d8796", dash: [3, 4] },
+      measures: { color: "#6d5bc1" },
+    },
+    marker: { type: "closed-arrow", size: 15 },
+  },
+  {
+    id: "research-orthogonal",
+    name: "Orthogonal Grid",
+    publisher: "Research Canvas",
+    source: "builtin",
+    description: "Strict 90° routing for dependency trees and experiment maps.",
+    routing: "orthogonal",
+    stroke: {
+      color: "#7f8a9b",
+      width: 1.6,
+      selectedWidth: 2.8,
+      opacity: 0.92,
+      cornerRadius: 0,
+      offset: 24,
+    },
+    relations: {
+      supports: { color: "#16866e", width: 1.9 },
+      contradicts: { color: "#cf4056", width: 2, dash: [8, 4] },
+      depends_on: { color: "#5271c7" },
+      controls: { color: "#8993a3", dash: [3, 4] },
+      measures: { color: "#755fc7" },
+    },
+    marker: { type: "closed-arrow", size: 15 },
+  },
+  {
+    id: "research-straight",
+    name: "Direct Signal",
+    publisher: "Research Canvas",
+    source: "builtin",
+    description: "Straight, low-noise connectors for sparse influence graphs.",
+    routing: "straight",
+    stroke: {
+      color: "#8b95a5",
+      width: 1.45,
+      selectedWidth: 2.5,
+      opacity: 0.86,
+    },
+    relations: {
+      supports: { color: "#248672" },
+      contradicts: { color: "#c34b5e", dash: [6, 4] },
+    },
+    marker: { type: "arrow", size: 14 },
+  },
+];

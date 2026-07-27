@@ -703,7 +703,7 @@ export function computeLayout(
     }
     for (const [depth, ids] of rows) {
       ids.forEach((id, index) => {
-        positions[id] = { x: 80 + depth * 310, y: 80 + index * 164 };
+        positions[id] = { x: 80 + depth * 350, y: 80 + index * 182 };
       });
     }
   } else if (mode === "table") {
@@ -712,7 +712,7 @@ export function computeLayout(
       project.nodes
         .filter((node) => node.type === type)
         .forEach((node, row) => {
-          positions[node.id] = { x: 70 + column * 270, y: 105 + row * 154 };
+          positions[node.id] = { x: 70 + column * 310, y: 105 + row * 168 };
           annotations[node.id] = `${type} · row ${row + 1}`;
         });
     });
@@ -725,7 +725,7 @@ export function computeLayout(
     for (const item of ordered) {
       const depth = item.code.length;
       const row = rowsByDepth.get(depth) ?? 0;
-      positions[item.id] = { x: 70 + depth * 280, y: 80 + row * 150 };
+      positions[item.id] = { x: 70 + depth * 320, y: 80 + row * 172 };
       annotations[item.id] = `prefix ${item.code || "0"}`;
       rowsByDepth.set(depth, row + 1);
     }
@@ -755,7 +755,7 @@ export function computeLayout(
     }
     for (const [layer, ids] of rows) {
       ids.forEach((id, index) => {
-        positions[id] = { x: 75 + layer * 300, y: 85 + index * 160 };
+        positions[id] = { x: 75 + layer * 360, y: 85 + index * 190 };
         if (mode === "neural-network") annotations[id] = `layer ${layer}`;
       });
     }

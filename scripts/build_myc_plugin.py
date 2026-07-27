@@ -7,7 +7,13 @@ import pathlib
 import zipfile
 
 
-ALLOWED_ROOT_FILES = {"plugin.yml", "theme.json", "README.md", "LICENSE"}
+ALLOWED_ROOT_FILES = {
+    "plugin.yml",
+    "theme.json",
+    "edge-style.json",
+    "README.md",
+    "LICENSE",
+}
 
 
 def build(source: pathlib.Path, destination: pathlib.Path) -> None:
@@ -43,4 +49,3 @@ if __name__ == "__main__":
     parser.add_argument("destination", type=pathlib.Path)
     arguments = parser.parse_args()
     build(arguments.source, arguments.destination)
-

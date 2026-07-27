@@ -39,10 +39,25 @@ Branch: `codex/responsive-i18n-myc`
 - [x] Update this TODO with results.
 - [x] Commit the completed work.
 
+## Block and connector rendering
+
+- [x] Separate block appearance from graph semantics with research-card, compact-block, and signal-block presets.
+- [x] Add Bézier, smooth-step, strict 90-degree orthogonal, and straight routing contracts.
+- [x] Preserve semantic strokes for supporting, refuting, controlling, and measuring relations.
+- [x] Precompute stable IN/OUT port geometry for Tauri WebView2 and SSR hydration.
+- [x] Let declarative `.myc` packages register connector routing, stroke, dash, marker, and relation overrides.
+- [x] Package, auto-install, and activate the permission-free Circuit Orthogonal connector plugin.
+- [x] Re-space tree, table, Huffman, evidence, and neural-network projections for the new blocks.
+- [x] Verify the MNIST effective chain in Tauri Zen mode with 90-degree plugin routing.
+
 ## Verification result
 
 All automated checks passed. Playwright confirmed minimap containment, 10/10
 reachable canvas commands, and no page-level horizontal overflow at all four
 target viewport sizes. Tauri automatically extracted the packaged One Dark Pro
 module, listed it in the plugin store, and applied it while Simplified Chinese
-was active.
+was active. The follow-up renderer pass also passed TypeScript, ESLint, 12 graph
+core tests, 4 platform tests, 2 rendered-shell tests, and a production build.
+Tauri rendered all 8 MNIST relations with explicit port geometry; the installed
+Circuit Orthogonal `.myc` plugin switched them to strict 90-degree paths while
+retaining green support, red dashed refutation, and muted control semantics.

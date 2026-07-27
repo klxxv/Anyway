@@ -1,9 +1,14 @@
-import type { PluginManifest, ThemeManifest } from "../lib/research-types";
+import type {
+  EdgeStyleManifest,
+  PluginManifest,
+  ThemeManifest,
+} from "../lib/research-types";
 
 export const MYC_API_VERSION = "researchcanvas.dev/v1alpha1";
 
 export type MycPluginKind =
   | "ThemePlugin"
+  | "EdgeStylePlugin"
   | "SourcePlugin"
   | "ConnectorPlugin"
   | "AnalysisPlugin"
@@ -38,6 +43,7 @@ export interface InstalledMycPlugin {
   manifest: MycPluginManifest;
   installPath: string;
   theme?: ThemeManifest;
+  edgeStyle?: EdgeStyleManifest;
 }
 
 export interface PluginContext {
@@ -45,6 +51,7 @@ export interface PluginContext {
   readonly locale: string;
   readonly capabilities: ReadonlySet<string>;
   registerTheme(theme: ThemeManifest): void;
+  registerEdgeStyle(edgeStyle: EdgeStyleManifest): void;
   notify(message: string): void;
 }
 
@@ -77,3 +84,18 @@ export function normalizeInstalledTheme(plugin: InstalledMycPlugin): ThemeManife
   };
 }
 
+export function normalizeInstalledEdgeStyle(
+  plugin: InstalledMycPlugin,
+): EdgeStyleManifest | null {
+  if (!plugin.edgeStyle || plugin.manifest.kind !== "EdgeStylePlugin") return null;
+  return {
+    ...plugin.edgeStyle,
+    id: plugin.manifest.metadata.id,
+    name: plugin.manifest.metadata.name,
+    publisher: plugin.manifest.metadata.publisher,
+    version: plugin.manifest.metadata.version,
+    description: plugin.manifest.metadata.description,
+    developer: plugin.manifest.metadata.developer,
+    source: "myc",
+  };
+}

@@ -14,6 +14,8 @@ import {
   ReactFlow,
   ReactFlowProvider,
   getBezierPath,
+  getSmoothStepPath,
+  getStraightPath,
   type Connection,
   type Edge,
   type EdgeProps,
@@ -21,6 +23,7 @@ import {
   type NodeChange,
   type NodeProps,
   useReactFlow,
+  useUpdateNodeInternals,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -98,9 +101,14 @@ import {
 } from "../lib/mnist-fixture";
 import { createSocialScienceProject } from "../lib/social-fixture";
 import { normalizeLocale, translate, type Locale, type MessageKey } from "../i18n/catalog";
-import { builtInPluginCatalog, builtInThemeCatalog } from "../plugins/catalog";
+import {
+  builtInEdgeStyleCatalog,
+  builtInPluginCatalog,
+  builtInThemeCatalog,
+} from "../plugins/catalog";
 import {
   isMycFileName,
+  normalizeInstalledEdgeStyle,
   normalizeInstalledTheme,
   type InstalledMycPlugin,
 } from "../plugins/contracts";
@@ -113,6 +121,8 @@ import {
   EDGE_TYPES,
   LAYOUT_MODES,
   NODE_TYPES,
+  type BlockStyleId,
+  type EdgeStyleManifest,
   type GraphSuggestion,
   type InfluenceResult,
   type LayoutMode,
@@ -136,6 +146,7 @@ import {
 
 type CanvasNodeData = {
   record: ResearchNode;
+  blockStyleId: BlockStyleId;
   disabled: boolean;
   depth?: number;
   traversed: boolean;
@@ -151,6 +162,7 @@ type CanvasNodeData = {
 type CanvasNode = Node<CanvasNodeData, "researchNode">;
 type CanvasEdgeData = {
   type: ResearchEdgeType;
+  edgeStyle: EdgeStyleManifest;
   confidence?: number;
   disabled: boolean;
   traversed: boolean;
@@ -192,6 +204,40 @@ const displayDensityOptions: Array<{
   { id: "compact", label: "Compact", description: "More canvas space" },
   { id: "comfortable", label: "Comfortable", description: "Balanced reading" },
   { id: "spacious", label: "Spacious", description: "Largest controls" },
+];
+
+const blockStyleOptions: Array<{
+  id: BlockStyleId;
+  label: string;
+  labelZh: string;
+  description: string;
+  descriptionZh: string;
+  icon: typeof LayoutDashboard;
+}> = [
+  {
+    id: "research-card",
+    label: "Research card",
+    labelZh: "研究卡片",
+    description: "Balanced evidence detail",
+    descriptionZh: "平衡证据与内容细节",
+    icon: LayoutDashboard,
+  },
+  {
+    id: "compact-block",
+    label: "Compact block",
+    labelZh: "紧凑块",
+    description: "Dense overview and tables",
+    descriptionZh: "适合总览与表格布局",
+    icon: ListTree,
+  },
+  {
+    id: "signal-block",
+    label: "Signal block",
+    labelZh: "信号块",
+    description: "Clear variable flow and ports",
+    descriptionZh: "突出变量流与连接端口",
+    icon: Network,
+  },
 ];
 
 function recommendedUiScale(scaleFactor: number) {
@@ -244,6 +290,7 @@ const edgeTypeLabels: Record<ResearchEdgeType, string> = {
 function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
   const {
     record,
+    blockStyleId,
     disabled,
     depth,
     traversed,
@@ -260,6 +307,7 @@ function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
       className={[
         "research-node",
         `node-${record.type}`,
+        `block-${blockStyleId}`,
         selected ? "is-selected" : "",
         disabled ? "is-disabled" : "",
         traversed ? "is-traversed" : "",
@@ -268,6 +316,7 @@ function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
         .filter(Boolean)
         .join(" ")}
       data-testid={`node-${record.id}`}
+      data-block-style={blockStyleId}
     >
       <NodeResizer
         isVisible={selected}
@@ -280,9 +329,17 @@ function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
         lineClassName="research-node-resize-line"
         handleClassName="research-node-resize-handle"
       />
-      <Handle type="target" position={Position.Left} className="research-handle" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="research-handle"
+        data-port="IN"
+      />
       <div className="node-card-topline">
-        <span className="node-type-label">{nodeTypeLabels[record.type]}</span>
+        <span className="node-kind">
+          <i className="node-type-marker" aria-hidden="true" />
+          <span className="node-type-label">{nodeTypeLabels[record.type]}</span>
+        </span>
         <span className="node-view-state">
           {pinned && <Pin size={11} aria-label="Pinned node" />}
           {collapsed && <span title="Collapsed subtree">collapsed</span>}
@@ -311,9 +368,75 @@ function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
         </div>
       )}
       {disabled && <div className="disabled-ribbon">disabled in scenario</div>}
-      <Handle type="source" position={Position.Right} className="research-handle" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="research-handle"
+        data-port="OUT"
+      />
     </div>
   );
+}
+
+type EdgePresentationState = {
+  disabled?: boolean;
+  traversed?: boolean;
+  treeEdge?: boolean;
+  backEdge?: boolean;
+  chainState?: "effective" | "evidence" | "refutation";
+  selected?: boolean;
+};
+
+function resolveEdgePresentation(
+  edgeStyle: EdgeStyleManifest,
+  edgeType: ResearchEdgeType,
+  state: EdgePresentationState,
+) {
+  const relation = edgeStyle.relations?.[edgeType];
+  let color = relation?.color ?? edgeStyle.stroke.color;
+  let width = relation?.width ?? edgeStyle.stroke.width;
+  let opacity = relation?.opacity ?? edgeStyle.stroke.opacity;
+  let dash = relation?.dash ?? edgeStyle.stroke.dash;
+
+  if (state.treeEdge) color = "#5b67c9";
+  if (state.backEdge) {
+    color = "#cf435b";
+    dash = [6, 4];
+  }
+  if (state.traversed) {
+    color = "var(--accent)";
+    width = Math.max(width, 2.1);
+  }
+  if (state.chainState === "effective") {
+    color = "#149b76";
+    width = Math.max(width, 3.1);
+    dash = undefined;
+  }
+  if (state.chainState === "evidence") {
+    color = "#4e6fd2";
+    width = Math.max(width, 3.1);
+    dash = undefined;
+  }
+  if (state.chainState === "refutation") {
+    color = "#d5485c";
+    width = Math.max(width, 3.1);
+    dash = [8, 5];
+  }
+  if (state.disabled) {
+    color = "#9aa4b2";
+    opacity = 0.38;
+    dash = [5, 5];
+  }
+  if (state.selected) {
+    width = Math.max(width, relation?.selectedWidth ?? edgeStyle.stroke.selectedWidth);
+  }
+
+  return {
+    color,
+    width,
+    opacity,
+    dash,
+  };
 }
 
 function ResearchEdgeLine({
@@ -328,21 +451,58 @@ function ResearchEdgeLine({
   data,
   selected,
 }: EdgeProps<CanvasEdge>) {
-  const [path, labelX, labelY] = getBezierPath({
+  const route = data?.edgeStyle.routing ?? "bezier";
+  const pathOptions = {
     sourceX,
     sourceY,
     targetX,
     targetY,
     sourcePosition,
     targetPosition,
-    curvature: 0.28,
-  });
+  };
+  const [path, labelX, labelY] =
+    route === "orthogonal"
+      ? getSmoothStepPath({
+          ...pathOptions,
+          borderRadius: 0,
+          offset: data?.edgeStyle.stroke.offset ?? 24,
+        })
+      : route === "smooth-step"
+        ? getSmoothStepPath({
+            ...pathOptions,
+            borderRadius: data?.edgeStyle.stroke.cornerRadius ?? 8,
+            offset: data?.edgeStyle.stroke.offset ?? 22,
+          })
+        : route === "straight"
+          ? getStraightPath(pathOptions)
+          : getBezierPath({ ...pathOptions, curvature: 0.28 });
+  const presentation = resolveEdgePresentation(
+    data?.edgeStyle ?? builtInEdgeStyleCatalog[0],
+    data?.type ?? "depends_on",
+    {
+      disabled: data?.disabled,
+      traversed: data?.traversed,
+      treeEdge: data?.treeEdge,
+      backEdge: data?.backEdge,
+      chainState: data?.chainState,
+      selected,
+    },
+  );
   return (
     <>
       <BaseEdge
         id={id}
         path={path}
         markerEnd={markerEnd}
+        interactionWidth={Math.max(18, presentation.width * 8)}
+        style={{
+          stroke: presentation.color,
+          strokeWidth: presentation.width,
+          strokeOpacity: presentation.opacity,
+          strokeDasharray: presentation.dash?.join(" "),
+        }}
+        data-edge-routing={route}
+        data-edge-style={data?.edgeStyle.id ?? builtInEdgeStyleCatalog[0].id}
         className={[
           "research-edge-path",
           selected ? "is-selected" : "",
@@ -365,7 +525,12 @@ function ResearchEdgeLine({
           ]
             .filter(Boolean)
             .join(" ")}
-          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+          style={
+            {
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              "--edge-color": presentation.color,
+            } as CSSProperties
+          }
           tabIndex={-1}
         >
           {data?.experimentLabel ? (
@@ -529,6 +694,8 @@ function AppShell() {
   const [influence, setInfluence] = useState<InfluenceResult | null>(null);
   const [zenMode, setZenMode] = useState(false);
   const [themeId, setThemeId] = useState("research-light");
+  const [blockStyleId, setBlockStyleId] = useState<BlockStyleId>("signal-block");
+  const [edgeStyleId, setEdgeStyleId] = useState("research-orthogonal");
   const [locale, setLocale] = useState<Locale>("en");
   const [installedMycPlugins, setInstalledMycPlugins] = useState<InstalledMycPlugin[]>([]);
   const [mycDropActive, setMycDropActive] = useState(false);
@@ -616,6 +783,7 @@ function AppShell() {
   const evidenceFileInput = useRef<HTMLInputElement | null>(null);
   const mycPluginInput = useRef<HTMLInputElement | null>(null);
   const { fitView, setCenter, getViewport } = useReactFlow<CanvasNode, CanvasEdge>();
+  const updateNodeInternals = useUpdateNodeInternals();
   const t = useCallback((key: MessageKey) => translate(locale, key), [locale]);
   const themeCatalog = useMemo(
     () => [
@@ -626,6 +794,15 @@ function AppShell() {
     ],
     [installedMycPlugins],
   );
+  const edgeStyleCatalog = useMemo(
+    () => [
+      ...builtInEdgeStyleCatalog,
+      ...installedMycPlugins
+        .map(normalizeInstalledEdgeStyle)
+        .filter((edgeStyle): edgeStyle is NonNullable<typeof edgeStyle> => Boolean(edgeStyle)),
+    ],
+    [installedMycPlugins],
+  );
   const pluginCatalog = useMemo(
     () => [
       ...builtInPluginCatalog,
@@ -633,7 +810,12 @@ function AppShell() {
         id: plugin.manifest.metadata.id,
         name: plugin.manifest.metadata.name,
         version: plugin.manifest.metadata.version,
-        category: "theme" as const,
+        category:
+          plugin.manifest.kind === "ThemePlugin"
+            ? ("theme" as const)
+            : plugin.manifest.kind === "EdgeStylePlugin"
+              ? ("style" as const)
+              : ("analysis" as const),
         description: plugin.manifest.metadata.description,
         status: "installed" as const,
         permissions: plugin.manifest.spec.permissions,
@@ -644,6 +826,8 @@ function AppShell() {
     [installedMycPlugins],
   );
   const activeTheme = themeCatalog.find((theme) => theme.id === themeId) ?? themeCatalog[0];
+  const activeEdgeStyle =
+    edgeStyleCatalog.find((edgeStyle) => edgeStyle.id === edgeStyleId) ?? edgeStyleCatalog[0];
   const uiScale = useMemo(() => {
     if (displayDensity === "auto") return recommendedUiScale(displayProfile.scaleFactor);
     if (displayDensity === "compact") return 1.2;
@@ -729,12 +913,16 @@ function AppShell() {
           const preferences = JSON.parse(saved) as {
             density?: DisplayDensity;
             themeId?: string;
+            blockStyleId?: BlockStyleId;
+            edgeStyleId?: string;
             snapEnabled?: boolean;
             trackpadPan?: boolean;
             locale?: Locale;
           };
           if (preferences.density) setDisplayDensity(preferences.density);
           if (preferences.themeId) setThemeId(preferences.themeId);
+          if (preferences.blockStyleId) setBlockStyleId(preferences.blockStyleId);
+          if (preferences.edgeStyleId) setEdgeStyleId(preferences.edgeStyleId);
           setLocale(preferences.locale ?? normalizeLocale(navigator.language));
           if (typeof preferences.snapEnabled === "boolean") {
             setSnapEnabled(preferences.snapEnabled);
@@ -759,12 +947,22 @@ function AppShell() {
       JSON.stringify({
         density: displayDensity,
         themeId,
+        blockStyleId,
+        edgeStyleId,
         snapEnabled,
         trackpadPan,
         locale,
       }),
     );
-  }, [displayDensity, locale, snapEnabled, themeId, trackpadPan]);
+  }, [
+    blockStyleId,
+    displayDensity,
+    edgeStyleId,
+    locale,
+    snapEnabled,
+    themeId,
+    trackpadPan,
+  ]);
 
   useEffect(() => {
     let disposed = false;
@@ -826,7 +1024,7 @@ function AppShell() {
   }, []);
 
   const registerInstalledPlugin = useCallback(
-    (plugin: InstalledMycPlugin, activateTheme = false) => {
+    (plugin: InstalledMycPlugin, activateVisual = false) => {
       setInstalledMycPlugins((current) => [
         ...current.filter(
           (item) =>
@@ -841,7 +1039,9 @@ function AppShell() {
           : [...current, plugin.manifest.metadata.id],
       );
       const theme = normalizeInstalledTheme(plugin);
-      if (theme && activateTheme) setThemeId(theme.id);
+      const edgeStyle = normalizeInstalledEdgeStyle(plugin);
+      if (theme && activateVisual) setThemeId(theme.id);
+      if (edgeStyle && activateVisual) setEdgeStyleId(edgeStyle.id);
     },
     [],
   );
@@ -1110,6 +1310,14 @@ function AppShell() {
     experimentsOnly,
   ]);
 
+  useEffect(() => {
+    const nodeIds = Array.from(visibleNodeIds);
+    const frame = requestAnimationFrame(() => {
+      updateNodeInternals(nodeIds);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [blockStyleId, updateNodeInternals, visibleNodeIds]);
+
   const flowNodes = useMemo<CanvasNode[]>(
     () =>
       project.nodes.filter((record) => visibleNodeIds.has(record.id)).map((record) => {
@@ -1117,12 +1325,37 @@ function AppShell() {
           (item) => item.nodeId === record.id && item.viewId === "view-main",
         );
         const influenceScore = influence?.scores[record.id];
+        const nodeWidth = placement?.width ?? 230;
+        const nodeHeight = placement?.height ?? 116;
+        const portSize = blockStyleId === "signal-block" ? 10 : 8;
+        const portY = nodeHeight / 2 - portSize / 2;
         return {
           id: record.id,
           type: "researchNode",
           position: { x: placement?.x ?? 0, y: placement?.y ?? 0 },
+          sourcePosition: Position.Right,
+          targetPosition: Position.Left,
+          handles: [
+            {
+              type: "target",
+              position: Position.Left,
+              x: -portSize / 2,
+              y: portY,
+              width: portSize,
+              height: portSize,
+            },
+            {
+              type: "source",
+              position: Position.Right,
+              x: nodeWidth - portSize / 2,
+              y: portY,
+              width: portSize,
+              height: portSize,
+            },
+          ],
           data: {
             record,
+            blockStyleId,
             disabled: disabledNodes.has(record.id),
             traversed: traversalNodes.has(record.id),
             depth: traversal?.depth[record.id],
@@ -1154,8 +1387,8 @@ function AppShell() {
           },
           selected: selectedNodeId === record.id,
           draggable: true,
-          width: placement?.width ?? 230,
-          height: placement?.height ?? 116,
+          width: nodeWidth,
+          height: nodeHeight,
           zIndex: selectedNodeId === record.id ? 20 : 1,
         };
       }),
@@ -1170,6 +1403,7 @@ function AppShell() {
       layoutAnnotations,
       influence,
       project,
+      blockStyleId,
     ],
   );
 
@@ -1180,26 +1414,46 @@ function AppShell() {
           disabledEdges.has(record.id) ||
           disabledNodes.has(record.source) ||
           disabledNodes.has(record.target);
+        const chainState = logicEdgeIds.has(record.id) ? logicChain?.mode : undefined;
+        const presentation = resolveEdgePresentation(activeEdgeStyle, record.type, {
+          disabled: scenarioDisabled,
+          traversed: traversalEdges.has(record.id),
+          treeEdge: treeEdges.has(record.id),
+          backEdge: backEdges.has(record.id),
+          chainState,
+          selected: selectedEdgeId === record.id,
+        });
+        const markerColor =
+          presentation.color === "var(--accent)"
+            ? activeTheme.colors.accent
+            : presentation.color;
         return {
           id: record.id,
           type: "researchEdge",
           source: record.source,
           target: record.target,
           selected: selectedEdgeId === record.id,
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 15,
-            height: 15,
-            color: scenarioDisabled ? "#9aa4b2" : "#667085",
-          },
+          markerEnd:
+            activeEdgeStyle.marker.type === "none"
+              ? undefined
+              : {
+                  type:
+                    activeEdgeStyle.marker.type === "closed-arrow"
+                      ? MarkerType.ArrowClosed
+                      : MarkerType.Arrow,
+                  width: activeEdgeStyle.marker.size,
+                  height: activeEdgeStyle.marker.size,
+                  color: markerColor,
+                },
           data: {
             type: record.type,
+            edgeStyle: activeEdgeStyle,
             confidence: record.confidence,
             disabled: scenarioDisabled,
             traversed: traversalEdges.has(record.id),
             treeEdge: treeEdges.has(record.id),
             backEdge: backEdges.has(record.id),
-            chainState: logicEdgeIds.has(record.id) ? logicChain?.mode : undefined,
+            chainState,
             experimentLabel: record.experiment?.label,
             experimentDelta: record.experiment?.delta,
           },
@@ -1215,6 +1469,8 @@ function AppShell() {
       backEdges,
       logicEdgeIds,
       logicChain,
+      activeEdgeStyle,
+      activeTheme.colors.accent,
     ],
   );
 
@@ -2352,6 +2608,11 @@ function AppShell() {
         setPluginStoreOpen(true);
         return;
       }
+      if (command && event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
       if (command && event.key === "Enter") {
         event.preventDefault();
         runTraversal();
@@ -2426,6 +2687,9 @@ function AppShell() {
       }`}
       data-testid="research-canvas-app"
       data-theme={activeTheme.id}
+      data-block-style={blockStyleId}
+      data-edge-style={activeEdgeStyle.id}
+      data-edge-routing={activeEdgeStyle.routing}
       style={themeStyle}
     >
       <header className="topbar">
@@ -3071,6 +3335,9 @@ function AppShell() {
             onNodesChange={onNodesChange}
             onConnect={onConnect}
             onReconnect={onReconnect}
+            onError={(code, message) => {
+              setToast(`Canvas ${code}: ${message}`);
+            }}
             edgesReconnectable
             reconnectRadius={18}
             onNodeClick={(_, node) => {
@@ -5026,46 +5293,169 @@ function AppShell() {
                 )}
 
                 {settingsSection === "canvas" && (
-                  <section className="settings-section settings-section-first">
-                    <div className="settings-title">
-                      <SlidersHorizontal size={20} />
-                      <div>
-                        <strong>Canvas interaction</strong>
-                        <small>Native-feeling defaults for Windows and macOS trackpads.</small>
+                  <>
+                    <section className="settings-section settings-section-first">
+                      <div className="settings-title">
+                        <LayoutDashboard size={20} />
+                        <div>
+                          <strong>{locale === "zh-CN" ? "节点块外观" : "Block appearance"}</strong>
+                          <small>
+                            {locale === "zh-CN"
+                              ? "选择每个节点在画布中呈现的研究信息密度。"
+                              : "Choose how much research context each node reveals on the canvas."}
+                          </small>
+                        </div>
                       </div>
-                    </div>
-                    <label className="settings-toggle">
-                      <span>
-                        <strong>Two-finger pan</strong>
-                        <small>Wheel and trackpad gestures pan; pinch zoom remains enabled.</small>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={trackpadPan}
-                        onChange={(event) => setTrackpadPan(event.target.checked)}
-                      />
-                      <i aria-hidden="true" />
-                    </label>
-                    <label className="settings-toggle">
-                      <span>
-                        <strong>Snap to 16 px grid</strong>
-                        <small>Applied only while committing node placements.</small>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={snapEnabled}
-                        onChange={(event) => setSnapEnabled(event.target.checked)}
-                      />
-                      <i aria-hidden="true" />
-                    </label>
-                    <div className="settings-tip">
-                      <Focus size={18} />
-                      <div>
-                        <strong>Zen mode</strong>
-                        <p>Press Z to hide panels and keep only the research canvas in view.</p>
+                      <div className="renderer-option-grid block-style-grid">
+                        {blockStyleOptions.map((option) => {
+                          const Icon = option.icon;
+                          return (
+                            <button
+                              key={option.id}
+                              className={blockStyleId === option.id ? "active" : ""}
+                              onClick={() => setBlockStyleId(option.id)}
+                              aria-pressed={blockStyleId === option.id}
+                              data-testid={`block-style-${option.id}`}
+                            >
+                              <span className={`renderer-option-icon preview-${option.id}`}>
+                                <Icon size={20} />
+                              </span>
+                              <span>
+                                <strong>
+                                  {locale === "zh-CN" ? option.labelZh : option.label}
+                                </strong>
+                                <small>
+                                  {locale === "zh-CN"
+                                    ? option.descriptionZh
+                                    : option.description}
+                                </small>
+                              </span>
+                              {blockStyleId === option.id && <Check size={16} />}
+                            </button>
+                          );
+                        })}
                       </div>
-                    </div>
-                  </section>
+                    </section>
+
+                    <section className="settings-section">
+                      <div className="settings-title">
+                        <GitBranch size={20} />
+                        <div>
+                          <strong>{locale === "zh-CN" ? "连接线样式" : "Connector style"}</strong>
+                          <small>
+                            {locale === "zh-CN"
+                              ? "路由与语义笔触可由内置样式或 .myc 插件提供。"
+                              : "Routing and semantic strokes are supplied by built-in or .myc styles."}
+                          </small>
+                        </div>
+                      </div>
+                      <div className="renderer-option-grid edge-style-grid">
+                        {edgeStyleCatalog.map((edgeStyle) => (
+                          <button
+                            key={edgeStyle.id}
+                            className={edgeStyleId === edgeStyle.id ? "active" : ""}
+                            onClick={() => setEdgeStyleId(edgeStyle.id)}
+                            aria-pressed={edgeStyleId === edgeStyle.id}
+                            data-testid={`edge-style-${edgeStyle.id}`}
+                          >
+                            <span className={`renderer-option-icon route-${edgeStyle.routing}`}>
+                              <GitBranch size={20} />
+                            </span>
+                            <span>
+                              <strong>{edgeStyle.name}</strong>
+                              <small>
+                                {edgeStyle.routing === "orthogonal"
+                                  ? locale === "zh-CN"
+                                    ? "严格 90° 正交路由"
+                                    : "Strict 90° routing"
+                                  : edgeStyle.routing === "bezier"
+                                    ? locale === "zh-CN"
+                                      ? "贝塞尔曲线"
+                                      : "Bezier curve"
+                                    : edgeStyle.routing === "straight"
+                                      ? locale === "zh-CN"
+                                        ? "直线"
+                                        : "Straight line"
+                                      : edgeStyle.routing.replace("-", " ")}
+                                {edgeStyle.source === "myc" ? " · .myc" : ""}
+                              </small>
+                            </span>
+                            {edgeStyleId === edgeStyle.id && <Check size={16} />}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="settings-tip connector-tip">
+                        <GitBranch size={18} />
+                        <div>
+                          <strong>{activeEdgeStyle.name}</strong>
+                          <p>
+                            {locale === "zh-CN"
+                              ? "支持、反驳、控制和测量关系会保留各自的语义线型。"
+                              : `${activeEdgeStyle.description} Support, refutation, control, and measurement relations keep separate semantic strokes.`}
+                          </p>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="settings-section">
+                      <div className="settings-title">
+                        <SlidersHorizontal size={20} />
+                        <div>
+                          <strong>{locale === "zh-CN" ? "画布交互" : "Canvas interaction"}</strong>
+                          <small>
+                            {locale === "zh-CN"
+                              ? "遵循 Windows 与 macOS 触控板的原生操作习惯。"
+                              : "Native-feeling defaults for Windows and macOS trackpads."}
+                          </small>
+                        </div>
+                      </div>
+                      <label className="settings-toggle">
+                        <span>
+                          <strong>{locale === "zh-CN" ? "双指平移" : "Two-finger pan"}</strong>
+                          <small>
+                            {locale === "zh-CN"
+                              ? "滚轮与双指手势平移画布，同时保留捏合缩放。"
+                              : "Wheel and trackpad gestures pan; pinch zoom remains enabled."}
+                          </small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={trackpadPan}
+                          onChange={(event) => setTrackpadPan(event.target.checked)}
+                        />
+                        <i aria-hidden="true" />
+                      </label>
+                      <label className="settings-toggle">
+                        <span>
+                          <strong>
+                            {locale === "zh-CN" ? "吸附到 16 px 网格" : "Snap to 16 px grid"}
+                          </strong>
+                          <small>
+                            {locale === "zh-CN"
+                              ? "只在提交节点位置时应用，不干扰拖动过程。"
+                              : "Applied only while committing node placements."}
+                          </small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={snapEnabled}
+                          onChange={(event) => setSnapEnabled(event.target.checked)}
+                        />
+                        <i aria-hidden="true" />
+                      </label>
+                      <div className="settings-tip">
+                        <Focus size={18} />
+                        <div>
+                          <strong>{locale === "zh-CN" ? "禅模式" : "Zen mode"}</strong>
+                          <p>
+                            {locale === "zh-CN"
+                              ? "按 Z 隐藏侧栏，只保留研究画布。"
+                              : "Press Z to hide panels and keep only the research canvas in view."}
+                          </p>
+                        </div>
+                      </div>
+                    </section>
+                  </>
                 )}
 
                 {settingsSection === "integrations" && (
@@ -5106,6 +5496,7 @@ function AppShell() {
                     <div className="shortcut-settings-preview">
                       {[
                         ["Ctrl / Cmd + K", "Focus search"],
+                        ["Ctrl / Cmd + ,", "Open settings"],
                         ["Ctrl / Cmd + Enter", "Run graph analysis"],
                         ["Ctrl / Cmd + C / V", "Copy or paste a node"],
                         ["Ctrl / Cmd + Z", "Undo last change"],
@@ -5138,6 +5529,8 @@ function AppShell() {
                 onClick={() => {
                   setDisplayDensity("auto");
                   setThemeId("research-light");
+                  setBlockStyleId("signal-block");
+                  setEdgeStyleId("research-orthogonal");
                   setLocale(normalizeLocale(navigator.language));
                   setTrackpadPan(true);
                   setSnapEnabled(true);
