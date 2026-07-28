@@ -16,10 +16,8 @@ import {
   BaseEdge,
   Controls,
   EdgeLabelRenderer,
-  Handle,
   MarkerType,
   MiniMap,
-  NodeResizer,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -31,7 +29,6 @@ import {
   type EdgeProps,
   type Node,
   type NodeChange,
-  type NodeProps,
   useReactFlow,
   useUpdateNodeInternals,
 } from "@xyflow/react";
@@ -127,6 +124,7 @@ import {
   listInstalledMycPlugins,
   listenForMycDrops,
 } from "../plugins/tauri-client";
+import { canvasEdgeTypes, canvasNodeTypes } from "./canvas-renderers";
 import {
   EDGE_TYPES,
   LAYOUT_MODES,
@@ -301,101 +299,7 @@ const edgeTypeLabels: Record<ResearchEdgeType, string> = {
   measures: "measures",
 };
 
-/**
- * 研究节点的 React Flow 渲染器；仅呈现已派生的状态，不直接修改项目。
- * React Flow renderer for one research node; renders derived state without mutating the project.
- */
-function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
-  const {
-    record,
-    blockStyleId,
-    disabled,
-    depth,
-    traversed,
-    chainState,
-    annotation,
-    influence,
-    collapsed,
-    pinned,
-    onResizeStart,
-    onResizeEnd,
-  } = data;
-  return (
-    <div
-      className={[
-        "research-node",
-        `node-${record.type}`,
-        `block-${blockStyleId}`,
-        selected ? "is-selected" : "",
-        disabled ? "is-disabled" : "",
-        traversed ? "is-traversed" : "",
-        chainState ? `is-chain-${chainState}` : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      data-testid={`node-${record.id}`}
-      data-block-style={blockStyleId}
-    >
-      <NodeResizer
-        isVisible={selected}
-        minWidth={190}
-        minHeight={94}
-        maxWidth={520}
-        maxHeight={360}
-        onResizeStart={onResizeStart}
-        onResizeEnd={onResizeEnd}
-        lineClassName="research-node-resize-line"
-        handleClassName="research-node-resize-handle"
-      />
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="research-handle"
-        data-port="IN"
-      />
-      <div className="node-card-topline">
-        <span className="node-kind">
-          <i className="node-type-marker" aria-hidden="true" />
-          <span className="node-type-label">{nodeTypeLabels[record.type]}</span>
-        </span>
-        <span className="node-view-state">
-          {pinned && <Pin size={11} aria-label="Pinned node" />}
-          {collapsed && <span title="Collapsed subtree">collapsed</span>}
-          <span className={`status-dot status-${record.status}`} title={record.status} />
-        </span>
-      </div>
-      <div className="node-title">{record.title}</div>
-      <div className="node-summary">{record.body}</div>
-      <div className="node-meta-row">
-        <span>{record.evidenceIds.length} evidence</span>
-        {traversed && typeof depth === "number" ? (
-          <span className="depth-badge">depth {depth}</span>
-        ) : (
-          <span>{record.tags[0] ?? "untagged"}</span>
-        )}
-      </div>
-      {(annotation || typeof influence === "number") && (
-        <div className="node-analysis-row">
-          {annotation && <span>{annotation}</span>}
-          {typeof influence === "number" && (
-            <span className={influence < 0 ? "negative" : "positive"}>
-              BP {influence >= 0 ? "+" : ""}
-              {(influence * 100).toFixed(0)}%
-            </span>
-          )}
-        </div>
-      )}
-      {disabled && <div className="disabled-ribbon">disabled in scenario</div>}
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="research-handle"
-        data-port="OUT"
-      />
-    </div>
-  );
-}
-
+/** Temporary compatibility state for the legacy edge renderer during extraction. */
 type EdgePresentationState = {
   disabled?: boolean;
   traversed?: boolean;
@@ -405,10 +309,6 @@ type EdgePresentationState = {
   selected?: boolean;
 };
 
-/**
- * 将声明式边样式与关系专属覆盖合并为最终渲染属性。
- * Merges declarative edge style with relation-specific overrides into render attributes.
- */
 function resolveEdgePresentation(
   edgeStyle: EdgeStyleManifest,
   edgeType: ResearchEdgeType,
@@ -453,18 +353,25 @@ function resolveEdgePresentation(
     width = Math.max(width, relation?.selectedWidth ?? edgeStyle.stroke.selectedWidth);
   }
 
-  return {
-    color,
-    width,
-    opacity,
-    dash,
-  };
+  return { color, width, opacity, dash };
 }
+
+/**
+ * 研究节点的 React Flow 渲染器；仅呈现已派生的状态，不直接修改项目。
+ * React Flow renderer for one research node; renders derived state without mutating the project.
+ */
+/**
+ * 将声明式边样式与关系专属覆盖合并为最终渲染属性。
+ * Merges declarative edge style with relation-specific overrides into render attributes.
+ */
 
 /**
  * 研究关系的 React Flow 渲染器，支持多种路由和语义化视觉状态。
  * React Flow relation renderer supporting multiple routes and semantic visual states.
  */
+// TODO(cleanup): remove this compatibility renderer after the visual regression suite
+// covers all connector routes. React Flow now uses `canvasEdgeTypes` below.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ResearchEdgeLine({
   id,
   sourceX,
@@ -579,8 +486,9 @@ function ResearchEdgeLine({
   );
 }
 
-const nodeTypes = { researchNode: ResearchNodeCard };
-const edgeTypes = { researchEdge: ResearchEdgeLine };
+/** React Flow receives extracted renderers; AppShell only derives their data. */
+const nodeTypes = canvasNodeTypes;
+const edgeTypes = canvasEdgeTypes;
 
 /** 在浏览器下载纯文本导出，不依赖服务器端存储 / Downloads a text export in-browser without server storage. */
 function downloadText(filename: string, content: string, mime = "application/json") {
