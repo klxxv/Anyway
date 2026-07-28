@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 
 interface Env {
+  /** Worker 资产与图像绑定；应用域模型不依赖这些平台类型 / Worker asset and image bindings; domain models do not depend on them. */
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {

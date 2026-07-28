@@ -13,11 +13,22 @@ import type {
   TraversalResult,
 } from "./research-types";
 
+/**
+ * Pure graph operations for the Research Canvas domain. Functions here must
+ * not depend on React Flow, Tauri, or storage infrastructure.
+ */
+
+/** Produces a detached JSON-safe copy for history snapshots and mutations. */
 export const cloneProject = (project: ProjectState): ProjectState =>
   JSON.parse(JSON.stringify(project)) as ProjectState;
 
+/** 当前可读取的最新存档版本 / Latest persisted schema this build can read. */
 export const CURRENT_SCHEMA_VERSION = 1;
 
+/**
+ * Normalizes legacy serialized projects into the current, renderable shape.
+ * Missing optional collections receive safe defaults; newer schemas are rejected.
+ */
 export function migrateProject(input: unknown): ProjectState {
   if (!input || typeof input !== "object") {
     throw new Error("Project must be a JSON object.");
@@ -85,9 +96,14 @@ export function migrateProject(input: unknown): ProjectState {
   };
 }
 
+/**
+ * 为客户端暂存对象生成可读 ID；它不是加密随机值也不是全局数据库主键。
+ * Generates readable IDs for client drafts; not cryptographic randomness or a database key.
+ */
 export const makeId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
+/** Applies a scenario's non-destructive exclusions and edge overrides. */
 export function resolveEdges(project: ProjectState, scenarioId?: string) {
   const scenario = project.scenarios.find((item) => item.id === scenarioId);
   const disabledNodes = new Set(scenario?.disabledNodeIds ?? []);
@@ -104,6 +120,7 @@ export function resolveEdges(project: ProjectState, scenarioId?: string) {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** 返回场景启用的节点集合 / Returns the node set enabled by a scenario. */
 export function resolvedNodeIds(project: ProjectState, scenarioId?: string) {
   const scenario = project.scenarios.find((item) => item.id === scenarioId);
   const disabled = new Set(scenario?.disabledNodeIds ?? []);
@@ -112,6 +129,7 @@ export function resolvedNodeIds(project: ProjectState, scenarioId?: string) {
 
 type TraversalNeighbor = { nodeId: string; edgeId: string };
 
+/** Builds a deterministic adjacency index respecting direction and type filters. */
 function buildNeighborIndex(
   edges: ResearchEdge[],
   direction: TraversalRequest["direction"],
@@ -159,6 +177,10 @@ function buildNeighborIndex(
   return index;
 }
 
+/**
+ * 将节点类型过滤限定在启用节点内，并始终保留遍历起点。
+ * Applies node-type filters within enabled nodes while always retaining the start node.
+ */
 function filteredActiveNodeIds(
   project: ProjectState,
   request: TraversalRequest,
@@ -179,6 +201,10 @@ function filteredActiveNodeIds(
   );
 }
 
+/**
+ * Runs a bounded BFS or DFS and classifies encountered edges for visualisation.
+ * Stable ordering keeps results and tests reproducible across runtimes.
+ */
 export function traverseGraph(project: ProjectState, request: TraversalRequest): TraversalResult {
   const start = performance.now();
   const edges = resolveEdges(project, request.scenarioId);
@@ -297,6 +323,7 @@ export function traverseGraph(project: ProjectState, request: TraversalRequest):
   return result;
 }
 
+/** Finds directed cycles among nodes enabled by the selected scenario. */
 export function detectCycles(project: ProjectState, scenarioId?: string) {
   const edges = resolveEdges(project, scenarioId).filter((edge) => edge.directed);
   const nodeIds = [...resolvedNodeIds(project, scenarioId)].sort();
@@ -345,6 +372,10 @@ export function detectCycles(project: ProjectState, scenarioId?: string) {
   return cycles;
 }
 
+/**
+ * 用 BFS 返回一条稳定的最短路径；它沿用有向边的语义。
+ * Returns one stable shortest path via BFS, preserving directed-edge semantics.
+ */
 export function shortestPath(
   project: ProjectState,
   sourceId: string,
@@ -369,6 +400,7 @@ export function shortestPath(
   return path;
 }
 
+/** Enumerates up to 100 equal-length paths to protect the UI on dense graphs. */
 export function allShortestPaths(
   project: ProjectState,
   sourceId: string,
@@ -429,6 +461,10 @@ export function allShortestPaths(
   return paths;
 }
 
+/**
+ * 找出引用指定证据的节点和边，以支持证据审计。
+ * Finds nodes and edges citing one evidence record for evidence audits.
+ */
 export function evidenceBacklinks(project: ProjectState, evidenceId: string) {
   return {
     nodeIds: project.nodes
@@ -442,6 +478,10 @@ export function evidenceBacklinks(project: ProjectState, evidenceId: string) {
   };
 }
 
+/**
+ * 对比基础图与消融场景，区分直接禁用与意外失去可达性。
+ * Compares base graph and ablation, separating disabled items from lost reachability.
+ */
 export function compareScenarioReachability(
   project: ProjectState,
   rootId: string,
@@ -476,6 +516,7 @@ export function compareScenarioReachability(
   };
 }
 
+/** 将项目映射为 Obsidian JSON Canvas 的最小兼容结构 / Maps a project to minimal Obsidian JSON Canvas. */
 export function exportJsonCanvas(project: ProjectState) {
   const nodes = project.nodes.map((node) => {
     const placement = project.placements.find((item) => item.nodeId === node.id);
@@ -501,6 +542,7 @@ export function exportJsonCanvas(project: ProjectState) {
   return { nodes, edges };
 }
 
+/** 导出人类可读的研究摘要，而不丢失语义引用 / Exports a readable summary while retaining semantic references. */
 export function exportMarkdown(project: ProjectState) {
   const byId = new Map(project.nodes.map((node) => [node.id, node]));
   return [
@@ -530,12 +572,17 @@ export function exportMarkdown(project: ProjectState) {
   ].join("\n");
 }
 
+/** RFC 4180 风格单元格转义 / RFC 4180-style CSV cell escaping. */
 const csvCell = (value: unknown) =>
   `"${String(value ?? "")
     .replaceAll("\r\n", "\n")
     .replaceAll("\r", "\n")
     .replaceAll('"', '""')}"`;
 
+/**
+ * 按节点或关系导出审计友好的 CSV；嵌套字段显式扁平化。
+ * Exports audit-friendly node or edge CSV with explicit flattening of nested fields.
+ */
 export function exportCsv(project: ProjectState, kind: "nodes" | "edges") {
   if (kind === "nodes") {
     return [
@@ -592,6 +639,10 @@ export function exportCsv(project: ProjectState, kind: "nodes" | "edges") {
   ].join("\n");
 }
 
+/**
+ * 在有向无环部分计算分层深度；循环节点保留为未分层。
+ * Computes ranks for the directed acyclic portion; cycle members remain unranked.
+ */
 function topologicalDepths(project: ProjectState, edgeIds?: Set<string>) {
   const nodeIds = new Set(project.nodes.map((node) => node.id));
   const edges = project.edges.filter(
@@ -634,6 +685,7 @@ function topologicalDepths(project: ProjectState, edgeIds?: Set<string>) {
   return depth;
 }
 
+/** 从关系语义选择证据或反驳链边 / Selects evidence or refutation-chain edges by relation semantics. */
 function chainEdgeIds(project: ProjectState, mode: "evidence" | "refutation") {
   const supportTypes = new Set<ResearchEdgeType>(["supports", "derived_from", "measures", "uses"]);
   return new Set(
@@ -648,6 +700,10 @@ function chainEdgeIds(project: ProjectState, mode: "evidence" | "refutation") {
   );
 }
 
+/**
+ * 以节点度数作为演示频率生成确定性 Huffman 编码。
+ * Builds deterministic Huffman codes from node degree as a demonstration frequency.
+ */
 function huffmanCodes(project: ProjectState) {
   type HuffmanItem = { weight: number; ids: string[]; codes: Record<string, string> };
   const queue: HuffmanItem[] = project.nodes.map((node) => ({
@@ -676,6 +732,10 @@ function huffmanCodes(project: ProjectState) {
   return queue[0]?.codes ?? {};
 }
 
+/**
+ * 计算展示坐标和解释注解；绝不改变项目中保存的 placement。
+ * Computes presentation coordinates and annotations without mutating saved placements.
+ */
 export function computeLayout(
   project: ProjectState,
   mode: LayoutMode,
@@ -764,6 +824,10 @@ export function computeLayout(
   return { mode, positions, annotations, nodeIds, edgeIds };
 }
 
+/**
+ * 对选中的逻辑链评分，分数用于审阅提示而非科学结论。
+ * Scores the selected logic chain for review guidance, not scientific conclusions.
+ */
 export function computeLogicChain(
   project: ProjectState,
   mode: LogicChainMode,
@@ -812,6 +876,7 @@ export function computeLogicChain(
   return { mode, nodeIds, edgeIds, score: meanConfidence, summary };
 }
 
+/** 将置信度规范到影响传播权重 / Normalizes confidence into an influence-propagation weight. */
 function edgeWeight(edge: ResearchEdge) {
   if (edge.type === "controls") return 0;
   const experimental = Math.abs(edge.experiment?.delta ?? 0);
@@ -819,6 +884,7 @@ function edgeWeight(edge: ResearchEdge) {
   return Math.max(0.05, Math.min(1, edge.confidence ?? 0.5));
 }
 
+/** 将关系极性转换为传播方向符号 / Converts relation polarity to a propagation sign. */
 function edgeSign(edge: ResearchEdge) {
   if (
     edge.type === "contradicts" ||
@@ -830,6 +896,10 @@ function edgeSign(edge: ResearchEdge) {
   return 1;
 }
 
+/**
+ * 运行固定轮数的可解释影响传播；不是训练模型或因果识别器。
+ * Runs fixed-round explainable influence propagation; it is not a trained model or causal estimator.
+ */
 export function propagateInfluence(
   project: ProjectState,
   targetId: string,

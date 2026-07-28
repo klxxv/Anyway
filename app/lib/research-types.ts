@@ -1,3 +1,8 @@
+/**
+ * Renderer-agnostic domain contract for persisted research projects, graph
+ * algorithms, plugins, and fixtures. Keep UI-only fields out of this module.
+ */
+/** 允许持久化的研究实体类别 / Persisted research entity categories. */
 export const NODE_TYPES = [
   "question",
   "concept",
@@ -17,6 +22,7 @@ export const NODE_TYPES = [
 
 export type ResearchNodeType = (typeof NODE_TYPES)[number];
 
+/** 允许持久化的关系语义 / Persisted relation semantics. */
 export const EDGE_TYPES = [
   "causes",
   "correlates",
@@ -36,6 +42,10 @@ export type ResearchEdgeType = (typeof EDGE_TYPES)[number];
 export type ReviewStatus = "draft" | "confirmed" | "disputed" | "deprecated";
 export type EvidenceStatus = "candidate" | "confirmed" | "verified" | "disputed";
 
+/**
+ * 数据来源与审阅链路；它用于可追溯性而非权限授予。
+ * Provenance and review trail; this records traceability, not authorization.
+ */
 export interface Provenance {
   origin: "human" | "ai" | "import" | "python";
   actorId?: string;
@@ -46,6 +56,10 @@ export interface Provenance {
   sourceRefs?: string[];
 }
 
+/**
+ * 研究图中的语义节点，布局信息刻意不放在这里。
+ * Semantic graph node; canvas placement intentionally lives elsewhere.
+ */
 export interface ResearchNode {
   id: string;
   type: ResearchNodeType;
@@ -60,6 +74,10 @@ export interface ResearchNode {
   updatedAt: string;
 }
 
+/**
+ * 节点间的带证据关系；`directed` 决定图算法的可达性语义。
+ * Evidence-backed relation; `directed` controls reachability semantics.
+ */
 export interface ResearchEdge {
   id: string;
   type: ResearchEdgeType;
@@ -86,6 +104,10 @@ export interface ResearchEdge {
   provenance: Provenance;
 }
 
+/**
+ * 可定位的证据记录，可由节点和边复用。
+ * Addressable evidence record shared by nodes and edges.
+ */
 export interface EvidenceRecord {
   id: string;
   sourceType: "paper" | "dataset" | "experiment" | "code" | "note";
@@ -107,6 +129,10 @@ export interface EvidenceRecord {
   provenance: Provenance;
 }
 
+/**
+ * 单个视图中的节点几何信息；与研究语义分离以支持多视图。
+ * Per-view geometry, separated from semantics to support multiple views.
+ */
 export interface PlacementRecord {
   id: string;
   viewId: string;
@@ -119,6 +145,10 @@ export interface PlacementRecord {
   pinned?: boolean;
 }
 
+/**
+ * 非破坏性消融覆盖层，绝不修改基础项目数据。
+ * Non-destructive ablation overlay; it never mutates base project data.
+ */
 export interface ScenarioRecord {
   id: string;
   name: string;
@@ -132,6 +162,10 @@ export interface ScenarioRecord {
   createdAt: string;
 }
 
+/**
+ * 可序列化的项目聚合根，也是导入、导出与历史快照的单位。
+ * Serializable project aggregate; the unit for import, export, and history.
+ */
 export interface ProjectState {
   schemaVersion: number;
   id: string;
@@ -156,6 +190,10 @@ export interface ProjectState {
   }>;
 }
 
+/**
+ * 需要人工接受或拒绝的候选变更，避免自动代理直接改图。
+ * Human-reviewable proposed change; prevents agents from mutating the graph directly.
+ */
 export interface GraphSuggestion {
   id: string;
   kind: "node" | "edge";
@@ -170,6 +208,10 @@ export interface GraphSuggestion {
   edge?: Omit<ResearchEdge, "id">;
 }
 
+/**
+ * 遍历的过滤与深度约束；结果保持稳定排序以便复现。
+ * Traversal filters and depth bound; results are stably ordered for reproducibility.
+ */
 export interface TraversalRequest {
   startId: string;
   strategy: "bfs" | "dfs";
@@ -180,6 +222,10 @@ export interface TraversalRequest {
   scenarioId?: string;
 }
 
+/**
+ * 供算法解释和画布高亮使用的遍历产物。
+ * Traversal artifact used for algorithm explanation and canvas highlighting.
+ */
 export interface TraversalResult {
   strategy: "bfs" | "dfs";
   startId: string;
@@ -194,6 +240,7 @@ export interface TraversalResult {
   durationMs: number;
 }
 
+/** 基线与场景可达性差异 / Reachability delta between base and scenario. */
 export interface ScenarioDiff {
   disabledNodeIds: string[];
   disabledEdgeIds: string[];
@@ -202,6 +249,7 @@ export interface ScenarioDiff {
   alternatePathNodeIds: string[];
 }
 
+/** 仅影响展示位置的布局模式 / Layout modes that affect presentation only. */
 export const LAYOUT_MODES = [
   "evidence-chain",
   "refutation-chain",
@@ -213,6 +261,7 @@ export const LAYOUT_MODES = [
 
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
+/** 布局计算的纯展示结果 / Pure presentation result from a layout calculation. */
 export interface LayoutResult {
   mode: LayoutMode;
   positions: Record<string, { x: number; y: number }>;
@@ -223,6 +272,7 @@ export interface LayoutResult {
 
 export type LogicChainMode = "effective" | "evidence" | "refutation";
 
+/** 供研究者审阅的有分数逻辑链 / Scored logic chain for researcher review. */
 export interface LogicChainResult {
   mode: LogicChainMode;
   nodeIds: string[];
@@ -231,6 +281,7 @@ export interface LogicChainResult {
   summary: string;
 }
 
+/** 迭代影响传播的可解释输出 / Explainable output from iterative influence propagation. */
 export interface InfluenceResult {
   targetId: string;
   scores: Record<string, number>;
@@ -239,6 +290,10 @@ export interface InfluenceResult {
   iterations: number;
 }
 
+/**
+ * UI 可展示的插件元数据，不等同于桌面端 `.myc` 安装清单。
+ * UI-facing plugin metadata; distinct from the desktop `.myc` install manifest.
+ */
 export interface PluginManifest {
   id: string;
   name: string;
@@ -251,6 +306,7 @@ export interface PluginManifest {
   publisher: string;
 }
 
+/** 声明式主题令牌，不携带可执行代码 / Declarative theme tokens with no executable code. */
 export interface ThemeManifest {
   id: string;
   name: string;
@@ -282,6 +338,7 @@ export interface EdgeStrokeStyle {
   dash?: number[];
 }
 
+/** 声明式连线外观与关系覆盖 / Declarative connector style and relation overrides. */
 export interface EdgeStyleManifest {
   id: string;
   name: string;

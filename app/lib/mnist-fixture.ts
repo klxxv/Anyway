@@ -1,3 +1,8 @@
+/**
+ * 将已提交的 MNIST 实验 artifact 映射成可审阅的研究图；不在前端训练模型。
+ * Maps a checked-in MNIST experiment artifact to a reviewable research graph; the frontend never trains a model.
+ */
+
 import resultsJson from "../data/mnist-experiment-results.json";
 import type {
   EvidenceRecord,

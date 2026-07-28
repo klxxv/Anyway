@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * 当前研究工作区的客户端组合根：连接 React Flow、本地 UI 状态、图分析、插件展示和弹窗。
+ * Current client composition root: bridges React Flow, local UI state, graph analysis,
+ * plugin presentation, and dialogs.
+ *
+ * TODO(architecture): 将功能面板和状态/操作拆到专用模块；此文件是审计中最大的耦合边界。
+ * TODO(architecture): split feature panels and state/actions into dedicated modules;
+ * this file is the largest coupling boundary identified by the audit.
+ */
+
 import {
   Background,
   BackgroundVariant,
@@ -144,6 +154,7 @@ import {
   type CSSProperties,
 } from "react";
 
+/** React Flow 适配数据，不属于持久化研究模型 / React Flow adapter data, not persisted domain state. */
 type CanvasNodeData = {
   record: ResearchNode;
   blockStyleId: BlockStyleId;
@@ -160,6 +171,7 @@ type CanvasNodeData = {
 };
 
 type CanvasNode = Node<CanvasNodeData, "researchNode">;
+/** 连线的纯展示状态，由领域关系和当前 UI 筛选共同派生 / Presentation-only edge state derived from domain data and UI filters. */
 type CanvasEdgeData = {
   type: ResearchEdgeType;
   edgeStyle: EdgeStyleManifest;
@@ -174,6 +186,7 @@ type CanvasEdgeData = {
 };
 type CanvasEdge = Edge<CanvasEdgeData, "researchEdge">;
 
+/** 可撤销操作的快照；项目本身保持 JSON 可序列化 / Undoable snapshot; project stays JSON-serializable. */
 type HistoryEntry = {
   label: string;
   snapshot: ProjectState;
@@ -240,6 +253,7 @@ const blockStyleOptions: Array<{
   },
 ];
 
+/** 根据显示器缩放给出保守的界面缩放建议 / Gives a conservative UI scale recommendation for display scaling. */
 function recommendedUiScale(scaleFactor: number) {
   return Math.min(1.44, Math.max(1.32, 1.32 + (scaleFactor - 1) * 0.08));
 }
@@ -287,6 +301,10 @@ const edgeTypeLabels: Record<ResearchEdgeType, string> = {
   measures: "measures",
 };
 
+/**
+ * 研究节点的 React Flow 渲染器；仅呈现已派生的状态，不直接修改项目。
+ * React Flow renderer for one research node; renders derived state without mutating the project.
+ */
 function ResearchNodeCard({ data, selected }: NodeProps<CanvasNode>) {
   const {
     record,
@@ -387,6 +405,10 @@ type EdgePresentationState = {
   selected?: boolean;
 };
 
+/**
+ * 将声明式边样式与关系专属覆盖合并为最终渲染属性。
+ * Merges declarative edge style with relation-specific overrides into render attributes.
+ */
 function resolveEdgePresentation(
   edgeStyle: EdgeStyleManifest,
   edgeType: ResearchEdgeType,
@@ -439,6 +461,10 @@ function resolveEdgePresentation(
   };
 }
 
+/**
+ * 研究关系的 React Flow 渲染器，支持多种路由和语义化视觉状态。
+ * React Flow relation renderer supporting multiple routes and semantic visual states.
+ */
 function ResearchEdgeLine({
   id,
   sourceX,
@@ -556,6 +582,7 @@ function ResearchEdgeLine({
 const nodeTypes = { researchNode: ResearchNodeCard };
 const edgeTypes = { researchEdge: ResearchEdgeLine };
 
+/** 在浏览器下载纯文本导出，不依赖服务器端存储 / Downloads a text export in-browser without server storage. */
 function downloadText(filename: string, content: string, mime = "application/json") {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -566,10 +593,12 @@ function downloadText(filename: string, content: string, mime = "application/jso
   URL.revokeObjectURL(url);
 }
 
+/** 阻断模态框内部事件，避免触发遮罩关闭 / Stops modal-internal events from closing their backdrop. */
 function stopEvent(event: React.SyntheticEvent) {
   event.stopPropagation();
 }
 
+/** 创建独立的新项目，避免复用演示 fixture 的可变引用 / Creates an independent blank project without reusing mutable fixture references. */
 function createBlankProject(title = "Untitled research project"): ProjectState {
   const now = new Date().toISOString();
   const questionId = makeId("question");
@@ -621,6 +650,10 @@ function createBlankProject(title = "Untitled research project"): ProjectState {
   };
 }
 
+/**
+ * 在 UI 层拒绝无效自连和重复边；领域算法仍应能处理外部导入。
+ * Rejects invalid self-links and duplicate edges in the UI; domain algorithms still tolerate imports.
+ */
 function validateEdgeConnection(
   project: ProjectState,
   sourceId: string,
@@ -660,6 +693,10 @@ function validateEdgeConnection(
   return "";
 }
 
+/**
+ * 工作区协调器。重构期间应把状态/操作与视图分离，而不是继续往此函数添加功能。
+ * Workspace coordinator. New features should move state/actions and views outward rather than grow this function.
+ */
 function AppShell() {
   const [project, setProject] = useState<ProjectState>(() => cloneProject(initialProject));
   const [suggestions, setSuggestions] = useState<GraphSuggestion[]>(() =>

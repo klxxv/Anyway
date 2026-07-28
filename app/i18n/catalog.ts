@@ -1,3 +1,7 @@
+/**
+ * 类型化、本地优先的界面词条；研究数据本身保持原始语言。
+ * Typed, local-first UI messages; research data itself retains its source language.
+ */
 export type Locale = "en" | "zh-CN";
 
 const en = {
@@ -133,11 +137,12 @@ export const localeCatalog: Record<Locale, Record<MessageKey, string>> = {
   "zh-CN": zhCN,
 };
 
+/** 将浏览器语言折叠到当前支持的集合 / Collapses browser language tags into the currently supported set. */
 export function normalizeLocale(value?: string | null): Locale {
   return value?.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 }
 
+/** 以英文词条兜底，保证新增 UI 不会渲染空文案 / Falls back to English so new UI never renders an empty label. */
 export function translate(locale: Locale, key: MessageKey): string {
   return localeCatalog[locale][key] ?? localeCatalog.en[key];
 }
-

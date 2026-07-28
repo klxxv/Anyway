@@ -1,3 +1,8 @@
+/**
+ * 通用演示研究图：固定时间戳和 ID 让 UI、截图和算法测试可复现。
+ * General demo research graph: fixed timestamps and IDs keep UI, screenshots, and algorithms reproducible.
+ */
+
 import type {
   GraphSuggestion,
   ProjectState,

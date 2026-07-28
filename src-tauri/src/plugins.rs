@@ -1,3 +1,9 @@
+//! 声明式 `.myc` 视觉插件的桌面端安装器 / Desktop-side installer for declarative `.myc` visual plugins.
+//!
+//! MVP 只接收无权限的主题和连线样式包；它校验归档大小/路径，并在 Webview 可见前完成暂存提取。
+//! This MVP accepts only permission-free theme and edge-style packages; it validates archive
+//! bounds and paths, then stages extraction before making an installation visible to the webview.
+
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -179,6 +185,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     })
 }
 
+/// 原子移动到 `installed` 前校验并暂存归档 / Validates and stages an archive before atomically renaming it into `installed`.
 fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
     if archive_path
         .extension()

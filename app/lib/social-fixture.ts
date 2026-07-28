@@ -1,3 +1,8 @@
+/**
+ * 社会科学验收 fixture：覆盖中介、控制、循环与场景覆盖等图行为。
+ * Social-science acceptance fixture covering mediation, controls, cycles, and scenario overlays.
+ */
+
 import type {
   EvidenceRecord,
   ProjectState,
