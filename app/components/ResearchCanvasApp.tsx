@@ -627,6 +627,11 @@ function AppShell() {
   const [searchQuery, setSearchQuery] = useState("");
   const [nodeTypeFilter, setNodeTypeFilter] = useState<ResearchNodeType | "all">("all");
   const [canvasFilterOpen, setCanvasFilterOpen] = useState(false);
+  /**
+   * Contextual quick-add menu opened by the trackpad's two-finger context gesture.
+   * 由触控板双指上下文手势打开的就地快速新增菜单。
+   */
+  const [quickAddMenu, setQuickAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [canvasNodeTypes, setCanvasNodeTypes] = useState<ResearchNodeType[]>([]);
   const [canvasEdgeTypes, setCanvasEdgeTypes] = useState<ResearchEdgeType[]>([]);
   const [evidenceSourceFilter, setEvidenceSourceFilter] = useState("");
@@ -2627,7 +2632,7 @@ function AppShell() {
 
   return (
     <main
-      className={`app-shell ${zenMode ? "zen-mode" : ""} ${
+      className={`app-shell zen-canvas ${zenMode ? "zen-mode" : ""} ${
         activeTheme.source === "myc" ? "plugin-theme-active" : ""
       }`}
       data-testid="research-canvas-app"
@@ -3272,6 +3277,47 @@ function AppShell() {
             </span>
           </div>
 
+          {quickAddMenu && (
+            <div
+              className="quick-add-menu"
+              style={
+                {
+                  "--quick-x": `${quickAddMenu.x}px`,
+                  "--quick-y": `${quickAddMenu.y}px`,
+                } as CSSProperties
+              }
+              role="menu"
+              aria-label="Quick add node"
+            >
+              <span className="quick-add-hint">Two-finger hold · flick · release</span>
+              {(
+                [
+                  ["question", "Question"],
+                  ["variable", "Variable"],
+                  ["method", "Method"],
+                  ["evidence", "Evidence"],
+                  ["result", "Result"],
+                  ["note", "Note"],
+                ] as const
+              ).map(([type, label]) => (
+                <button
+                  key={type}
+                  className={`quick-add-${type}`}
+                  onClick={() => {
+                    setNewNode((current) => ({ ...current, type }));
+                    setQuickAddMenu(null);
+                    setModal("new-node");
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+              <button className="quick-add-center" onClick={() => setQuickAddMenu(null)}>
+                <Plus size={20} />
+              </button>
+            </div>
+          )}
+
           <ReactFlow<CanvasNode, CanvasEdge>
             nodes={flowNodes}
             edges={flowEdges}
@@ -3307,6 +3353,16 @@ function AppShell() {
             onPaneClick={() => {
               setSelectedNodeId("");
               setSelectedEdgeId("");
+              setQuickAddMenu(null);
+            }}
+            onPaneContextMenu={(event) => {
+              event.preventDefault();
+              const bounds = (event.currentTarget as Element | null)?.getBoundingClientRect();
+              if (!bounds) return;
+              setQuickAddMenu({
+                x: event.clientX - bounds.left,
+                y: event.clientY - bounds.top,
+              });
             }}
             onNodeDragStart={() => {
               dragSnapshot.current = cloneProject(project);
@@ -3522,6 +3578,47 @@ function AppShell() {
                     onBlur={(event) => updateSelectedNode("body", event.target.value)}
                   />
                 </label>
+                {selectedNode.type === "variable" && (
+                  <section className="variable-schema" aria-label="Variable schema">
+                    <span className="eyebrow">Variable schema</span>
+                    <label className="field-label">
+                      Value type
+                      <select
+                        value={String(selectedNode.data.valueType ?? "enum")}
+                        onChange={(event) =>
+                          commit("Change variable value type", (draft) => {
+                            const node = draft.nodes.find((item) => item.id === selectedNode.id);
+                            if (node) node.data.valueType = event.target.value;
+                          })
+                        }
+                      >
+                        <option value="enum">enum</option>
+                        <option value="bool">bool</option>
+                        <option value="number">number</option>
+                        <option value="text">text</option>
+                      </select>
+                    </label>
+                    {String(selectedNode.data.valueType ?? "enum") === "enum" ? (
+                      <label className="field-label">
+                        Enum values
+                        <input
+                          defaultValue={String(selectedNode.data.enumValues ?? "low, medium, high")}
+                          onBlur={(event) =>
+                            commit("Set enum values", (draft) => {
+                              const node = draft.nodes.find((item) => item.id === selectedNode.id);
+                              if (node) node.data.enumValues = event.target.value;
+                            })
+                          }
+                        />
+                      </label>
+                    ) : String(selectedNode.data.valueType) === "bool" ? (
+                      <div className="bool-fact-row">
+                        <span>bool · observed fact</span>
+                        <small>Not a hypothesis</small>
+                      </div>
+                    ) : null}
+                  </section>
+                )}
                 <div className="tag-section">
                   <div className="field-label static">Tags</div>
                   <div className="tag-list">
