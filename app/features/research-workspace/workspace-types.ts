@@ -19,6 +19,8 @@ export type WorkspaceNodeData = {
 export type WorkspaceEdgeData = {
   record: ResearchEdge;
   label: string;
+  labelOffsetX?: number;
+  labelOffsetY?: number;
 };
 
 export type WorkspaceNode = Node<WorkspaceNodeData, "researchNode">;

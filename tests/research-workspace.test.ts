@@ -13,6 +13,12 @@ import {
   normalizeWorkspacePreferences,
 } from "../app/features/research-workspace/workspace-preferences";
 import {
+  defaultWorkspaceShortcuts,
+  shortcutConflicts,
+  shortcutFromKeyboardEvent,
+} from "../app/features/research-workspace/workspace-shortcuts";
+import { computeEdgeRoutes } from "../app/features/research-workspace/canvas/edge-routing";
+import {
   clampPieMenuPoint,
   isStableTwoFingerHold,
   measureTwoFingerFrame,
@@ -87,6 +93,7 @@ test("workspace preferences restore only supported values", () => {
       defaultLayout: "table",
       showMiniMap: false,
       showLinkCounts: false,
+      shortcuts: defaultWorkspacePreferences.shortcuts,
     }),
     {
       commandDensity: "compact",
@@ -94,6 +101,7 @@ test("workspace preferences restore only supported values", () => {
       defaultLayout: "table",
       showMiniMap: false,
       showLinkCounts: false,
+      shortcuts: defaultWorkspacePreferences.shortcuts,
     },
   );
   assert.deepEqual(
@@ -102,6 +110,50 @@ test("workspace preferences restore only supported values", () => {
       defaultLayout: "unknown" as never,
     }),
     defaultWorkspacePreferences,
+  );
+});
+
+test("edge routing chooses facing sides and separates shared source lanes", () => {
+  const routes = computeEdgeRoutes(zenWorkspaceFixture);
+  assert.equal(routes["edge-canopy-temp"].sourceHandle, "left");
+  assert.equal(routes["edge-canopy-temp"].targetHandle, "right");
+  assert.equal(routes["edge-question-canopy"].sourceHandle, "bottom");
+  assert.equal(routes["edge-question-canopy"].targetHandle, "top");
+  assert.equal(routes["edge-canopy-landsat"].sourceHandle, "right-top");
+  assert.equal(routes["edge-canopy-ndvi"].sourceHandle, "right-bottom");
+  assert.notEqual(
+    routes["edge-canopy-landsat"].labelOffsetY,
+    routes["edge-canopy-ndvi"].labelOffsetY,
+  );
+  assert.equal(routes["edge-result-zhang"].sourceHandle, "bottom-left");
+  assert.equal(routes["edge-result-nguyen"].sourceHandle, "bottom-right");
+});
+
+test("shortcut capture is canonical and duplicate bindings are detected", () => {
+  assert.equal(
+    shortcutFromKeyboardEvent({
+      key: "z",
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: true,
+      metaKey: false,
+    }),
+    "Ctrl+Shift+Z",
+  );
+  assert.equal(
+    shortcutFromKeyboardEvent({
+      key: "Control",
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+    }),
+    null,
+  );
+  assert.equal(shortcutConflicts(defaultWorkspaceShortcuts).size, 0);
+  assert.deepEqual(
+    [...shortcutConflicts({ ...defaultWorkspaceShortcuts, note: "A" })].sort(),
+    ["add", "note"],
   );
 });
 

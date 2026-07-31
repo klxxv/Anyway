@@ -11,6 +11,7 @@ import {
   IconUsersGroup,
 } from "@tabler/icons-react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import type { CSSProperties } from "react";
 import type { ResearchNodeType } from "../../../lib/research-types";
 import type { WorkspaceNode } from "../workspace-types";
 
@@ -80,10 +81,40 @@ export function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
         </span>
       )}
 
-      <Handle className="zen-handle" type="target" position={Position.Left} />
-      <Handle className="zen-handle" type="source" position={Position.Right} />
-      <Handle className="zen-handle" id="top" type="target" position={Position.Top} />
-      <Handle className="zen-handle" id="bottom" type="source" position={Position.Bottom} />
+      {[
+        ["left", Position.Left],
+        ["right", Position.Right],
+        ["top", Position.Top],
+        ["bottom", Position.Bottom],
+      ].map(([id, position]) => (
+        <Handle
+          key={id}
+          className="zen-handle"
+          id={id as string}
+          type="source"
+          position={position as Position}
+        />
+      ))}
+      {[
+        ["left-top", Position.Left, { top: "32%" }],
+        ["left-bottom", Position.Left, { top: "68%" }],
+        ["right-top", Position.Right, { top: "32%" }],
+        ["right-bottom", Position.Right, { top: "68%" }],
+        ["top-left", Position.Top, { left: "32%" }],
+        ["top-right", Position.Top, { left: "68%" }],
+        ["bottom-left", Position.Bottom, { left: "32%" }],
+        ["bottom-right", Position.Bottom, { left: "68%" }],
+      ].map(([id, position, style]) => (
+        <Handle
+          key={id as string}
+          className="zen-route-handle"
+          id={id as string}
+          type="source"
+          position={position as Position}
+          style={style as CSSProperties}
+          isConnectable={false}
+        />
+      ))}
     </article>
   );
 }

@@ -141,6 +141,15 @@
     opacity: 1;
   }
 
+  .zen-route-handle {
+    width: 1px !important;
+    height: 1px !important;
+    border: 0 !important;
+    background: transparent !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
   .zen-minimap {
     left: 19px !important;
     right: auto !important;
@@ -181,6 +190,23 @@
     border-bottom-color: rgb(36 39 43 / 18%) !important;
     background: var(--color-paper) !important;
     color: var(--color-ink) !important;
+  }
+
+  .shortcut-key {
+    min-width: 22px;
+    border: 1px solid rgb(36 39 43 / 18%);
+    border-bottom-color: rgb(36 39 43 / 32%);
+    border-radius: 4px;
+    background: rgb(36 39 43 / 4%);
+    padding: 2px 6px;
+    color: rgb(36 39 43 / 62%);
+    font-family: var(--font-sans);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    text-align: center;
+    text-transform: none;
   }
 
   .zen-pie-menu {

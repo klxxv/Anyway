@@ -47,6 +47,18 @@
 - Trackpad/overflow same-input comparison:
   `C:\Users\admin\Documents\Anyway\output\design-qa\trackpad-overflow-comparison.png`
   (746 × 238 px; source left, corrected implementation right).
+- Edge-routing source capture:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\edge-routing-before.png`
+  (1443 × 931 px, original single-handle straight-edge state).
+- Edge-routing implementation capture:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\edge-routing-after.png`
+  (1443 × 931 px, corrected directional anchors with the quick-add state open).
+- Edge-routing same-input comparison:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\edge-routing-comparison.png`
+  (2886 × 931 px; before left, corrected implementation right, no density normalization).
+- Shortcut-settings implementation capture:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\shortcut-settings-conflict.png`
+  (1443 × 931 px, duplicate binding error and disabled Save state).
 - Capture viewport: 1443 × 931 physical/CSS px at device scale factor 1; the 29 px native
   title bar is excluded from the 1443 × 902 design comparison.
 - Compared state: Urban Heat Islands fixture, Tree Canopy Cover selected, eight-way quick-add
@@ -177,6 +189,35 @@
   gesture tests cover the one-second threshold, pinch rejection, eight directions, and edge
   clamping; physical multi-touch injection is not available through Computer Use.
 
+### Pass 7
+
+- [P1][edge routing] Every relation used the same right-source and left-target handles, even
+  when the target was above or below the source. This made vertical relations enter nodes from
+  the wrong side and caused shared edges and labels to overlap.
+  - Fix: compute a deterministic route from persisted node boxes, select the facing side, use
+    secondary invisible route anchors for divergent relations, and allocate separate label
+    lanes for edges sharing a source side. The renderer retains the reference's restrained
+    straight-line language rather than adding conspicuous curves.
+- [P1][keyboard discoverability] Commands had no visible shortcut guidance and no editable
+  keyboard binding model.
+  - Fix: added compact hover/focus shortcut hints, badges inside Add/Connect/Layout disclosure
+    headers, `aria-keyshortcuts`, persistent bindings for ten workspace actions, and an app-level
+    dispatcher that ignores editable controls.
+- [P1][settings safety] Rebinding could create duplicate shortcuts or trap Escape on the
+  recorder button.
+  - Fix: duplicate bindings now receive an alert border and disable Save; Escape cancels only an
+    active recording, Backspace clears it, each row can reset independently, and a second Escape
+    closes Settings normally.
+- [P2][settings layout] The new list initially pushed the fixed footer outside the dialog's grid
+  track.
+  - Fix: added the missing `min-height: 0` flex constraint and compact row rhythm. The content
+    scrolls inside the panel while Cancel and Save remain persistently visible.
+- Post-fix evidence: the 2886 × 931 same-input comparison shows vertical relations entering
+  top/bottom edges, horizontal relations using left/right edges, and the two result-to-evidence
+  lines separating cleanly. The shortcut capture shows the existing white/gray-black/blue
+  settings language, red duplicate state, visible scrollbar, and fixed footer. Computer Use
+  verified `Ctrl+,`, `A`, conflict detection, Save disabling, and Escape behavior.
+
 ## Final rubric
 
 | Surface | Result | Evidence |
@@ -186,9 +227,9 @@
 | Color and tokens | Passed | Intentional white/gray-black/blue mapping is consistent and accessible. |
 | Icons and shapes | Passed | Tabler icons, thin graph outlines, circular question nodes, straight semantic edges, and eight pie wedges are complete; the obsolete gesture hand is absent. |
 | Copy and content | Passed | The complete Chinese climate fixture, enum values, observed bool fact, methods, evidence, relation labels, and inspector copy form one coherent example. |
-| States and interactions | Passed | Computer Use evidence covers navigation, search, hover-open Add/Connect/Layout, direct clicks, six layout modes, four legend filters, settings persistence, automatic re-layout, Escape dismissal, selected, active, and disabled states. Automated gesture tests cover the non-injectable physical multi-touch path. |
+| States and interactions | Passed | Computer Use evidence covers navigation, search, hover-open Add/Connect/Layout, shortcut hints, editable bindings, conflict blocking, direct clicks, six layout modes, four legend filters, settings persistence, automatic re-layout, Escape dismissal, selected, active, and disabled states. Automated gesture tests cover the non-injectable physical multi-touch path. |
 | Accessibility | Passed | Semantic buttons/menus, labels, focus-visible styles, reduced-motion handling, and keyboard dismissal are present. |
-| Viewport resilience | Passed | Reference geometry is exact at desktop size; widths below 1050 px switch to fit-to-view, and the compact MiniMap clips all markers inside its border. |
+| Viewport resilience | Passed | Reference geometry is exact at desktop size; widths below 1050 px switch to fit-to-view, the compact MiniMap clips all markers, and the shortcut list keeps its footer fixed while content scrolls. |
 | AI shortcut artifacts | Passed | No emoji, handcrafted SVG, placeholder illustration, decorative blob, or fake asset substitutes are used. |
 
 No unresolved P0, P1, or P2 finding remains.

@@ -3,6 +3,7 @@
 import {
   Background,
   BackgroundVariant,
+  ConnectionMode,
   Controls,
   MiniMap,
   ReactFlow,
@@ -31,6 +32,7 @@ import {
 import { RadialAddMenu } from "../components/radial-add-menu";
 import { ResearchEdgeLine } from "./research-edge-line";
 import { ResearchNodeCard } from "./research-node-card";
+import { computeEdgeRoutes } from "./edge-routing";
 
 const nodeTypes = { researchNode: ResearchNodeCard };
 const edgeTypes = { researchEdge: ResearchEdgeLine };
@@ -73,13 +75,25 @@ function buildNodes(
 }
 
 function buildEdges(project: ProjectState, filter: LinkLegendFilter | null): WorkspaceEdge[] {
-  return projectForLegendFilter(project, filter).edges.map((record) => ({
-    id: record.id,
-    source: record.source,
-    target: record.target,
-    type: "researchEdge",
-    data: { record, label: record.note ?? record.type.replaceAll("_", " ") },
-  }));
+  const projected = projectForLegendFilter(project, filter);
+  const routes = computeEdgeRoutes(projected);
+  return projected.edges.map((record) => {
+    const route = routes[record.id];
+    return {
+      id: record.id,
+      source: record.source,
+      target: record.target,
+      sourceHandle: route?.sourceHandle,
+      targetHandle: route?.targetHandle,
+      type: "researchEdge",
+      data: {
+        record,
+        label: record.note ?? record.type.replaceAll("_", " "),
+        labelOffsetX: route?.labelOffsetX,
+        labelOffsetY: route?.labelOffsetY,
+      },
+    };
+  });
 }
 
 function ResearchGraphInner(props: ResearchGraphCanvasProps) {
@@ -357,6 +371,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         panOnScroll
         preventScrolling
         connectOnClick={connectMode}
+        connectionMode={ConnectionMode.Loose}
         connectionRadius={26}
         className={canvasClass}
         proOptions={{ hideAttribution: true }}

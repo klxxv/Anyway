@@ -31,6 +31,8 @@ export function ResearchEdgeLine({
   const contradictory = type === "contradicts";
   const dash =
     type === "controls" ? "7 6" : type === "derived_from" ? "2 4" : contradictory ? "7 4" : undefined;
+  const renderedLabelX = labelX + (data?.labelOffsetX ?? 0);
+  const renderedLabelY = labelY + (data?.labelOffsetY ?? 0);
 
   return (
     <>
@@ -49,7 +51,7 @@ export function ResearchEdgeLine({
             "pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 bg-canvas px-1.5 font-serif text-[10px] italic",
             contradictory ? "text-alert" : selected ? "text-blue" : "text-ink/75",
           ].join(" ")}
-          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+          style={{ transform: `translate(-50%, -50%) translate(${renderedLabelX}px, ${renderedLabelY}px)` }}
         >
           {data?.label}
         </span>

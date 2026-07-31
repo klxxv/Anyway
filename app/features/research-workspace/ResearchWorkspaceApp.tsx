@@ -26,6 +26,11 @@ import {
   normalizeWorkspacePreferences,
   type WorkspacePreferences,
 } from "./workspace-preferences";
+import {
+  isEditableShortcutTarget,
+  SHORTCUT_ACTIONS,
+  shortcutFromKeyboardEvent,
+} from "./workspace-shortcuts";
 
 const preferencesStorageKey = "research-canvas.workspace-preferences.v1";
 
@@ -69,6 +74,29 @@ export function ResearchWorkspaceApp() {
     [],
   );
 
+  const toggleConnectMode = useCallback(() => {
+    setConnectMode((current) => {
+      const next = !current;
+      setNotice(
+        next ? `${connectType.replaceAll("_", " ")} · drag from one node to another` : "",
+      );
+      return next;
+    });
+  }, [connectType]);
+
+  const addNote = useCallback(() => {
+    setComposer({ type: "note", x: 610, y: 430 });
+  }, []);
+
+  const applyDefaultLayout = useCallback(() => {
+    const mode = preferences.defaultLayout;
+    workspace.applyLayout(mode, linkFilter);
+    setLayoutMode(mode);
+    setNotice(`${mode.replaceAll("-", " ")} layout applied`);
+  }, [linkFilter, preferences.defaultLayout, workspace]);
+
+  const exportProject = useCallback(() => downloadProject(workspace.project), [workspace.project]);
+
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       const saved = window.localStorage.getItem(preferencesStorageKey);
@@ -85,6 +113,73 @@ export function ResearchWorkspaceApp() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    const runShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        isEditableShortcutTarget(event.target) ||
+        settingsOpen ||
+        pluginStoreOpen ||
+        composer
+      ) {
+        return;
+      }
+      const binding = shortcutFromKeyboardEvent(event);
+      if (!binding) return;
+      const action = SHORTCUT_ACTIONS.find(
+        (candidate) => preferences.shortcuts[candidate] === binding,
+      );
+      if (!action) return;
+      event.preventDefault();
+      switch (action) {
+        case "menu":
+          setMenuOpen((current) => !current);
+          break;
+        case "add":
+          setAddRequest((value) => value + 1);
+          break;
+        case "connect":
+          toggleConnectMode();
+          break;
+        case "note":
+          addNote();
+          break;
+        case "find":
+          setSearchOpen(true);
+          break;
+        case "layout":
+          applyDefaultLayout();
+          break;
+        case "undo":
+          workspace.undo();
+          break;
+        case "redo":
+          workspace.redo();
+          break;
+        case "export":
+          exportProject();
+          break;
+        case "settings":
+          setMenuOpen(false);
+          setSettingsOpen(true);
+          break;
+      }
+    };
+    window.addEventListener("keydown", runShortcut);
+    return () => window.removeEventListener("keydown", runShortcut);
+  }, [
+    addNote,
+    applyDefaultLayout,
+    composer,
+    exportProject,
+    pluginStoreOpen,
+    preferences.shortcuts,
+    settingsOpen,
+    toggleConnectMode,
+    workspace,
+  ]);
 
   useEffect(() => {
     const closeTransientUi = (event: KeyboardEvent) => {
@@ -109,6 +204,7 @@ export function ResearchWorkspaceApp() {
         connectType={connectType}
         commandDensity={preferences.commandDensity}
         hoverDelay={preferences.hoverDelay}
+        shortcuts={preferences.shortcuts}
         onMenu={() => setMenuOpen((current) => !current)}
         onAdd={() => setAddRequest((value) => value + 1)}
         onAddType={(type) =>
@@ -118,26 +214,13 @@ export function ResearchWorkspaceApp() {
             y: 430,
           })
         }
-        onConnect={() => {
-          setConnectMode((current) => !current);
-          setNotice(
-            connectMode
-              ? ""
-              : `${connectType.replaceAll("_", " ")} · drag from one node to another`,
-          );
-        }}
+        onConnect={toggleConnectMode}
         onConnectType={(type) => {
           setConnectType(type);
           setConnectMode(true);
           setNotice(`${type.replaceAll("_", " ")} · drag from one node to another`);
         }}
-        onNote={() =>
-          setComposer({
-            type: "note",
-            x: 610,
-            y: 430,
-          })
-        }
+        onNote={addNote}
         onFind={() => setSearchOpen(true)}
         activeLayout={layoutMode}
         onLayout={(mode) => {
@@ -147,7 +230,7 @@ export function ResearchWorkspaceApp() {
         }}
         onUndo={workspace.undo}
         onRedo={workspace.redo}
-        onExport={() => downloadProject(workspace.project)}
+        onExport={exportProject}
       />
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px]">

@@ -6,6 +6,7 @@ import {
   IconFileText,
   IconFolder,
   IconHistory,
+  IconKeyboard,
   IconLayoutGrid,
   IconPalette,
   IconPointer,
@@ -15,7 +16,7 @@ import {
   IconSettings,
   IconX,
 } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useI18n } from "../../../i18n/provider";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
 import { layoutOptions } from "../workspace-layout";
@@ -23,6 +24,12 @@ import {
   defaultWorkspacePreferences,
   type WorkspacePreferences,
 } from "../workspace-preferences";
+import {
+  defaultWorkspaceShortcuts,
+  shortcutConflicts,
+  shortcutFromKeyboardEvent,
+  type ShortcutAction,
+} from "../workspace-shortcuts";
 import type { NodeDraft } from "../workspace-types";
 
 export type ComposerState = {
@@ -544,7 +551,7 @@ export function ProjectMenu({
   );
 }
 
-type SettingsSection = "interface" | "interaction" | "canvas";
+type SettingsSection = "interface" | "interaction" | "shortcuts" | "canvas";
 
 function PreferenceToggle({
   checked,
@@ -598,6 +605,8 @@ export function SettingsDialog({
   const { locale, setLocale, t } = useI18n();
   const [section, setSection] = useState<SettingsSection>("interface");
   const [draft, setDraft] = useState(preferences);
+  const [recordingShortcut, setRecordingShortcut] = useState<ShortcutAction | null>(null);
+  const conflicts = shortcutConflicts(draft.shortcuts);
   const sections: Array<{
     key: SettingsSection;
     label: string;
@@ -606,8 +615,48 @@ export function SettingsDialog({
   }> = [
     { key: "interface", label: t("settings.interface"), description: t("settings.commandDensity"), icon: IconPalette },
     { key: "interaction", label: t("settings.interaction"), description: t("settings.hoverBehavior"), icon: IconPointer },
+    { key: "shortcuts", label: t("settings.shortcuts"), description: t("settings.shortcutsHint"), icon: IconKeyboard },
     { key: "canvas", label: t("settings.canvas"), description: t("settings.graphDefaults"), icon: IconLayoutGrid },
   ];
+  const shortcutRows: Array<{ action: ShortcutAction; label: string }> = [
+    { action: "menu", label: t("shortcut.menu") },
+    { action: "add", label: t("shortcut.add") },
+    { action: "connect", label: t("shortcut.connect") },
+    { action: "note", label: t("shortcut.note") },
+    { action: "find", label: t("shortcut.find") },
+    { action: "layout", label: t("shortcut.layout") },
+    { action: "undo", label: t("shortcut.undo") },
+    { action: "redo", label: t("shortcut.redo") },
+    { action: "export", label: t("shortcut.export") },
+    { action: "settings", label: t("shortcut.settings") },
+  ];
+
+  const recordShortcut = (
+    action: ShortcutAction,
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      setRecordingShortcut(null);
+      return;
+    }
+    if (event.key === "Backspace" || event.key === "Delete") {
+      setDraft((current) => ({
+        ...current,
+        shortcuts: { ...current.shortcuts, [action]: "" },
+      }));
+      setRecordingShortcut(null);
+      return;
+    }
+    const binding = shortcutFromKeyboardEvent(event.nativeEvent);
+    if (!binding) return;
+    setDraft((current) => ({
+      ...current,
+      shortcuts: { ...current.shortcuts, [action]: binding },
+    }));
+    setRecordingShortcut(null);
+  };
 
   return (
     <div className="fixed inset-0 z-[95] grid place-items-center bg-ink/10 backdrop-blur-[2px]">
@@ -651,7 +700,7 @@ export function SettingsDialog({
           </nav>
         </aside>
 
-        <div className="flex min-w-0 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-col">
           <div className="flex h-14 items-center justify-between border-b border-ink/15 px-6">
             <div>
               <p className="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
@@ -757,6 +806,63 @@ export function SettingsDialog({
               </div>
             )}
 
+            {section === "shortcuts" && (
+              <div>
+                <h3 className="font-serif text-[18px]">{t("settings.shortcutBindings")}</h3>
+                <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
+                  {t("settings.shortcutBindingsHint")}
+                </p>
+                <div className="mt-4 divide-y divide-ink/10 border-y border-ink/15">
+                  {shortcutRows.map(({ action, label }) => {
+                    const conflict = conflicts.has(action);
+                    const recording = recordingShortcut === action;
+                    return (
+                      <div key={action} className="flex min-h-9 items-center gap-3 py-1.5">
+                        <span className="min-w-0 flex-1 font-serif text-[12px]">{label}</span>
+                        <button
+                          className={`min-w-[112px] rounded-[4px] border px-3 py-1.5 text-center font-sans text-[10px] font-semibold transition focus-visible:outline-2 focus-visible:outline-blue ${
+                            conflict
+                              ? "border-alert/65 bg-alert/5 text-alert"
+                              : recording
+                                ? "border-blue bg-blue-soft text-blue"
+                                : "border-ink/20 bg-paper hover:border-blue/55 hover:text-blue"
+                          }`}
+                          onClick={() => setRecordingShortcut(action)}
+                          onKeyDown={
+                            recording ? (event) => recordShortcut(action, event) : undefined
+                          }
+                          aria-label={`${label}: ${draft.shortcuts[action] || t("settings.unassigned")}`}
+                        >
+                          {recording
+                            ? t("settings.pressShortcut")
+                            : draft.shortcuts[action] || t("settings.unassigned")}
+                        </button>
+                        <button
+                          className="w-10 text-right font-serif text-[9px] text-ink/40 hover:text-blue"
+                          onClick={() =>
+                            setDraft((current) => ({
+                              ...current,
+                              shortcuts: {
+                                ...current.shortcuts,
+                                [action]: defaultWorkspaceShortcuts[action],
+                              },
+                            }))
+                          }
+                        >
+                          {t("settings.resetBinding")}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className={`mt-3 font-serif text-[10px] ${conflicts.size ? "text-alert" : "text-ink/45"}`}>
+                  {conflicts.size
+                    ? t("settings.shortcutConflict")
+                    : t("settings.shortcutCaptureHint")}
+                </p>
+              </div>
+            )}
+
             {section === "canvas" && (
               <div>
                 <h3 className="font-serif text-[18px]">{t("settings.graphDefaults")}</h3>
@@ -814,7 +920,11 @@ export function SettingsDialog({
               <button className="button-secondary" onClick={onClose}>
                 {t("settings.cancel")}
               </button>
-              <button className="button-primary" onClick={() => onSave(draft)}>
+              <button
+                className="button-primary disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => onSave(draft)}
+                disabled={conflicts.size > 0}
+              >
                 {t("settings.save")}
                 <IconCheck size={15} stroke={1.45} />
               </button>

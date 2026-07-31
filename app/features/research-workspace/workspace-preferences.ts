@@ -1,4 +1,9 @@
 import type { LayoutMode } from "../../lib/research-types";
+import {
+  defaultWorkspaceShortcuts,
+  SHORTCUT_ACTIONS,
+  type WorkspaceShortcuts,
+} from "./workspace-shortcuts";
 
 export type CommandDensity = "comfortable" | "compact";
 export type HoverDelay = 80 | 180 | 320;
@@ -9,6 +14,7 @@ export type WorkspacePreferences = {
   defaultLayout: LayoutMode;
   showMiniMap: boolean;
   showLinkCounts: boolean;
+  shortcuts: WorkspaceShortcuts;
 };
 
 export const defaultWorkspacePreferences: WorkspacePreferences = {
@@ -17,6 +23,7 @@ export const defaultWorkspacePreferences: WorkspacePreferences = {
   defaultLayout: "tree",
   showMiniMap: true,
   showLinkCounts: true,
+  shortcuts: { ...defaultWorkspaceShortcuts },
 };
 
 /**
@@ -43,5 +50,13 @@ export function normalizeWorkspacePreferences(
         : "tree",
     showMiniMap: value.showMiniMap !== false,
     showLinkCounts: value.showLinkCounts !== false,
+    shortcuts: Object.fromEntries(
+      SHORTCUT_ACTIONS.map((action) => [
+        action,
+        typeof value.shortcuts?.[action] === "string"
+          ? value.shortcuts[action]
+          : defaultWorkspaceShortcuts[action],
+      ]),
+    ) as WorkspaceShortcuts,
   };
 }

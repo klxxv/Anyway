@@ -40,6 +40,10 @@ import type {
   CommandDensity,
   HoverDelay,
 } from "../workspace-preferences";
+import {
+  shortcutToAria,
+  type WorkspaceShortcuts,
+} from "../workspace-shortcuts";
 
 type WorkspaceTopbarProps = {
   canUndo: boolean;
@@ -48,6 +52,7 @@ type WorkspaceTopbarProps = {
   connectType: ResearchEdgeType;
   commandDensity: CommandDensity;
   hoverDelay: HoverDelay;
+  shortcuts: WorkspaceShortcuts;
   onMenu: () => void;
   onAdd: () => void;
   onAddType: (type: ResearchNodeType) => void;
@@ -124,9 +129,21 @@ function useHoverDisclosure(delay: HoverDelay) {
 }
 
 function commandClass(density: CommandDensity) {
-  return `group inline-flex h-12 items-center gap-2 border-r border-ink/10 font-serif text-[15px] text-ink transition hover:bg-blue-soft hover:text-blue focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue ${
+  return `group relative inline-flex h-12 items-center gap-2 border-r border-ink/10 font-serif text-[15px] text-ink transition hover:bg-blue-soft hover:text-blue focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue ${
     density === "compact" ? "px-3.5" : "px-5"
   }`;
+}
+
+function ShortcutTooltip({ binding }: { binding: string }) {
+  if (!binding) return null;
+  return (
+    <span
+      className="pointer-events-none absolute left-1/2 top-[52px] z-[100] -translate-x-1/2 whitespace-nowrap rounded-[4px] border border-ink/20 bg-ink px-2 py-1 font-sans text-[9px] font-medium tracking-wide text-paper opacity-0 shadow-sm transition-opacity delay-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+      role="tooltip"
+    >
+      {binding}
+    </span>
+  );
 }
 
 function HoverCommandMenu<T extends string>({
@@ -137,6 +154,7 @@ function HoverCommandMenu<T extends string>({
   active,
   density,
   hoverDelay,
+  shortcut,
   onPrimary,
   onChoose,
 }: {
@@ -147,6 +165,7 @@ function HoverCommandMenu<T extends string>({
   active?: boolean;
   density: CommandDensity;
   hoverDelay: HoverDelay;
+  shortcut: string;
   onPrimary: () => void;
   onChoose: (value: T) => void;
 }) {
@@ -173,6 +192,7 @@ function HoverCommandMenu<T extends string>({
         }}
         aria-expanded={disclosure.open}
         aria-haspopup="menu"
+        aria-keyshortcuts={shortcutToAria(shortcut)}
       >
         <TriggerIcon size={19} stroke={1.4} />
         {label}
@@ -188,10 +208,13 @@ function HoverCommandMenu<T extends string>({
           role="menu"
           aria-label={`${label} options`}
         >
-          <div className="px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
-            {label === t("workspace.add")
-              ? t("workspace.createObject")
-              : t("workspace.chooseRelation")}
+          <div className="flex items-center justify-between px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
+            <span>
+              {label === t("workspace.add")
+                ? t("workspace.createObject")
+                : t("workspace.chooseRelation")}
+            </span>
+            {shortcut && <kbd className="shortcut-key">{shortcut}</kbd>}
           </div>
           {options.map((option) => {
             const OptionIcon = option.icon;
@@ -236,6 +259,7 @@ export function WorkspaceTopbar({
   connectType,
   commandDensity,
   hoverDelay,
+  shortcuts,
   onMenu,
   onAdd,
   onAddType,
@@ -253,9 +277,14 @@ export function WorkspaceTopbar({
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink/15 bg-paper">
       <nav className="flex h-full items-stretch" aria-label="Workspace commands">
-        <button className={commandClass(commandDensity)} onClick={onMenu}>
+        <button
+          className={commandClass(commandDensity)}
+          onClick={onMenu}
+          aria-keyshortcuts={shortcutToAria(shortcuts.menu)}
+        >
           <IconMenu2 size={19} stroke={1.45} />
           {t("workspace.menu")}
+          <ShortcutTooltip binding={shortcuts.menu} />
         </button>
         <HoverCommandMenu
           label={t("workspace.add")}
@@ -263,6 +292,7 @@ export function WorkspaceTopbar({
           options={nodeOptions}
           density={commandDensity}
           hoverDelay={hoverDelay}
+          shortcut={shortcuts.add}
           onPrimary={onAdd}
           onChoose={onAddType}
         />
@@ -274,21 +304,33 @@ export function WorkspaceTopbar({
           active={connectMode}
           density={commandDensity}
           hoverDelay={hoverDelay}
+          shortcut={shortcuts.connect}
           onPrimary={onConnect}
           onChoose={onConnectType}
         />
-        <button className={commandClass(commandDensity)} onClick={onNote}>
+        <button
+          className={commandClass(commandDensity)}
+          onClick={onNote}
+          aria-keyshortcuts={shortcutToAria(shortcuts.note)}
+        >
           <IconNote size={19} stroke={1.45} />
           {t("workspace.note")}
+          <ShortcutTooltip binding={shortcuts.note} />
         </button>
-        <button className={commandClass(commandDensity)} onClick={onFind}>
+        <button
+          className={commandClass(commandDensity)}
+          onClick={onFind}
+          aria-keyshortcuts={shortcutToAria(shortcuts.find)}
+        >
           <IconSearch size={19} stroke={1.45} />
           {t("workspace.find")}
+          <ShortcutTooltip binding={shortcuts.find} />
         </button>
         <LayoutMenu
           activeLayout={activeLayout}
           density={commandDensity}
           hoverDelay={hoverDelay}
+          shortcut={shortcuts.layout}
           onLayout={onLayout}
         />
       </nav>
@@ -299,25 +341,31 @@ export function WorkspaceTopbar({
           onClick={onUndo}
           disabled={!canUndo}
           aria-label="Undo"
+          aria-keyshortcuts={shortcutToAria(shortcuts.undo)}
         >
           <IconArrowBackUp size={19} stroke={1.45} />
           {t("workspace.undo")}
+          <ShortcutTooltip binding={shortcuts.undo} />
         </button>
         <button
           className={commandClass(commandDensity)}
           onClick={onRedo}
           disabled={!canRedo}
           aria-label="Redo"
+          aria-keyshortcuts={shortcutToAria(shortcuts.redo)}
         >
           <IconArrowForwardUp size={19} stroke={1.45} />
           {t("workspace.redo")}
+          <ShortcutTooltip binding={shortcuts.redo} />
         </button>
         <button
           className={`${commandClass(commandDensity)} border-l border-r-0`}
           onClick={onExport}
+          aria-keyshortcuts={shortcutToAria(shortcuts.export)}
         >
           <IconFlag3 size={19} stroke={1.4} />
           {t("workspace.export")}
+          <ShortcutTooltip binding={shortcuts.export} />
         </button>
       </nav>
     </header>
@@ -328,11 +376,13 @@ function LayoutMenu({
   activeLayout,
   density,
   hoverDelay,
+  shortcut,
   onLayout,
 }: {
   activeLayout: LayoutMode | null;
   density: CommandDensity;
   hoverDelay: HoverDelay;
+  shortcut: string;
   onLayout: (mode: LayoutMode) => void;
 }) {
   const { t } = useI18n();
@@ -355,6 +405,7 @@ function LayoutMenu({
         onClick={() => disclosure.setOpen((current) => !current)}
         aria-expanded={disclosure.open}
         aria-haspopup="menu"
+        aria-keyshortcuts={shortcutToAria(shortcut)}
       >
         <IconHierarchy2 size={19} stroke={1.35} />
         {t("workspace.layout")}
@@ -370,8 +421,9 @@ function LayoutMenu({
           role="menu"
           aria-label="Layout mode"
         >
-          <div className="px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
-            {t("workspace.arrangeResearch")}
+          <div className="flex items-center justify-between px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
+            <span>{t("workspace.arrangeResearch")}</span>
+            {shortcut && <kbd className="shortcut-key">{shortcut}</kbd>}
           </div>
           {layoutOptions.map((option) => {
             const selected = option.mode === activeLayout;
