@@ -29,6 +29,8 @@ export type PieMenuState = {
   screenY: number;
   flowX: number;
   flowY: number;
+  gestureActive?: boolean;
+  selectedType?: ResearchNodeType | null;
 };
 
 export type NodeDraft = {

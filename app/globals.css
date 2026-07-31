@@ -152,6 +152,17 @@
     border-radius: 5px;
     background: rgb(255 255 255 / 94%) !important;
     box-shadow: none !important;
+    overflow: hidden !important;
+    contain: paint;
+    max-width: calc(100% - 82px) !important;
+    box-sizing: border-box;
+  }
+
+  .zen-minimap .react-flow__minimap-svg {
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden;
+    border-radius: inherit;
   }
 
   .zen-controls {
@@ -231,10 +242,19 @@
   }
 
   .zen-pie-item:hover,
-  .zen-pie-item:focus-visible {
+  .zen-pie-item:focus-visible,
+  .zen-pie-item.is-active {
     color: var(--color-blue);
     outline: none;
     transform: scale(1.06);
+  }
+
+  .zen-pie-item.is-active {
+    font-weight: 700;
+  }
+
+  .zen-pie-item.is-active svg {
+    stroke-width: 2.25;
   }
 
   .zen-pie-item-0 {

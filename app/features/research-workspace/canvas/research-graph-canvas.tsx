@@ -19,7 +19,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
+import { listenForNativeTrackpadContacts } from "../../../platform/trackpad";
 import { useTwoFingerPie } from "../hooks/use-two-finger-pie";
+import { clampPieMenuPoint } from "../hooks/two-finger-gesture";
 import type { PieMenuState, WorkspaceEdge, WorkspaceNode } from "../workspace-types";
 import {
   linkLegendFilterOf,
@@ -183,11 +185,43 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     [onRequestCreate],
   );
 
+  const openPieMenu = useCallback((menu: PieMenuState) => {
+    const width = wrapperRef.current?.clientWidth ?? 0;
+    const height = wrapperRef.current?.clientHeight ?? 0;
+    const screen = clampPieMenuPoint(
+      { x: menu.screenX, y: menu.screenY },
+      width,
+      height,
+    );
+    setPieMenu({ ...menu, screenX: screen.x, screenY: screen.y });
+  }, []);
+
   const gesture = useTwoFingerPie({
     toFlowPoint,
-    onOpen: setPieMenu,
+    onOpen: openPieMenu,
+    onHighlight: (selectedType) =>
+      setPieMenu((current) => (current ? { ...current, selectedType } : current)),
     onChoose: chooseFromGesture,
+    onDismiss: () => setPieMenu(null),
   });
+  const { onNativeTrackpadContact, ...gestureHandlers } = gesture;
+
+  useEffect(() => {
+    let cancelled = false;
+    let stop: () => void = () => undefined;
+    void listenForNativeTrackpadContacts((contact) => {
+      const bounds = wrapperRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      onNativeTrackpadContact(contact, { x: bounds.left, y: bounds.top });
+    }).then((unlisten) => {
+      if (cancelled) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [onNativeTrackpadContact]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<WorkspaceNode>[]) => {
@@ -277,7 +311,12 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     <div
       ref={wrapperRef}
       className="relative h-full min-h-0 overflow-hidden bg-canvas"
-      {...gesture}
+      {...gestureHandlers}
+      onWheelCapture={(event) => {
+        if (!pieMenu?.gestureActive) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
     >
       <ReactFlow<WorkspaceNode, WorkspaceEdge>
         nodes={nodes}
@@ -308,27 +347,15 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         }}
         onNodeDragStop={(_, node) => onMoveNode(node.id, node.position.x, node.position.y)}
         onPaneClick={() => setPieMenu(null)}
-        onPaneContextMenu={(event) => {
-          event.preventDefault();
-          const bounds = wrapperRef.current?.getBoundingClientRect();
-          if (!bounds) return;
-          const screen = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-          const flow =
-            flowRef.current?.screenToFlowPosition({
-              x: event.clientX,
-              y: event.clientY,
-            }) ?? screen;
-          setPieMenu({
-            screenX: screen.x,
-            screenY: screen.y,
-            flowX: flow.x,
-            flowY: flow.y,
-          });
-        }}
+        onPaneContextMenu={(event) => event.preventDefault()}
         fitView
         fitViewOptions={{ padding: 0.12, maxZoom: 1 }}
         minZoom={0.45}
         maxZoom={1.7}
+        zoomOnPinch
+        zoomOnScroll={false}
+        panOnScroll
+        preventScrolling
         connectOnClick={connectMode}
         connectionRadius={26}
         className={canvasClass}
@@ -383,8 +410,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
           menu={pieMenu}
           onClose={() => setPieMenu(null)}
           onChoose={(type) => {
-            const flow = toFlowPoint({ x: pieMenu.screenX, y: pieMenu.screenY });
-            onRequestCreate(type, flow.x, flow.y);
+            onRequestCreate(type, pieMenu.flowX, pieMenu.flowY);
             setPieMenu(null);
           }}
         />

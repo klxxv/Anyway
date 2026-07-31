@@ -41,7 +41,14 @@ export function useWorkspaceProject() {
       const saved = window.localStorage.getItem(storageKey);
       if (saved) {
         try {
-          setProject(JSON.parse(saved) as ProjectState);
+          const parsed = JSON.parse(saved) as ProjectState;
+          // 内置示例使用 schemaVersion 迁移，避免覆盖用户创建的其他项目。
+          // Migrate only the bundled example; unrelated user projects remain untouched.
+          setProject(
+            parsed.id === zenWorkspaceFixture.id && parsed.schemaVersion < 2
+              ? cloneProject(zenWorkspaceFixture)
+              : parsed,
+          );
         } catch {
           window.localStorage.removeItem(storageKey);
         }

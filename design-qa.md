@@ -34,6 +34,19 @@
 - Hover/settings normalized comparison:
   `C:\Users\admin\Documents\Anyway\output\design-qa\comparison-hover-settings.jpg`
   (1480 × 1430 px; source and implementation are paired in the same image input).
+- Trackpad/overflow source visual truth:
+  `C:\Users\admin\AppData\Local\Temp\codex-clipboard-cc5a3e37-f37c-411e-af6a-231f421749f4.png`
+  (373 × 238 px, compact minimap and zoom controls with node overflow).
+- Trackpad/overflow implementation capture:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\trackpad-overflow-implementation.png`
+  (1443 × 931 px, running Tauri desktop window).
+- Trackpad/overflow focused capture:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\trackpad-overflow-focused.png`
+  (373 × 238 px after cropping the 250 × 160 px lower-left region and normalizing it to
+  the source dimensions).
+- Trackpad/overflow same-input comparison:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\trackpad-overflow-comparison.png`
+  (746 × 238 px; source left, corrected implementation right).
 - Capture viewport: 1443 × 931 physical/CSS px at device scale factor 1; the 29 px native
   title bar is excluded from the 1443 × 902 design comparison.
 - Compared state: Urban Heat Islands fixture, Tree Canopy Cover selected, eight-way quick-add
@@ -132,6 +145,38 @@
   distinct icons, entered Settings from the menu footer, saved Compact density, observed the
   topbar change, and restored defaults. The paired comparison has no unresolved P0/P1/P2 drift.
 
+### Pass 6
+
+- [P1][behavior] A stable two-finger contact and a pinch shared the same center-point heuristic,
+  so zoom gestures could be mistaken for the quick-add hold; a two-finger context click could
+  also open the pie immediately.
+  - Fix: added an explicit 1000 ms hold recognizer that tracks both midpoint drift and finger
+    span. Span changes cancel the hold and remain available to React Flow pinch zoom. Context
+    clicks are suppressed instead of opening the pie.
+- [P1][native input] Browser pointer events do not consistently expose stationary Precision
+  Touchpad contacts on Windows.
+  - Fix: added an observation-only `PT_TOUCHPAD` window procedure bridge in Tauri. It forwards
+    contact phase, identity, count, and client coordinates without taking over system gestures;
+    browser touch handling remains the fallback if native registration is unavailable.
+- [P1][layout] MiniMap node rectangles could paint beyond the rounded MiniMap frame at compact
+  sizes.
+  - Fix: constrained the MiniMap and its SVG to the component box with `overflow: hidden`,
+    inherited radius, and paint containment. The same-input focused comparison shows every gray
+    and blue node marker inside the border after the fix.
+- [P2][copy] The reference project and inspector mixed English fixture text into a Chinese UI.
+  - Fix: replaced the bundled fixture with the complete Chinese “城市树冠与热岛效应” project,
+    migrated only the built-in demo from schema v1 to v2, and localized the inspector labels and
+    observed-fact example.
+- [P2][selection feedback] Direction choice during the hold gesture was not visually emphatic.
+  - Fix: the active wedge now uses the blue state token, heavier label weight, stronger icon
+    stroke, and a live center label; release creates the highlighted node, while release in the
+    dead zone dismisses the menu.
+- Post-fix evidence: the 373 × 238 same-input comparison normalizes the compact lower-left
+  region and shows the overflow removed without changing the white/gray-black/blue design
+  language. The full 1443 × 931 Tauri capture verifies the Chinese project and inspector. Pure
+  gesture tests cover the one-second threshold, pinch rejection, eight directions, and edge
+  clamping; physical multi-touch injection is not available through Computer Use.
+
 ## Final rubric
 
 | Surface | Result | Evidence |
@@ -140,10 +185,10 @@
 | Typography | Passed | Serif hierarchy and wrapping match the source's research-document character without clipping. |
 | Color and tokens | Passed | Intentional white/gray-black/blue mapping is consistent and accessible. |
 | Icons and shapes | Passed | Tabler icons, thin graph outlines, circular question nodes, straight semantic edges, and eight pie wedges are complete; the obsolete gesture hand is absent. |
-| Copy and content | Passed | Climate fixture, enum values, observed bool fact, methods, evidence, and relation labels use coherent realistic data. |
-| States and interactions | Passed | Computer Use evidence covers navigation, search, hover-open Add/Connect/Layout, direct clicks, six layout modes, four legend filters, settings persistence, automatic re-layout, Escape dismissal, selected, active, and disabled states. |
+| Copy and content | Passed | The complete Chinese climate fixture, enum values, observed bool fact, methods, evidence, relation labels, and inspector copy form one coherent example. |
+| States and interactions | Passed | Computer Use evidence covers navigation, search, hover-open Add/Connect/Layout, direct clicks, six layout modes, four legend filters, settings persistence, automatic re-layout, Escape dismissal, selected, active, and disabled states. Automated gesture tests cover the non-injectable physical multi-touch path. |
 | Accessibility | Passed | Semantic buttons/menus, labels, focus-visible styles, reduced-motion handling, and keyboard dismissal are present. |
-| Viewport resilience | Passed | Reference geometry is exact at desktop size; widths below 1050 px switch to fit-to-view and the 1180 px density rule. |
+| Viewport resilience | Passed | Reference geometry is exact at desktop size; widths below 1050 px switch to fit-to-view, and the compact MiniMap clips all markers inside its border. |
 | AI shortcut artifacts | Passed | No emoji, handcrafted SVG, placeholder illustration, decorative blob, or fake asset substitutes are used. |
 
 No unresolved P0, P1, or P2 finding remains.

@@ -9,6 +9,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useState } from "react";
+import { useI18n } from "../../../i18n/provider";
 import type { ResearchNode } from "../../../lib/research-types";
 import type { InspectorUpdate, VariableValueType } from "../workspace-types";
 
@@ -37,6 +38,7 @@ function InspectorCard({
   onDelete: InspectorPanelProps["onDelete"];
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const valueType = valueTypeOf(node);
   const [actionsOpen, setActionsOpen] = useState(false);
   const enumValues = Array.isArray(node.data.enumValues)
@@ -52,12 +54,12 @@ function InspectorCard({
           className="min-w-0 flex-1 border-0 bg-transparent p-0 font-serif text-[14px] leading-tight text-ink outline-none"
           value={node.title}
           onChange={(event) => onUpdate(node.id, { title: event.target.value })}
-          aria-label="Node title"
+          aria-label={t("inspector.nodeTitle")}
         />
-        <button className="icon-quiet" aria-label="Pin node">
+        <button className="icon-quiet" aria-label={t("inspector.pinNode")}>
           <IconPin size={17} stroke={1.35} />
         </button>
-        <button className="icon-quiet" onClick={onClose} aria-label="Close inspector">
+        <button className="icon-quiet" onClick={onClose} aria-label={t("inspector.close")}>
           <IconX size={18} stroke={1.35} />
         </button>
       </div>
@@ -69,7 +71,7 @@ function InspectorCard({
         <div className="relative">
           <button
             className="icon-quiet"
-            aria-label="More node actions"
+            aria-label={t("inspector.moreActions")}
             onClick={() => setActionsOpen((current) => !current)}
           >
             <IconDots size={18} stroke={1.4} />
@@ -81,7 +83,7 @@ function InspectorCard({
                 onClick={() => onDelete(node.id)}
               >
                 <IconTrash size={14} stroke={1.3} />
-                Delete node
+                {t("inspector.deleteNode")}
               </button>
             </div>
           )}
@@ -91,7 +93,7 @@ function InspectorCard({
       {node.type === "variable" && (
         <>
           <label className="inspector-row">
-            <span>Type</span>
+            <span>{t("inspector.type")}</span>
             <select
               value={valueType}
               onChange={(event) =>
@@ -107,14 +109,14 @@ function InspectorCard({
 
           <div className="mt-4">
             <div className="mb-2 flex items-center justify-between">
-              <span className="font-serif text-[12px] text-ink">Values</span>
+              <span className="font-serif text-[12px] text-ink">{t("inspector.values")}</span>
               {valueType === "enum" && (
                 <button
                   className="inline-flex items-center gap-1 font-serif text-[11px] text-ink/80 hover:text-blue"
-                  onClick={() => updateData({ enumValues: [...enumValues, "new value"] })}
+                  onClick={() => updateData({ enumValues: [...enumValues, t("inspector.newValue")] })}
                 >
                   <IconPlus size={15} stroke={1.35} />
-                  Add value
+                  {t("inspector.addValue")}
                 </button>
               )}
             </div>
@@ -148,7 +150,7 @@ function InspectorCard({
                           enumValues: enumValues.filter((_, itemIndex) => itemIndex !== index),
                         })
                       }
-                      aria-label={`Remove ${value}`}
+                      aria-label={`${t("inspector.removeValue")} ${value}`}
                     >
                       <IconX size={14} stroke={1.3} />
                     </button>
@@ -161,7 +163,7 @@ function InspectorCard({
       )}
 
       <label className="mt-4 block">
-        <span className="mb-2 block font-serif text-[12px]">Notes</span>
+        <span className="mb-2 block font-serif text-[12px]">{t("inspector.notes")}</span>
         <textarea
           className="min-h-14 w-full resize-none border-0 bg-transparent p-0 font-serif text-[11px] leading-[1.4] text-ink outline-none"
           value={node.body}
@@ -174,25 +176,26 @@ function InspectorCard({
 }
 
 function ObservedFactCard() {
+  const { t } = useI18n();
   return (
     <section className="px-4 pb-5 pt-4">
       <div className="mb-2 flex items-start gap-2">
-        <h3 className="flex-1 font-serif text-[16px] leading-tight">Observed Rain Yesterday</h3>
-        <button className="icon-quiet" aria-label="Pin observed fact">
+        <h3 className="flex-1 font-serif text-[16px] leading-tight">{t("inspector.observedRain")}</h3>
+        <button className="icon-quiet" aria-label={t("inspector.pinFact")}>
           <IconPin size={17} stroke={1.35} />
         </button>
-        <button className="icon-quiet" aria-label="Hide observed fact">
+        <button className="icon-quiet" aria-label={t("inspector.hideFact")}>
           <IconX size={18} stroke={1.35} />
         </button>
       </div>
       <div className="mb-4 flex items-center justify-between">
         <span className="rounded-[5px] border border-ink/25 px-2 py-1 font-serif text-[10px] text-olive">
-          bool · observed fact
+          bool · {t("inspector.observedFact")}
         </span>
         <IconDots size={18} stroke={1.4} />
       </div>
       <div className="inspector-row">
-        <span>Type</span>
+        <span>{t("inspector.type")}</span>
         <span className="font-serif text-[11px]">bool⌄</span>
       </div>
       <div className="mt-4 space-y-2">
@@ -208,11 +211,11 @@ function ObservedFactCard() {
         ))}
       </div>
       <div className="mt-4 border-t border-ink/15 pt-3">
-        <p className="mb-2 font-serif text-[12px]">Notes</p>
+        <p className="mb-2 font-serif text-[12px]">{t("inspector.notes")}</p>
         <p className="font-serif text-[11px] leading-[1.45]">
-          Observed at 08:00 local time.
+          {t("inspector.observedRainNote")}
           <br />
-          Source: Weather station log.
+          {t("inspector.weatherSource")}
         </p>
       </div>
     </section>
@@ -224,6 +227,7 @@ function ObservedFactCard() {
  * 克制的属性检查器：一个可编辑选中项与一个置顶观测事实。
  */
 export function InspectorPanel({ node, onUpdate, onDelete, onClose }: InspectorPanelProps) {
+  const { t } = useI18n();
   return (
     <aside className="h-full overflow-y-auto border-l border-ink/15 bg-canvas px-5 pb-4 pt-7 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <div className="overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_4px_12px_rgba(28,31,35,0.06)]">
@@ -236,7 +240,7 @@ export function InspectorPanel({ node, onUpdate, onDelete, onClose }: InspectorP
           />
         ) : (
           <div className="px-5 py-12 text-center font-serif text-[12px] text-ink/55">
-            Select a node to inspect its research properties.
+            {t("inspector.selectNode")}
           </div>
         )}
         <ObservedFactCard />

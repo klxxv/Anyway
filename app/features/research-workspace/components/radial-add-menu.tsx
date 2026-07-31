@@ -69,12 +69,14 @@ export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
       </div>
       {quickNodeTypes.map(({ type }, index) => {
         const Icon = icons[type as keyof typeof icons] ?? IconNote;
+        const selected = menu.selectedType === type;
         return (
           <button
             key={type}
-            className={`zen-pie-item zen-pie-item-${index}`}
+            className={`zen-pie-item zen-pie-item-${index} ${selected ? "is-active" : ""}`}
             onClick={() => onChoose(type)}
             role="menuitem"
+            aria-current={selected ? "true" : undefined}
           >
             <Icon size={18} stroke={1.35} />
             <span>{t(labelKeys[type] ?? "node.note")}</span>
@@ -83,7 +85,13 @@ export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
       })}
       <button className="zen-pie-center" onClick={onClose} aria-label="Close quick add">
         <IconPlus size={24} stroke={1.35} />
-        <span>{t("workspace.add")}</span>
+        <span aria-live="polite">
+          {menu.gestureActive
+            ? menu.selectedType
+              ? t(labelKeys[menu.selectedType] ?? "node.note")
+              : t("gesture.moveToChoose")
+            : t("workspace.add")}
+        </span>
       </button>
     </div>
   );

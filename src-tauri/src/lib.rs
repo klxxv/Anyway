@@ -1,5 +1,7 @@
 mod plugin_vm;
 mod plugins;
+#[cfg(windows)]
+mod trackpad;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,13 +21,17 @@ pub fn run() {
             #[cfg(not(debug_assertions))]
             let url = tauri::WebviewUrl::App("index.html".into());
 
-            tauri::WebviewWindowBuilder::new(app, "main", url)
+            let window = tauri::WebviewWindowBuilder::new(app, "main", url)
                 .title("Research Canvas")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(760.0, 560.0)
                 .center()
                 .resizable(true)
                 .build()?;
+            #[cfg(windows)]
+            if let Err(error) = trackpad::install(&window, app.handle().clone()) {
+                eprintln!("Precision Touchpad observer unavailable: {error}");
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
