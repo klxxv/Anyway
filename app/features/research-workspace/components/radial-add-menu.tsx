@@ -12,6 +12,8 @@ import {
   IconUsersGroup,
 } from "@tabler/icons-react";
 import type { ResearchNodeType } from "../../../lib/research-types";
+import type { MessageKey } from "../../../i18n/catalog";
+import { useI18n } from "../../../i18n/provider";
 import { quickNodeTypes } from "../hooks/use-workspace-project";
 import type { PieMenuState } from "../workspace-types";
 
@@ -26,6 +28,17 @@ const icons = {
   note: IconNote,
 } as const;
 
+const labelKeys: Partial<Record<ResearchNodeType, MessageKey>> = {
+  question: "node.question",
+  concept: "node.group",
+  variable: "node.variable",
+  method: "node.method",
+  dataset: "node.data",
+  evidence: "node.evidence",
+  result: "node.result",
+  note: "node.note",
+};
+
 type RadialAddMenuProps = {
   menu: PieMenuState;
   onChoose: (type: ResearchNodeType) => void;
@@ -37,6 +50,7 @@ type RadialAddMenuProps = {
  * 类 Blender 饼菜单；每一项仍是可访问的标准按钮。
  */
 export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
+  const { t } = useI18n();
   return (
     <div
       className="zen-pie-menu"
@@ -53,7 +67,7 @@ export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
           />
         ))}
       </div>
-      {quickNodeTypes.map(({ type, label }, index) => {
+      {quickNodeTypes.map(({ type }, index) => {
         const Icon = icons[type as keyof typeof icons] ?? IconNote;
         return (
           <button
@@ -63,13 +77,13 @@ export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
             role="menuitem"
           >
             <Icon size={18} stroke={1.35} />
-            <span>{label}</span>
+            <span>{t(labelKeys[type] ?? "node.note")}</span>
           </button>
         );
       })}
       <button className="zen-pie-center" onClick={onClose} aria-label="Close quick add">
         <IconPlus size={24} stroke={1.35} />
-        <span>Add</span>
+        <span>{t("workspace.add")}</span>
       </button>
     </div>
   );

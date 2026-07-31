@@ -7,8 +7,10 @@ import type {
   ResearchEdgeType,
   ResearchNodeType,
 } from "../../lib/research-types";
+import { useI18n } from "../../i18n/provider";
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
 import { InspectorPanel } from "./components/inspector-panel";
+import { PluginStoreDialog } from "./components/plugin-store-dialog";
 import {
   NodeComposer,
   ProjectMenu,
@@ -42,9 +44,11 @@ function downloadProject(project: ReturnType<typeof useWorkspaceProject>["projec
  * 白色画布优先桌面体验的轻量组合根。
  */
 export function ResearchWorkspaceApp() {
+  const { t } = useI18n();
   const workspace = useWorkspaceProject();
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pluginStoreOpen, setPluginStoreOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [connectMode, setConnectMode] = useState(false);
@@ -89,6 +93,7 @@ export function ResearchWorkspaceApp() {
       setSearchOpen(false);
       setMenuOpen(false);
       setSettingsOpen(false);
+      setPluginStoreOpen(false);
       setConnectMode(false);
     };
     window.addEventListener("keydown", closeTransientUi);
@@ -149,7 +154,7 @@ export function ResearchWorkspaceApp() {
         <section className="grid min-h-0 grid-rows-[42px_minmax(0,1fr)] bg-canvas">
           <div className="flex items-center gap-2 border-b border-ink/10 px-6 font-serif text-[12px] text-olive">
             <button className="hover:text-blue" onClick={() => setMenuOpen(true)}>
-              Projects
+              {t("workspace.projects")}
             </button>
             <IconChevronRight size={13} stroke={1.3} />
             <span>{workspace.project.discipline}</span>
@@ -229,6 +234,10 @@ export function ResearchWorkspaceApp() {
             setMenuOpen(false);
             setSettingsOpen(true);
           }}
+          onPlugins={() => {
+            setMenuOpen(false);
+            setPluginStoreOpen(true);
+          }}
           onReset={() => {
             workspace.resetDemo();
             setLayoutMode(null);
@@ -252,6 +261,9 @@ export function ResearchWorkspaceApp() {
             setNotice("Settings saved");
           }}
         />
+      )}
+      {pluginStoreOpen && (
+        <PluginStoreDialog onClose={() => setPluginStoreOpen(false)} />
       )}
       {searchOpen && (
         <SearchPalette

@@ -1,3 +1,4 @@
+mod plugin_vm;
 mod plugins;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -5,7 +6,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             plugins::install_myc_plugin,
-            plugins::list_installed_plugins
+            plugins::list_installed_plugins,
+            plugins::execute_myc_plugin
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

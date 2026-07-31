@@ -44,6 +44,7 @@ next-env.d.ts
 /.playwright-cli/
 /.claude_resources.json
 /src-tauri/target/
+/plugins/sdk/rust/target/
 /src-tauri/gen/
 /plugins/installed/*
 !/plugins/installed/.gitkeep

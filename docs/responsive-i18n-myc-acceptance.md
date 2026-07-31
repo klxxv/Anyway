@@ -1,80 +1,68 @@
 # Responsive, i18n, and `.myc` acceptance
 
-Date: 2026-07-27  
+Date: 2026-08-01
 Branch: `codex/responsive-i18n-myc`
 
-## Responsive geometry
+## Responsive workspace
 
-Playwright evaluated the rendered bounding boxes after each live resize:
-
-| Viewport | Minimap contained | Canvas toolbar reachable | Page overflow |
-|---|---:|---:|---:|
-| 760×560 | yes | 10/10 | none |
-| 1024×720 | yes | 10/10 | none |
-| 1280×800 | yes | 10/10 | none |
-| 1440×900 | yes | 10/10 | none |
-
-At widths up to 1040 pixels the Navigator and Inspector become explicit overlay
-panels. The core commands remain icon buttons instead of being removed. Tab
-strips stay horizontally scrollable when their labels do not fit.
+The Zen workspace keeps the graph as the primary surface. At the reference
+desktop viewport, the top command bar, breadcrumb, canvas, minimap, interactive
+link legend, and inspector remain simultaneously usable. Narrow viewports use
+the existing fit-to-view and compact-command rules rather than changing graph
+semantics. Visual and interaction evidence is recorded in `design-qa.md` and
+`output/design-qa`.
 
 ## Internationalization
 
-- Locale catalog: English and Simplified Chinese.
+- Locales: English and Simplified Chinese.
 - Default: normalized from the operating-system/browser language.
-- Persistence: `research-canvas-display-v1`.
-- Scope: primary application chrome, navigation, canvas commands, settings,
-  plugin store, and plugin installation status.
-- Research content is not translated implicitly.
+- Persistence: `research-canvas.locale.v1` in device-local storage.
+- Coverage: workspace commands, hover menus, project menu, node/relation/layout
+  labels, settings, link legend, and plugin-store controls.
+- Boundary: research records and plugin-authored metadata retain their source
+  language and are never machine-translated implicitly.
+- Safety: `MessageKey` is derived from the English catalog and the Chinese
+  catalog must satisfy the same complete record at compile time.
 
-## `.myc` package
+## `.myc` packages and store
 
-Artifact:
-`plugins/packages/researchcanvas.onedarkpro@1.0.0.myc`
+The store lists only metadata returned by the Rust installer. It accepts local
+`.myc` drops, filters installed/runtime packages, persists enabled state, and
+shows runtime language plus the verified entry SHA-256. Runtime self-tests are
+available only after a package is enabled.
 
-```text
-SHA-256 0285B39FD095A9045001571A80C5241846C248A0AD8BFEF9451A8265CE5FD279
-Size    761 bytes
-Files   plugin.yml, theme.json
-```
+Three package kinds are accepted:
 
-The native client scanned `plugins/packages`, verified the package, extracted it
-to `plugins/installed/researchcanvas.onedarkpro@1.0.0`, registered One Dark Pro,
-and applied the theme. Native file-drop installation calls the same Rust
-installer.
+- `ThemePlugin`: declarative `theme.json`, `theme.register`, no permissions.
+- `EdgeStylePlugin`: declarative `edge-style.json`,
+  `edge.style.register`, no permissions.
+- `AnalysisPlugin`: `plugin.wasm`, `wasm32-myc`, `analysis.run`, explicit
+  Rust/C++/other source label, no permissions.
 
-Installer validation includes:
+The deterministic runtime fixture is
+`plugins/packages/researchcanvas.runtime-smoke@1.0.0.myc`. Its end-to-end test
+validates archive installation, manifest registration, SHA-256 metadata, VM
+execution, JSON output, and fuel accounting.
 
-- `.myc` extension and 16 MB archive limit
-- at most 128 entries and 32 MB expanded data
-- ZIP enclosed paths to block traversal
-- exact API version, safe ID and version slugs
-- `ThemePlugin` kind, `theme.json` entry, and `theme.register`
-- no permissions for declarative theme packages
-- manifest identity recheck after extraction
+## Executable plugin isolation
 
-## Automated checks
+Rust and C++ plugins compile to one portable guest ABI. The native Rust host
+creates a fresh `wasmi` instance for each call and rejects all host imports.
+Enforced limits include a 16 MB guest memory ceiling, 5,000,000 fuel units,
+1 MB JSON input/output, one instance, one memory, and one table. Infinite loops
+trap on fuel exhaustion; native libraries are never loaded. See
+`docs/plugin-runtime.md` for the ABI and threat boundary.
 
-```text
-npm run lint             pass
-npx tsc --noEmit         pass
-npm run test:core        12/12 pass
-npm run test:platform    3/3 pass
-rendered shell tests     2/2 pass
-npm run build            pass
-cargo check              pass
-git diff --check         pass
-```
+Packages are currently local and unsigned. SHA-256 identifies the installed
+entry but does not authenticate a publisher.
 
-## Visual evidence
+## Automated acceptance
 
-Screenshots are in `output/responsive-acceptance`:
+The root `npm test` command is the acceptance gate. It builds the frontend,
+checks rendered HTML, runs the graph kernel/workspace/platform suites, verifies
+both SDK contracts, checks the Rust SDK, and runs native installer/VM tests.
+Additional gates are `npm run lint`, `npx tsc --noEmit`, `cargo fmt --check`, and
+`git diff --check`.
 
-1. `01-760x560.png`
-2. `02-1024x720.png`
-3. `03-1280x800.png`
-4. `04-1440x900.png`
-5. `05-myc-plugin-store.png`
-6. `06-onedarkpro-zh-settings.png`
-7. `07-onedarkpro-canvas.png`
-
+Manual desktop acceptance verifies language switching, plugin discovery,
+enablement, and the runtime-smoke self-test in the packaged Tauri boundary.

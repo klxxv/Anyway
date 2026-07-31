@@ -29,6 +29,7 @@ export interface MycPluginMetadata {
 export interface MycPluginSpec {
   engine: string;
   entry: string;
+  language?: "rust" | "cpp" | "other";
   capabilities: string[];
   permissions: string[];
 }
@@ -49,6 +50,21 @@ export interface InstalledMycPlugin {
   installPath: string;
   theme?: ThemeManifest;
   edgeStyle?: EdgeStyleManifest;
+  runtime?: MycPluginRuntime;
+}
+
+export interface MycPluginRuntime {
+  engine: "wasm32-myc";
+  language: "rust" | "cpp" | "other";
+  entrySha256: string;
+}
+
+export interface PluginExecutionResult {
+  pluginId: string;
+  pluginVersion: string;
+  output: unknown;
+  fuelConsumed: number;
+  durationMs: number;
 }
 
 /**

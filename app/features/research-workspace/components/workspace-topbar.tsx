@@ -28,6 +28,8 @@ import {
   IconUsersGroup,
 } from "@tabler/icons-react";
 import { useCallback, useRef, useState } from "react";
+import type { MessageKey } from "../../../i18n/catalog";
+import { useI18n } from "../../../i18n/provider";
 import type {
   LayoutMode,
   ResearchEdgeType,
@@ -62,28 +64,37 @@ type WorkspaceTopbarProps = {
 
 type MenuOption<T extends string> = {
   value: T;
-  label: string;
-  description: string;
+  labelKey: MessageKey;
+  descriptionKey: MessageKey;
   icon: typeof IconSparkles;
 };
 
 const nodeOptions: Array<MenuOption<ResearchNodeType>> = [
-  { value: "question", label: "Question", description: "Frame an answerable inquiry.", icon: IconHelp },
-  { value: "concept", label: "Group", description: "Collect a theme or mechanism.", icon: IconUsersGroup },
-  { value: "variable", label: "Variable", description: "Define enum, bool, number, or text.", icon: IconChartHistogram },
-  { value: "method", label: "Method", description: "Describe a reproducible procedure.", icon: IconFlask2 },
-  { value: "dataset", label: "Data", description: "Register a measured dataset.", icon: IconDatabase },
-  { value: "evidence", label: "Evidence", description: "Attach a source or observation.", icon: IconFileText },
-  { value: "result", label: "Result", description: "Capture an outcome or finding.", icon: IconCheck },
-  { value: "note", label: "Note", description: "Add context without graph semantics.", icon: IconNote },
+  { value: "question", labelKey: "node.question", descriptionKey: "node.questionDesc", icon: IconHelp },
+  { value: "concept", labelKey: "node.group", descriptionKey: "node.groupDesc", icon: IconUsersGroup },
+  { value: "variable", labelKey: "node.variable", descriptionKey: "node.variableDesc", icon: IconChartHistogram },
+  { value: "method", labelKey: "node.method", descriptionKey: "node.methodDesc", icon: IconFlask2 },
+  { value: "dataset", labelKey: "node.data", descriptionKey: "node.dataDesc", icon: IconDatabase },
+  { value: "evidence", labelKey: "node.evidence", descriptionKey: "node.evidenceDesc", icon: IconFileText },
+  { value: "result", labelKey: "node.result", descriptionKey: "node.resultDesc", icon: IconCheck },
+  { value: "note", labelKey: "node.note", descriptionKey: "node.noteDesc", icon: IconNote },
 ];
 
 const connectionOptions: Array<MenuOption<ResearchEdgeType>> = [
-  { value: "causes", label: "Causal link", description: "One object influences another.", icon: IconArrowUpRight },
-  { value: "controls", label: "Control", description: "Hold or condition a relation.", icon: IconAdjustmentsHorizontal },
-  { value: "derived_from", label: "Derived", description: "Trace an output to its source.", icon: IconGitBranch },
-  { value: "contradicts", label: "Contradicts", description: "Mark incompatible evidence.", icon: IconAlertTriangle },
+  { value: "causes", labelKey: "relation.causal", descriptionKey: "relation.causalDesc", icon: IconArrowUpRight },
+  { value: "controls", labelKey: "relation.control", descriptionKey: "relation.controlDesc", icon: IconAdjustmentsHorizontal },
+  { value: "derived_from", labelKey: "relation.derived", descriptionKey: "relation.derivedDesc", icon: IconGitBranch },
+  { value: "contradicts", labelKey: "relation.contradicts", descriptionKey: "relation.contradictsDesc", icon: IconAlertTriangle },
 ];
+
+const layoutMessageKeys: Record<LayoutMode, [MessageKey, MessageKey]> = {
+  "evidence-chain": ["layout.evidenceChain", "layout.evidenceChainDesc"],
+  "refutation-chain": ["layout.refutationChain", "layout.refutationChainDesc"],
+  tree: ["layout.tree", "layout.treeDesc"],
+  huffman: ["layout.huffman", "layout.huffmanDesc"],
+  table: ["layout.table", "layout.tableDesc"],
+  "neural-network": ["layout.neural", "layout.neuralDesc"],
+};
 
 const layoutIcons: Record<LayoutMode, typeof IconSparkles> = {
   "evidence-chain": IconListTree,
@@ -139,6 +150,7 @@ function HoverCommandMenu<T extends string>({
   onPrimary: () => void;
   onChoose: (value: T) => void;
 }) {
+  const { t } = useI18n();
   const disclosure = useHoverDisclosure(hoverDelay);
   return (
     <div
@@ -177,7 +189,9 @@ function HoverCommandMenu<T extends string>({
           aria-label={`${label} options`}
         >
           <div className="px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
-            {label === "Add" ? "Create research object" : "Choose relation semantics"}
+            {label === t("workspace.add")
+              ? t("workspace.createObject")
+              : t("workspace.chooseRelation")}
           </div>
           {options.map((option) => {
             const OptionIcon = option.icon;
@@ -197,9 +211,9 @@ function HoverCommandMenu<T extends string>({
               >
                 <OptionIcon className="mt-0.5 shrink-0" size={17} stroke={1.35} />
                 <span className="min-w-0">
-                  <span className="block font-serif text-[12px]">{option.label}</span>
+                  <span className="block font-serif text-[12px]">{t(option.labelKey)}</span>
                   <span className="mt-0.5 block font-serif text-[9px] leading-[1.35] text-ink/50">
-                    {option.description}
+                    {t(option.descriptionKey)}
                   </span>
                 </span>
               </button>
@@ -235,15 +249,16 @@ export function WorkspaceTopbar({
   onRedo,
   onExport,
 }: WorkspaceTopbarProps) {
+  const { t } = useI18n();
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink/15 bg-paper">
       <nav className="flex h-full items-stretch" aria-label="Workspace commands">
         <button className={commandClass(commandDensity)} onClick={onMenu}>
           <IconMenu2 size={19} stroke={1.45} />
-          Menu
+          {t("workspace.menu")}
         </button>
         <HoverCommandMenu
-          label="Add"
+          label={t("workspace.add")}
           icon={IconSparkles}
           options={nodeOptions}
           density={commandDensity}
@@ -252,7 +267,7 @@ export function WorkspaceTopbar({
           onChoose={onAddType}
         />
         <HoverCommandMenu
-          label="Connect"
+          label={t("workspace.connect")}
           icon={IconArrowUpRight}
           options={connectionOptions}
           selected={connectType}
@@ -264,11 +279,11 @@ export function WorkspaceTopbar({
         />
         <button className={commandClass(commandDensity)} onClick={onNote}>
           <IconNote size={19} stroke={1.45} />
-          Note
+          {t("workspace.note")}
         </button>
         <button className={commandClass(commandDensity)} onClick={onFind}>
           <IconSearch size={19} stroke={1.45} />
-          Find
+          {t("workspace.find")}
         </button>
         <LayoutMenu
           activeLayout={activeLayout}
@@ -286,7 +301,7 @@ export function WorkspaceTopbar({
           aria-label="Undo"
         >
           <IconArrowBackUp size={19} stroke={1.45} />
-          Undo
+          {t("workspace.undo")}
         </button>
         <button
           className={commandClass(commandDensity)}
@@ -295,14 +310,14 @@ export function WorkspaceTopbar({
           aria-label="Redo"
         >
           <IconArrowForwardUp size={19} stroke={1.45} />
-          Redo
+          {t("workspace.redo")}
         </button>
         <button
           className={`${commandClass(commandDensity)} border-l border-r-0`}
           onClick={onExport}
         >
           <IconFlag3 size={19} stroke={1.4} />
-          Export
+          {t("workspace.export")}
         </button>
       </nav>
     </header>
@@ -320,6 +335,7 @@ function LayoutMenu({
   hoverDelay: HoverDelay;
   onLayout: (mode: LayoutMode) => void;
 }) {
+  const { t } = useI18n();
   const disclosure = useHoverDisclosure(hoverDelay);
   return (
     <div
@@ -341,7 +357,7 @@ function LayoutMenu({
         aria-haspopup="menu"
       >
         <IconHierarchy2 size={19} stroke={1.35} />
-        Layout
+        {t("workspace.layout")}
         <IconChevronDown
           size={14}
           stroke={1.35}
@@ -355,7 +371,7 @@ function LayoutMenu({
           aria-label="Layout mode"
         >
           <div className="px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
-            Arrange visible research
+            {t("workspace.arrangeResearch")}
           </div>
           {layoutOptions.map((option) => {
             const selected = option.mode === activeLayout;
@@ -375,9 +391,11 @@ function LayoutMenu({
               >
                 <LayoutIcon className="mt-0.5 shrink-0" size={17} stroke={1.35} />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-serif text-[12px]">{option.label}</span>
+                  <span className="block font-serif text-[12px]">
+                    {t(layoutMessageKeys[option.mode][0])}
+                  </span>
                   <span className="mt-0.5 block font-serif text-[9px] leading-[1.35] text-ink/50">
-                    {option.description}
+                    {t(layoutMessageKeys[option.mode][1])}
                   </span>
                 </span>
                 {selected && <IconCheck className="mt-0.5" size={14} stroke={1.6} />}

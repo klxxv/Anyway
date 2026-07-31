@@ -1,10 +1,11 @@
-//! 声明式 `.myc` 视觉插件的桌面端安装器 / Desktop-side installer for declarative `.myc` visual plugins.
+//! `.myc` 插件的桌面端安装与执行边界 / Desktop install and execution boundary for `.myc` plugins.
 //!
-//! MVP 只接收无权限的主题和连线样式包；它校验归档大小/路径，并在 Webview 可见前完成暂存提取。
-//! This MVP accepts only permission-free theme and edge-style packages; it validates archive
-//! bounds and paths, then stages extraction before making an installation visible to the webview.
+//! 声明式视觉包只读取 JSON；分析包只执行经校验的 WebAssembly，并且默认没有主机能力。
+//! Declarative visual packages only expose JSON; analysis packages execute verified WebAssembly
+//! with no host capabilities by default. All archives are bounded and staged before visibility.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     fs::File,
@@ -39,6 +40,7 @@ pub struct MycPluginMetadata {
 pub struct MycPluginSpec {
     engine: String,
     entry: String,
+    language: Option<String>,
     capabilities: Vec<String>,
     permissions: Vec<String>,
 }
@@ -72,6 +74,15 @@ pub struct InstalledMycPlugin {
     install_path: String,
     theme: Option<ThemeManifest>,
     edge_style: Option<serde_json::Value>,
+    runtime: Option<MycPluginRuntime>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MycPluginRuntime {
+    engine: String,
+    language: String,
+    entry_sha256: String,
 }
 
 fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
@@ -141,9 +152,31 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 return Err("EdgeStylePlugin must declare edge.style.register".to_string());
             }
         }
+        "AnalysisPlugin" => {
+            if manifest.spec.engine != "wasm32-myc" {
+                return Err("AnalysisPlugin engine must be wasm32-myc".to_string());
+            }
+            if manifest.spec.entry != "plugin.wasm" {
+                return Err("AnalysisPlugin entry must be plugin.wasm".to_string());
+            }
+            if !manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|capability| capability == "analysis.run")
+            {
+                return Err("AnalysisPlugin must declare analysis.run".to_string());
+            }
+            if !matches!(
+                manifest.spec.language.as_deref(),
+                Some("rust" | "cpp" | "other")
+            ) {
+                return Err("AnalysisPlugin language must be rust, cpp, or other".to_string());
+            }
+        }
         _ => {
             return Err(
-                "MVP installer currently accepts ThemePlugin and EdgeStylePlugin packages only"
+                "Installer accepts ThemePlugin, EdgeStylePlugin, and AnalysisPlugin packages"
                     .to_string(),
             );
         }
@@ -163,18 +196,47 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     validate_manifest(&manifest)?;
 
     let entry_path = directory.join(&manifest.spec.entry);
-    let entry_text = fs::read_to_string(&entry_path)
-        .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-    let (theme, edge_style) = match manifest.kind.as_str() {
-        "ThemePlugin" => (
-            Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
-            None,
-        ),
-        "EdgeStylePlugin" => (
-            None,
-            Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
-        ),
-        _ => (None, None),
+    let (theme, edge_style, runtime) = match manifest.kind.as_str() {
+        "ThemePlugin" => {
+            let entry_text = fs::read_to_string(&entry_path)
+                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            (
+                Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+                None,
+                None,
+            )
+        }
+        "EdgeStylePlugin" => {
+            let entry_text = fs::read_to_string(&entry_path)
+                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            (
+                None,
+                Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+                None,
+            )
+        }
+        "AnalysisPlugin" => {
+            let bytes = fs::read(&entry_path)
+                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            if !bytes.starts_with(b"\0asm") {
+                return Err("AnalysisPlugin entry is not a WebAssembly module".to_string());
+            }
+            let digest = Sha256::digest(&bytes);
+            (
+                None,
+                None,
+                Some(MycPluginRuntime {
+                    engine: "wasm32-myc".to_string(),
+                    language: manifest
+                        .spec
+                        .language
+                        .clone()
+                        .unwrap_or_else(|| "other".to_string()),
+                    entry_sha256: format!("{digest:x}"),
+                }),
+            )
+        }
+        _ => (None, None, None),
     };
 
     Ok(InstalledMycPlugin {
@@ -182,11 +244,12 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         install_path: directory.to_string_lossy().into_owned(),
         theme,
         edge_style,
+        runtime,
     })
 }
 
 /// 原子移动到 `installed` 前校验并暂存归档 / Validates and stages an archive before atomically renaming it into `installed`.
-fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
+fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
     if archive_path
         .extension()
         .and_then(|value| value.to_str())
@@ -222,7 +285,6 @@ fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycP
         manifest
     };
 
-    let base = plugin_base(app)?;
     let installed_root = base.join("installed");
     fs::create_dir_all(&installed_root).map_err(|error| error.to_string())?;
     let directory_name = format!("{}@{}", manifest.metadata.id, manifest.metadata.version);
@@ -281,6 +343,11 @@ fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycP
     read_installed_plugin(&destination)
 }
 
+fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
+    let base = plugin_base(app)?;
+    install_archive_into(&base, archive_path)
+}
+
 fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     let packages = plugin_base(app)?.join("packages");
     if !packages.is_dir() {
@@ -321,11 +388,125 @@ pub fn list_installed_plugins(app: AppHandle) -> Result<Vec<InstalledMycPlugin>,
             plugins.push(read_installed_plugin(&path)?);
         }
     }
-    plugins.sort_by(|left, right| {
-        left.manifest
-            .metadata
-            .id
-            .cmp(&right.manifest.metadata.id)
-    });
+    plugins.sort_by(|left, right| left.manifest.metadata.id.cmp(&right.manifest.metadata.id));
     Ok(plugins)
+}
+
+#[tauri::command]
+pub fn execute_myc_plugin(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    input: serde_json::Value,
+) -> Result<crate::plugin_vm::PluginExecutionResult, String> {
+    validate_slug(&plugin_id, "plugin id")?;
+    validate_slug(&plugin_version, "plugin version")?;
+    let directory = plugin_base(&app)?
+        .join("installed")
+        .join(format!("{plugin_id}@{plugin_version}"));
+    let installed = read_installed_plugin(&directory)?;
+    if installed.manifest.kind != "AnalysisPlugin" || installed.runtime.is_none() {
+        return Err("Only installed AnalysisPlugin packages can execute".to_string());
+    }
+    let entry = directory.join(&installed.manifest.spec.entry);
+    crate::plugin_vm::execute_plugin(&entry, &plugin_id, &plugin_version, &input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write;
+    use tempfile::tempdir;
+    use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+
+    fn runtime_manifest(language: &str) -> String {
+        format!(
+            r#"apiVersion: researchcanvas.dev/v1alpha1
+kind: AnalysisPlugin
+metadata:
+  id: researchcanvas.runtime-smoke
+  name: Runtime Smoke
+  version: 1.0.0
+  publisher: Research Canvas
+  developer: Runtime Team
+  description: End-to-end VM smoke plugin.
+spec:
+  engine: wasm32-myc
+  entry: plugin.wasm
+  language: {language}
+  capabilities:
+    - analysis.run
+  permissions: []
+"#,
+        )
+    }
+
+    fn smoke_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+                (memory (export "memory") 1 2)
+                (global $heap (mut i32) (i32.const 1024))
+                (func (export "myc_alloc") (param $size i32) (result i32)
+                  global.get $heap
+                  global.get $heap
+                  local.get $size
+                  i32.add
+                  global.set $heap)
+                (data (i32.const 16) "{\22runtime\22:\22ok\22}")
+                (func (export "myc_run") (param i32 i32) (result i64)
+                  i64.const 68719476752))"#,
+        )
+        .expect("valid smoke module")
+    }
+
+    #[test]
+    fn installs_and_executes_a_runtime_myc_package() {
+        let root = tempdir().expect("temp root");
+        let package = root.path().join("runtime-smoke.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(runtime_manifest("rust").as_bytes())
+            .expect("manifest bytes");
+        archive
+            .start_file("plugin.wasm", options)
+            .expect("wasm entry");
+        archive.write_all(&smoke_wasm()).expect("wasm bytes");
+        archive.finish().expect("finish archive");
+
+        let installed = install_archive_into(root.path(), &package).expect("install package");
+        let runtime = installed.runtime.expect("runtime metadata");
+        assert_eq!(runtime.engine, "wasm32-myc");
+        assert_eq!(runtime.language, "rust");
+        assert_eq!(runtime.entry_sha256.len(), 64);
+
+        let output = crate::plugin_vm::execute_plugin(
+            &root
+                .path()
+                .join("installed/researchcanvas.runtime-smoke@1.0.0/plugin.wasm"),
+            "researchcanvas.runtime-smoke",
+            "1.0.0",
+            &json!({"operation": "self-test"}),
+        )
+        .expect("execute installed package");
+        assert_eq!(output.output, json!({"runtime": "ok"}));
+    }
+
+    #[test]
+    fn rejects_runtime_manifest_with_unknown_language() {
+        let cpp: MycPluginManifest =
+            serde_yaml::from_str(&runtime_manifest("cpp")).expect("parse cpp manifest");
+        validate_manifest(&cpp).expect("C++ wasm plugins use the same verified ABI");
+
+        let manifest: MycPluginManifest =
+            serde_yaml::from_str(&runtime_manifest("javascript")).expect("parse manifest");
+        assert!(validate_manifest(&manifest)
+            .expect_err("unknown language rejected")
+            .contains("language"));
+    }
 }

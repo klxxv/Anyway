@@ -1,0 +1,25 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const read = (path: string) => readFileSync(path, "utf8");
+
+test("Rust and C++ SDKs expose the same MYC guest ABI", () => {
+  const rust = read("plugins/sdk/rust/src/lib.rs");
+  const cpp = read("plugins/sdk/cpp/research_canvas_plugin.h");
+
+  for (const symbol of ["myc_alloc", "myc_run"]) {
+    assert.match(rust, new RegExp(`extern \\"C\\" fn ${symbol}`));
+    assert.match(cpp, new RegExp(`${symbol}\\(`));
+  }
+  assert.match(cpp, /output_pointer << 32/);
+  assert.match(rust, /pointer[\s\S]*<< 32/);
+});
+
+test("runtime documentation records enforceable sandbox limits", () => {
+  const documentation = read("plugins/README.md");
+  assert.match(documentation, /no host imports/i);
+  assert.match(documentation, /16 MB memory ceiling/i);
+  assert.match(documentation, /5,000,000 fuel units/i);
+  assert.match(documentation, /1 MB\s+JSON input\/output limits/i);
+});

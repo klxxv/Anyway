@@ -16,6 +16,8 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MessageKey } from "../../../i18n/catalog";
+import { useI18n } from "../../../i18n/provider";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
 import { useTwoFingerPie } from "../hooks/use-two-finger-pie";
 import type { PieMenuState, WorkspaceEdge, WorkspaceNode } from "../workspace-types";
@@ -79,6 +81,7 @@ function buildEdges(project: ProjectState, filter: LinkLegendFilter | null): Wor
 }
 
 function ResearchGraphInner(props: ResearchGraphCanvasProps) {
+  const { t } = useI18n();
   const {
     project,
     selectedNodeId,
@@ -255,16 +258,16 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   }, [project.edges]);
   const legendItems: Array<{
     key: LinkLegendFilter;
-    label: string;
+    labelKey: MessageKey;
     lineClass: string;
     textClass?: string;
   }> = [
-    { key: "causal", label: "causal link", lineClass: "border-ink/70" },
-    { key: "control", label: "control", lineClass: "border-dashed border-ink/70" },
-    { key: "derived", label: "derived", lineClass: "border-dotted border-ink/70" },
+    { key: "causal", labelKey: "relation.causal", lineClass: "border-ink/70" },
+    { key: "control", labelKey: "relation.control", lineClass: "border-dashed border-ink/70" },
+    { key: "derived", labelKey: "relation.derived", lineClass: "border-dotted border-ink/70" },
     {
       key: "contradicts",
-      label: "contradicts",
+      labelKey: "relation.contradicts",
       lineClass: "border-dashed border-alert",
       textClass: "text-alert",
     },
@@ -360,11 +363,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
                 selected ? "bg-blue-soft ring-1 ring-inset ring-blue/25" : "hover:bg-ink/5"
               } ${item.textClass ?? ""}`}
               aria-pressed={selected}
-              title={`Show ${item.label} relations and re-layout`}
+              title={`${t(item.labelKey)} · ${t("workspace.layout")}`}
               onClick={() => onLegendFilter(selected ? null : item.key)}
             >
               <span className={`block w-9 border-t ${item.lineClass}`} />
-              <span className="min-w-0 flex-1">{item.label}</span>
+              <span className="min-w-0 flex-1">{t(item.labelKey)}</span>
               {showLinkCounts && (
                 <span className="font-sans text-[8px] text-ink/35">
                   {legendCounts[item.key]}

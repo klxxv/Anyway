@@ -1,0 +1,17 @@
+apiVersion: researchcanvas.dev/v1alpha1
+kind: AnalysisPlugin
+metadata:
+  id: researchcanvas.runtime-smoke
+  name: Runtime Smoke
+  version: 1.0.0
+  publisher: Research Canvas
+  developer: Runtime Team
+  description: Verifies the capability-free Rust/C++ WebAssembly plugin boundary.
+  license: MIT
+spec:
+  engine: wasm32-myc
+  entry: plugin.wasm
+  language: rust
+  capabilities:
+    - analysis.run
+  permissions: []

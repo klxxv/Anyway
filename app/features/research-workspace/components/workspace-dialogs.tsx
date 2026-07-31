@@ -9,12 +9,14 @@ import {
   IconLayoutGrid,
   IconPalette,
   IconPointer,
+  IconPlugConnected,
   IconRefresh,
   IconSearch,
   IconSettings,
   IconX,
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
+import { useI18n } from "../../../i18n/provider";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
 import { layoutOptions } from "../workspace-layout";
 import {
@@ -464,23 +466,26 @@ export function ProjectMenu({
   onClose,
   onReset,
   onSettings,
+  onPlugins,
 }: {
   project: ProjectState;
   onClose: () => void;
   onReset: () => void;
   onSettings: () => void;
+  onPlugins: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <aside className="fixed bottom-0 left-0 top-12 z-[60] flex w-[290px] flex-col border-r border-ink/20 bg-paper shadow-[12px_0_40px_rgba(30,32,35,.08)]">
       <div className="flex h-14 items-center justify-between border-b border-ink/15 px-5">
-        <h2 className="font-serif text-[18px]">Projects</h2>
+        <h2 className="font-serif text-[18px]">{t("workspace.projects")}</h2>
         <button className="icon-quiet" onClick={onClose} aria-label="Close menu">
           <IconX size={18} stroke={1.35} />
         </button>
       </div>
       <div className="min-h-0 flex-1 p-4">
         <p className="font-sans text-[9px] uppercase tracking-[0.16em] text-ink/45">
-          Current study
+          {t("workspace.currentStudy")}
         </p>
         <div className="mt-3 rounded-[5px] border border-blue/30 bg-blue-soft p-3">
           <div className="flex items-center gap-2">
@@ -488,14 +493,15 @@ export function ProjectMenu({
             <span className="font-serif text-[14px]">{project.title}</span>
           </div>
           <p className="mt-1 pl-6 font-serif text-[10px] text-ink/55">
-            {project.nodes.length} nodes · {project.edges.length} relations
+            {project.nodes.length} {t("workspace.nodes")} · {project.edges.length}{" "}
+            {t("workspace.relations")}
           </p>
         </div>
 
         <div className="mt-6 space-y-1">
           {[
-            [IconFileText, "Evidence library", `${project.evidence.length} sources`],
-            [IconHistory, "Research history", `revision ${project.revision}`],
+            [IconFileText, t("workspace.evidenceLibrary"), `${project.evidence.length} ${t("workspace.sources")}`],
+            [IconHistory, t("workspace.researchHistory"), `${t("workspace.revision")} ${project.revision}`],
           ].map(([Icon, label, meta]) => (
             <button
               key={String(label)}
@@ -513,16 +519,24 @@ export function ProjectMenu({
           onClick={onReset}
         >
           <IconRefresh size={16} stroke={1.35} />
-          Restore reference demo
+          {t("workspace.restoreDemo")}
         </button>
       </div>
       <div className="border-t border-ink/15 p-3">
         <button
           className="flex w-full items-center gap-3 rounded-[4px] px-3 py-2.5 text-left transition hover:bg-blue-soft hover:text-blue"
+          onClick={onPlugins}
+        >
+          <IconPlugConnected size={18} stroke={1.35} />
+          <span className="flex-1 font-serif text-[13px]">{t("workspace.pluginStore")}</span>
+          <IconArrowRight size={15} stroke={1.3} className="text-ink/40" />
+        </button>
+        <button
+          className="flex w-full items-center gap-3 rounded-[4px] px-3 py-2.5 text-left transition hover:bg-blue-soft hover:text-blue"
           onClick={onSettings}
         >
           <IconSettings size={18} stroke={1.35} />
-          <span className="flex-1 font-serif text-[13px]">Settings</span>
+          <span className="flex-1 font-serif text-[13px]">{t("workspace.settings")}</span>
           <IconArrowRight size={15} stroke={1.3} className="text-ink/40" />
         </button>
       </div>
@@ -581,6 +595,7 @@ export function SettingsDialog({
   onClose: () => void;
   onSave: (preferences: WorkspacePreferences) => void;
 }) {
+  const { locale, setLocale, t } = useI18n();
   const [section, setSection] = useState<SettingsSection>("interface");
   const [draft, setDraft] = useState(preferences);
   const sections: Array<{
@@ -589,9 +604,9 @@ export function SettingsDialog({
     description: string;
     icon: typeof IconSettings;
   }> = [
-    { key: "interface", label: "Interface", description: "Command density", icon: IconPalette },
-    { key: "interaction", label: "Interaction", description: "Hover behavior", icon: IconPointer },
-    { key: "canvas", label: "Canvas", description: "Graph defaults", icon: IconLayoutGrid },
+    { key: "interface", label: t("settings.interface"), description: t("settings.commandDensity"), icon: IconPalette },
+    { key: "interaction", label: t("settings.interaction"), description: t("settings.hoverBehavior"), icon: IconPointer },
+    { key: "canvas", label: t("settings.canvas"), description: t("settings.graphDefaults"), icon: IconLayoutGrid },
   ];
 
   return (
@@ -608,7 +623,7 @@ export function SettingsDialog({
               Research Canvas
             </span>
             <h2 id="settings-title" className="mt-1 font-serif text-[20px]">
-              Settings
+              {t("settings.title")}
             </h2>
           </div>
           <nav className="space-y-1" aria-label="Settings sections">
@@ -652,9 +667,9 @@ export function SettingsDialog({
           <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
             {section === "interface" && (
               <div>
-                <h3 className="font-serif text-[18px]">Command bar</h3>
+                <h3 className="font-serif text-[18px]">{t("settings.commandBar")}</h3>
                 <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
-                  Keep the interface calm while deciding how much horizontal space commands use.
+                  {t("settings.commandBarHint")}
                 </p>
                 <div className="mt-6 grid grid-cols-2 gap-3">
                   {(["comfortable", "compact"] as const).map((density) => {
@@ -669,7 +684,11 @@ export function SettingsDialog({
                         }`}
                         onClick={() => setDraft((current) => ({ ...current, commandDensity: density }))}
                       >
-                        <span className="font-serif text-[13px] capitalize">{density}</span>
+                        <span className="font-serif text-[13px] capitalize">
+                          {density === "comfortable"
+                            ? t("settings.comfortable")
+                            : t("settings.compact")}
+                        </span>
                         <span className="mt-1 block font-serif text-[10px] leading-[1.4] text-ink/50">
                           {density === "comfortable"
                             ? "More breathing room between commands."
@@ -678,6 +697,22 @@ export function SettingsDialog({
                       </button>
                     );
                   })}
+                </div>
+                <div className="mt-7">
+                  <p className="font-sans text-[8px] uppercase tracking-[0.15em] text-ink/45">
+                    {t("settings.language")}
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    {(["en", "zh-CN"] as const).map((candidate) => (
+                      <button
+                        key={candidate}
+                        className={locale === candidate ? "button-primary" : "button-secondary"}
+                        onClick={() => setLocale(candidate)}
+                      >
+                        {candidate === "en" ? t("settings.english") : t("settings.chinese")}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="mt-7 rounded-[5px] border border-ink/15 bg-canvas p-4">
                   <p className="font-sans text-[8px] uppercase tracking-[0.15em] text-ink/45">
@@ -693,12 +728,12 @@ export function SettingsDialog({
 
             {section === "interaction" && (
               <div>
-                <h3 className="font-serif text-[18px]">Hover disclosure</h3>
+                <h3 className="font-serif text-[18px]">{t("settings.hoverDisclosure")}</h3>
                 <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
-                  Add, Connect, and Layout open when the pointer rests over the command.
+                  {t("settings.hoverDisclosureHint")}
                 </p>
                 <label className="dialog-field mt-6">
-                  Opening delay
+                  {t("settings.openingDelay")}
                   <select
                     value={draft.hoverDelay}
                     onChange={(event) =>
@@ -724,12 +759,12 @@ export function SettingsDialog({
 
             {section === "canvas" && (
               <div>
-                <h3 className="font-serif text-[18px]">Graph defaults</h3>
+                <h3 className="font-serif text-[18px]">{t("settings.graphDefaults")}</h3>
                 <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
-                  Choose the fallback arrangement and the amount of navigation detail on the canvas.
+                  {t("settings.graphDefaultsHint")}
                 </p>
                 <label className="dialog-field mt-6">
-                  Default layout for link filtering
+                  {t("settings.defaultFilterLayout")}
                   <select
                     value={draft.defaultLayout}
                     onChange={(event) =>
@@ -749,16 +784,16 @@ export function SettingsDialog({
                 <div className="mt-3">
                   <PreferenceToggle
                     checked={draft.showMiniMap}
-                    label="Show minimap"
-                    description="Keep a compact overview in the lower-left corner."
+                    label={t("settings.showMinimap")}
+                    description={t("settings.showMinimapHint")}
                     onChange={(showMiniMap) =>
                       setDraft((current) => ({ ...current, showMiniMap }))
                     }
                   />
                   <PreferenceToggle
                     checked={draft.showLinkCounts}
-                    label="Show link counts"
-                    description="Display relation totals inside the clickable legend."
+                    label={t("settings.showLinkCounts")}
+                    description={t("settings.showLinkCountsHint")}
                     onChange={(showLinkCounts) =>
                       setDraft((current) => ({ ...current, showLinkCounts }))
                     }
@@ -773,14 +808,14 @@ export function SettingsDialog({
               className="font-serif text-[11px] text-ink/55 hover:text-blue"
               onClick={() => setDraft(defaultWorkspacePreferences)}
             >
-              Restore defaults
+              {t("settings.restore")}
             </button>
             <div className="flex gap-2">
               <button className="button-secondary" onClick={onClose}>
-                Cancel
+                {t("settings.cancel")}
               </button>
               <button className="button-primary" onClick={() => onSave(draft)}>
-                Save settings
+                {t("settings.save")}
                 <IconCheck size={15} stroke={1.45} />
               </button>
             </div>

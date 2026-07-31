@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeLocale, translate } from "../app/i18n/catalog";
+import {
+  localeCatalog,
+  normalizeLocale,
+  translate,
+} from "../app/i18n/catalog";
 import {
   MYC_API_VERSION,
   isMycFileName,
@@ -15,6 +19,13 @@ test("locale normalization and Simplified Chinese catalog are deterministic", ()
   assert.equal(normalizeLocale("en-US"), "en");
   assert.equal(translate("zh-CN", "toolbar.filter"), "筛选");
   assert.equal(translate("en", "toolbar.filter"), "Filter");
+  assert.equal(translate("zh-CN", "workspace.pluginStore"), "插件商店");
+  assert.equal(translate("zh-CN", "layout.neural"), "神经网络");
+  for (const [locale, messages] of Object.entries(localeCatalog)) {
+    for (const [key, value] of Object.entries(messages)) {
+      assert.ok(value.trim(), `${locale}:${key} must not be empty`);
+    }
+  }
 });
 
 test("installed EdgeStylePlugin metadata owns the registered style identity", () => {
@@ -114,4 +125,38 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   assert.equal(theme?.name, "One Dark Pro");
   assert.equal(theme?.version, "1.0.0");
   assert.equal(theme?.source, "myc");
+});
+
+test("runtime plugin metadata exposes only the verified wasm boundary", () => {
+  const plugin: InstalledMycPlugin = {
+    installPath: "plugins/installed/researchcanvas.runtime-smoke@1.0.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "AnalysisPlugin",
+      metadata: {
+        id: "researchcanvas.runtime-smoke",
+        name: "Runtime Smoke",
+        version: "1.0.0",
+        publisher: "Research Canvas",
+        developer: "Runtime Team",
+        description: "VM test package",
+      },
+      spec: {
+        engine: "wasm32-myc",
+        entry: "plugin.wasm",
+        language: "cpp",
+        capabilities: ["analysis.run"],
+        permissions: [],
+      },
+    },
+    runtime: {
+      engine: "wasm32-myc",
+      language: "cpp",
+      entrySha256: "a".repeat(64),
+    },
+  };
+
+  assert.equal(plugin.runtime?.language, "cpp");
+  assert.equal(plugin.runtime?.entrySha256.length, 64);
+  assert.deepEqual(plugin.manifest.spec.permissions, []);
 });

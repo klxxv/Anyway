@@ -1,4 +1,7 @@
-import type { InstalledMycPlugin } from "./contracts";
+import type {
+  InstalledMycPlugin,
+  PluginExecutionResult,
+} from "./contracts";
 
 /** 检测可选桌面桥接；浏览器构建必须保持可用 / Detects optional desktop bridge; browser builds must remain usable. */
 function hasTauriRuntime(): boolean {
@@ -19,6 +22,21 @@ export async function installMycPlugin(path: string): Promise<InstalledMycPlugin
   }
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<InstalledMycPlugin>("install_myc_plugin", { path });
+}
+
+/** Executes an installed WASM plugin inside the native capability sandbox. */
+export async function executeMycPlugin(
+  pluginId: string,
+  pluginVersion: string,
+  input: unknown,
+): Promise<PluginExecutionResult> {
+  if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<PluginExecutionResult>("execute_myc_plugin", {
+    pluginId,
+    pluginVersion,
+    input,
+  });
 }
 
 /** 仅在桌面端监听拖放，并只转发 `.myc` 候选路径 / Listens for desktop drops and forwards only `.myc` candidates. */
