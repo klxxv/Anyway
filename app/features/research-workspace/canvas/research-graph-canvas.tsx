@@ -19,6 +19,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
 import { useTwoFingerPie } from "../hooks/use-two-finger-pie";
 import type { PieMenuState, WorkspaceEdge, WorkspaceNode } from "../workspace-types";
+import {
+  linkLegendFilterOf,
+  projectForLegendFilter,
+  type LinkLegendFilter,
+} from "../workspace-layout";
 import { RadialAddMenu } from "../components/radial-add-menu";
 import { ResearchEdgeLine } from "./research-edge-line";
 import { ResearchNodeCard } from "./research-node-card";
@@ -31,15 +36,23 @@ type ResearchGraphCanvasProps = {
   selectedNodeId: string;
   addRequest: number;
   connectMode: boolean;
+  linkFilter: LinkLegendFilter | null;
+  referenceViewport: boolean;
+  onLegendFilter: (filter: LinkLegendFilter | null) => void;
   onSelectNode: (nodeId: string) => void;
   onMoveNode: (nodeId: string, x: number, y: number) => void;
   onCreateEdge: (source: string, target: string) => void;
   onRequestCreate: (type: ResearchNodeType, x: number, y: number) => void;
 };
 
-function buildNodes(project: ProjectState, selectedNodeId: string): WorkspaceNode[] {
-  return project.nodes.map((record) => {
-    const placement = project.placements.find((item) => item.nodeId === record.id);
+function buildNodes(
+  project: ProjectState,
+  selectedNodeId: string,
+  filter: LinkLegendFilter | null,
+): WorkspaceNode[] {
+  const projected = projectForLegendFilter(project, filter);
+  return projected.nodes.map((record) => {
+    const placement = projected.placements.find((item) => item.nodeId === record.id);
     const circle = record.data.shape === "circle" || record.type === "question";
     return {
       id: record.id,
@@ -53,8 +66,8 @@ function buildNodes(project: ProjectState, selectedNodeId: string): WorkspaceNod
   });
 }
 
-function buildEdges(project: ProjectState): WorkspaceEdge[] {
-  return project.edges.map((record) => ({
+function buildEdges(project: ProjectState, filter: LinkLegendFilter | null): WorkspaceEdge[] {
+  return projectForLegendFilter(project, filter).edges.map((record) => ({
     id: record.id,
     source: record.source,
     target: record.target,
@@ -69,6 +82,9 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     selectedNodeId,
     addRequest,
     connectMode,
+    linkFilter,
+    referenceViewport,
+    onLegendFilter,
     onSelectNode,
     onMoveNode,
     onCreateEdge,
@@ -76,8 +92,10 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   } = props;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance<WorkspaceNode, WorkspaceEdge> | null>(null);
-  const [nodes, setNodes] = useState(() => buildNodes(project, selectedNodeId));
-  const [edges, setEdges] = useState(() => buildEdges(project));
+  const [nodes, setNodes] = useState(() =>
+    buildNodes(project, selectedNodeId, linkFilter),
+  );
+  const [edges, setEdges] = useState(() => buildEdges(project, linkFilter));
   const [pieMenu, setPieMenu] = useState<PieMenuState | null>({
     screenX: 888,
     screenY: 432,
@@ -96,22 +114,22 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     async (instance: ReactFlowInstance<WorkspaceNode, WorkspaceEdge>) => {
       const width = wrapperRef.current?.clientWidth ?? 0;
       const height = wrapperRef.current?.clientHeight ?? 0;
-      if (width >= 1050 && height >= 760) {
+      if (referenceViewport && width >= 1050 && height >= 760) {
         await instance.setViewport({ x: 111, y: 17, zoom: 0.93 }, { duration: 140 });
         return;
       }
       await instance.fitView({ padding: 0.12, maxZoom: 1, duration: 220 });
     },
-    [],
+    [referenceViewport],
   );
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      setNodes(buildNodes(project, selectedNodeId));
-      setEdges(buildEdges(project));
+      setNodes(buildNodes(project, selectedNodeId, linkFilter));
+      setEdges(buildEdges(project, linkFilter));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [project, selectedNodeId]);
+  }, [linkFilter, project, selectedNodeId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -120,7 +138,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       void applyWorkspaceViewport(instance);
     }, 40);
     return () => window.clearTimeout(timer);
-  }, [applyWorkspaceViewport, placementKey]);
+  }, [applyWorkspaceViewport, linkFilter, placementKey]);
 
   useEffect(() => {
     if (addRequest === 0) return;
@@ -219,6 +237,34 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     () => `zen-flow h-full w-full ${connectMode ? "is-connecting" : ""}`,
     [connectMode],
   );
+  const legendCounts = useMemo(() => {
+    const counts: Record<LinkLegendFilter, number> = {
+      causal: 0,
+      control: 0,
+      derived: 0,
+      contradicts: 0,
+    };
+    project.edges.forEach((edge) => {
+      counts[linkLegendFilterOf(edge)] += 1;
+    });
+    return counts;
+  }, [project.edges]);
+  const legendItems: Array<{
+    key: LinkLegendFilter;
+    label: string;
+    lineClass: string;
+    textClass?: string;
+  }> = [
+    { key: "causal", label: "causal link", lineClass: "border-ink/70" },
+    { key: "control", label: "control", lineClass: "border-dashed border-ink/70" },
+    { key: "derived", label: "derived", lineClass: "border-dotted border-ink/70" },
+    {
+      key: "contradicts",
+      label: "contradicts",
+      lineClass: "border-dashed border-alert",
+      textClass: "text-alert",
+    },
+  ];
 
   return (
     <div
@@ -292,19 +338,31 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         <Controls showInteractive={false} className="zen-controls" />
       </ReactFlow>
 
-      <div className="absolute bottom-5 right-5 z-10 rounded-[4px] border border-ink/30 bg-paper/95 px-4 py-3 font-serif text-[10px] text-ink/80">
-        <div className="mb-2 flex items-center gap-3">
-          <span className="block w-9 border-t border-ink/70" /> causal link
+      <div className="absolute bottom-5 right-5 z-10 w-[154px] rounded-[5px] border border-ink/30 bg-paper/96 p-2 font-serif text-[10px] text-ink/80">
+        <div className="flex items-center justify-between px-2 pb-1.5 font-sans text-[7px] uppercase tracking-[0.14em] text-ink/40">
+          <span>Link filter</span>
+          <span>{linkFilter ? legendCounts[linkFilter] : project.edges.length}</span>
         </div>
-        <div className="mb-2 flex items-center gap-3">
-          <span className="block w-9 border-t border-dashed border-ink/70" /> control
-        </div>
-        <div className="mb-2 flex items-center gap-3">
-          <span className="block w-9 border-t border-dotted border-ink/70" /> derived
-        </div>
-        <div className="flex items-center gap-3 text-alert">
-          <span className="block w-9 border-t border-dashed border-alert" /> contradicts
-        </div>
+        {legendItems.map((item) => {
+          const selected = linkFilter === item.key;
+          return (
+            <button
+              key={item.key}
+              className={`flex w-full items-center gap-3 rounded-[3px] px-2 py-1.5 text-left transition ${
+                selected ? "bg-blue-soft ring-1 ring-inset ring-blue/25" : "hover:bg-ink/5"
+              } ${item.textClass ?? ""}`}
+              aria-pressed={selected}
+              title={`Show ${item.label} relations and re-layout`}
+              onClick={() => onLegendFilter(selected ? null : item.key)}
+            >
+              <span className={`block w-9 border-t ${item.lineClass}`} />
+              <span className="min-w-0 flex-1">{item.label}</span>
+              <span className="font-sans text-[8px] text-ink/35">
+                {legendCounts[item.key]}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {pieMenu && (

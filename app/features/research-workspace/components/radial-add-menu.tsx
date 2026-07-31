@@ -3,14 +3,13 @@
 import {
   IconChartHistogram,
   IconCheck,
+  IconDatabase,
   IconFileText,
   IconFlask2,
-  IconHandFinger,
   IconHelp,
   IconNote,
   IconPlus,
   IconUsersGroup,
-  IconDatabase,
 } from "@tabler/icons-react";
 import type { ResearchNodeType } from "../../../lib/research-types";
 import { quickNodeTypes } from "../hooks/use-workspace-project";
@@ -72,10 +71,6 @@ export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
         <IconPlus size={24} stroke={1.35} />
         <span>Add</span>
       </button>
-      <div className="zen-pie-gesture">
-        <IconHandFinger size={48} stroke={1.15} />
-        <p className="zen-pie-hint">hold two fingers · flick · release</p>
-      </div>
     </div>
   );
 }

@@ -294,23 +294,6 @@
     margin-bottom: -8px;
   }
 
-  .zen-pie-gesture {
-    position: absolute;
-    right: -22px;
-    bottom: -80px;
-    display: flex;
-    width: 205px;
-    align-items: center;
-    gap: 8px;
-    font-family: var(--font-serif);
-    font-size: 11px;
-    line-height: 1.35;
-    color: rgb(36 39 43 / 72%);
-  }
-
-  .zen-pie-hint {
-    margin: 0;
-  }
 }
 
 @media (max-width: 1180px) {

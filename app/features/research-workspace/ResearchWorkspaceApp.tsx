@@ -2,7 +2,7 @@
 
 import { IconChevronRight, IconPlugConnected } from "@tabler/icons-react";
 import { useCallback, useEffect, useState } from "react";
-import type { ResearchNodeType } from "../../lib/research-types";
+import type { LayoutMode, ResearchNodeType } from "../../lib/research-types";
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
 import { InspectorPanel } from "./components/inspector-panel";
 import {
@@ -13,6 +13,7 @@ import {
 } from "./components/workspace-dialogs";
 import { WorkspaceTopbar } from "./components/workspace-topbar";
 import { useWorkspaceProject } from "./hooks/use-workspace-project";
+import type { LinkLegendFilter } from "./workspace-layout";
 
 function downloadProject(project: ReturnType<typeof useWorkspaceProject>["project"]) {
   const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
@@ -36,6 +37,8 @@ export function ResearchWorkspaceApp() {
   const [connectMode, setConnectMode] = useState(false);
   const [addRequest, setAddRequest] = useState(0);
   const [composer, setComposer] = useState<ComposerState | null>(null);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode | null>(null);
+  const [linkFilter, setLinkFilter] = useState<LinkLegendFilter | null>(null);
   const [notice, setNotice] = useState("");
 
   const requestCreate = useCallback(
@@ -76,9 +79,11 @@ export function ResearchWorkspaceApp() {
           })
         }
         onFind={() => setSearchOpen(true)}
-        onLayout={() => {
-          workspace.autoLayout();
-          setNotice("Layout refreshed");
+        activeLayout={layoutMode}
+        onLayout={(mode) => {
+          workspace.applyLayout(mode, linkFilter);
+          setLayoutMode(mode);
+          setNotice(`${mode.replaceAll("-", " ")} layout applied`);
         }}
         onUndo={workspace.undo}
         onRedo={workspace.redo}
@@ -101,6 +106,19 @@ export function ResearchWorkspaceApp() {
             selectedNodeId={workspace.selectedNodeId}
             addRequest={addRequest}
             connectMode={connectMode}
+            linkFilter={linkFilter}
+            referenceViewport={layoutMode === null && linkFilter === null}
+            onLegendFilter={(nextFilter) => {
+              const mode = layoutMode ?? "tree";
+              setLinkFilter(nextFilter);
+              setLayoutMode(mode);
+              workspace.applyLayout(mode, nextFilter);
+              setNotice(
+                nextFilter
+                  ? `${nextFilter} links filtered and re-laid out`
+                  : `All links restored in ${mode.replaceAll("-", " ")} layout`,
+              );
+            }}
             onSelectNode={(nodeId) => {
               workspace.setSelectedNodeId(nodeId);
               setInspectorOpen(true);
@@ -152,6 +170,9 @@ export function ResearchWorkspaceApp() {
           onClose={() => setMenuOpen(false)}
           onReset={() => {
             workspace.resetDemo();
+            setLayoutMode(null);
+            setLinkFilter(null);
+            setNotice("");
             setMenuOpen(false);
           }}
         />

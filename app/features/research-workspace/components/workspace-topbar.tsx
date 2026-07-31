@@ -4,6 +4,8 @@ import {
   IconArrowBackUp,
   IconArrowForwardUp,
   IconArrowUpRight,
+  IconCheck,
+  IconChevronDown,
   IconFlag3,
   IconMenu2,
   IconNote,
@@ -11,6 +13,9 @@ import {
   IconSettings,
   IconSparkles,
 } from "@tabler/icons-react";
+import { useState } from "react";
+import type { LayoutMode } from "../../../lib/research-types";
+import { layoutOptions } from "../workspace-layout";
 
 type WorkspaceTopbarProps = {
   canUndo: boolean;
@@ -20,7 +25,8 @@ type WorkspaceTopbarProps = {
   onConnect: () => void;
   onNote: () => void;
   onFind: () => void;
-  onLayout: () => void;
+  activeLayout: LayoutMode | null;
+  onLayout: (mode: LayoutMode) => void;
   onUndo: () => void;
   onRedo: () => void;
   onExport: () => void;
@@ -41,6 +47,7 @@ export function WorkspaceTopbar({
   onConnect,
   onNote,
   onFind,
+  activeLayout,
   onLayout,
   onUndo,
   onRedo,
@@ -69,10 +76,7 @@ export function WorkspaceTopbar({
           <IconSearch size={19} stroke={1.45} />
           Find
         </button>
-        <button className={commandClass} onClick={onLayout}>
-          <IconSettings size={19} stroke={1.35} />
-          Layout
-        </button>
+        <LayoutMenu activeLayout={activeLayout} onLayout={onLayout} />
       </nav>
 
       <nav className="flex h-full items-stretch" aria-label="History and export">
@@ -100,5 +104,76 @@ export function WorkspaceTopbar({
         </button>
       </nav>
     </header>
+  );
+}
+
+function LayoutMenu({
+  activeLayout,
+  onLayout,
+}: {
+  activeLayout: LayoutMode | null;
+  onLayout: (mode: LayoutMode) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        className={commandClass}
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
+        <IconSettings size={19} stroke={1.35} />
+        Layout
+        <IconChevronDown
+          size={14}
+          stroke={1.35}
+          className={`transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div
+          className="absolute left-2 top-[46px] z-[90] w-[270px] overflow-hidden rounded-[6px] border border-ink/25 bg-paper p-1.5 shadow-[0_14px_40px_rgba(30,32,35,.14)]"
+          role="menu"
+          aria-label="Layout mode"
+        >
+          <div className="px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
+            Arrange visible research
+          </div>
+          {layoutOptions.map((option) => {
+            const selected = option.mode === activeLayout;
+            return (
+              <button
+                key={option.mode}
+                className={`flex w-full items-start gap-3 rounded-[4px] px-3 py-2 text-left transition ${
+                  selected ? "bg-blue-soft text-blue" : "hover:bg-ink/5"
+                }`}
+                role="menuitemradio"
+                aria-checked={selected}
+                onClick={() => {
+                  onLayout(option.mode);
+                  setOpen(false);
+                }}
+              >
+                <span className="mt-0.5 grid size-4 shrink-0 place-items-center">
+                  {selected && <IconCheck size={14} stroke={1.6} />}
+                </span>
+                <span>
+                  <span className="block font-serif text-[12px]">{option.label}</span>
+                  <span className="mt-0.5 block font-serif text-[9px] leading-[1.3] text-ink/50">
+                    {option.description}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

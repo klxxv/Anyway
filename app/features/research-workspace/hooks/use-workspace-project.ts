@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectState, ResearchEdgeType, ResearchNodeType } from "../../../lib/research-types";
+import { computeLayout } from "../../../lib/research-core";
+import type {
+  LayoutMode,
+  ProjectState,
+  ResearchEdgeType,
+  ResearchNodeType,
+} from "../../../lib/research-types";
+import {
+  projectForLegendFilter,
+  type LinkLegendFilter,
+} from "../workspace-layout";
 import type { InspectorUpdate, NodeDraft, WorkspaceHistory } from "../workspace-types";
 import { zenWorkspaceFixture } from "../workspace-fixture";
 
@@ -97,13 +107,10 @@ export function useWorkspaceProject() {
           type: draftNode.type,
           title: draftNode.title.trim() || `Untitled ${draftNode.type}`,
           body: draftNode.body.trim() || "Add a concise research note.",
-          tags: [],
+          tags: draftNode.tags,
           status: "draft",
           evidenceIds: [],
-          data:
-            draftNode.type === "variable"
-              ? { valueType: "enum", enumValues: ["low", "medium", "high"] }
-              : {},
+          data: draftNode.data,
           provenance: { origin: "human", actorId: "local-researcher" },
           createdAt: now,
           updatedAt: now,
@@ -161,16 +168,38 @@ export function useWorkspaceProject() {
     [commit],
   );
 
-  const autoLayout = useCallback(() => {
-    commit("Auto layout", (draft) => {
-      draft.placements.forEach((placement, index) => {
-        const column = index % 4;
-        const row = Math.floor(index / 4);
-        placement.x = 80 + column * 235;
-        placement.y = 90 + row * 190 + (column % 2) * 34;
+  const applyLayout = useCallback(
+    (mode: LayoutMode, filter: LinkLegendFilter | null = null) => {
+      // Layout only the visible relation projection, then persist positions in one history step.
+      // 仅对当前可见关系投影布局，并把坐标作为一次历史操作统一提交。
+      commit(`Apply ${mode} layout`, (draft) => {
+        const projected = projectForLegendFilter(draft, filter);
+        const rootId = projected.nodes.some((node) => node.id === selectedNodeId)
+          ? selectedNodeId
+          : projected.nodes[0]?.id;
+        const result = computeLayout(projected, mode, rootId);
+        const positioned = new Set(Object.keys(result.positions));
+        const fallbackNodes = projected.nodes.filter((node) => !positioned.has(node.id));
+        const maxY = Math.max(
+          80,
+          ...Object.values(result.positions).map((position) => position.y),
+        );
+        fallbackNodes.forEach((node, index) => {
+          result.positions[node.id] = {
+            x: 80 + (index % 4) * 235,
+            y: maxY + 210 + Math.floor(index / 4) * 170,
+          };
+        });
+        draft.placements.forEach((placement) => {
+          const position = result.positions[placement.nodeId];
+          if (!position) return;
+          placement.x = position.x;
+          placement.y = position.y;
+        });
       });
-    });
-  }, [commit]);
+    },
+    [commit, selectedNodeId],
+  );
 
   const undo = useCallback(() => {
     setPast((entries) => {
@@ -221,7 +250,7 @@ export function useWorkspaceProject() {
     createNode,
     createEdge,
     removeNode,
-    autoLayout,
+    applyLayout,
     undo,
     redo,
     resetDemo,

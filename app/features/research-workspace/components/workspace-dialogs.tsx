@@ -2,6 +2,7 @@
 
 import {
   IconArrowRight,
+  IconCheck,
   IconFileText,
   IconFolder,
   IconHistory,
@@ -19,6 +20,234 @@ export type ComposerState = {
   y: number;
 };
 
+function defaultDataForType(type: ResearchNodeType): Record<string, unknown> {
+  switch (type) {
+    case "question":
+      return { questionKind: "causal", scope: "current study" };
+    case "concept":
+      return { groupRole: "theme", discipline: "" };
+    case "variable":
+      return {
+        valueType: "enum",
+        enumValues: ["low", "medium", "high"],
+        unit: "",
+        observationRole: "measured",
+      };
+    case "method":
+      return {
+        methodFamily: "observational",
+        input: "",
+        output: "",
+        reproducible: true,
+      };
+    case "dataset":
+      return { format: "table", source: "", coverage: "", resolution: "" };
+    case "evidence":
+      return {
+        sourceKind: "article",
+        citation: "",
+        year: new Date().getFullYear(),
+        confidence: "medium",
+      };
+    case "result":
+      return { outcome: "supports", metric: "", confidence: 0.8, direction: "positive" };
+    case "note":
+      return { noteKind: "observation", author: "local researcher" };
+    default:
+      return {};
+  }
+}
+
+function makeDraft(type: ResearchNodeType): NodeDraft {
+  return {
+    title: "",
+    body: "",
+    type,
+    tags: [],
+    data: defaultDataForType(type),
+  };
+}
+
+function NodeTypeFields({
+  draft,
+  onData,
+}: {
+  draft: NodeDraft;
+  onData: (key: string, value: unknown) => void;
+}) {
+  // Keep domain-specific metadata close to its node type without multiplying dialogs.
+  // 将领域字段收敛在节点类型内部，避免为每种节点复制整套弹窗。
+  const value = (key: string) => String(draft.data[key] ?? "");
+  const select = (
+    label: string,
+    key: string,
+    options: Array<[string, string]>,
+  ) => (
+    <label className="dialog-field">
+      {label}
+      <select value={value(key)} onChange={(event) => onData(key, event.target.value)}>
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  const input = (label: string, key: string, placeholder: string, type = "text") => (
+    <label className="dialog-field">
+      {label}
+      <input
+        type={type}
+        value={value(key)}
+        onChange={(event) =>
+          onData(key, type === "number" ? Number(event.target.value) : event.target.value)
+        }
+        placeholder={placeholder}
+      />
+    </label>
+  );
+
+  switch (draft.type) {
+    case "question":
+      return (
+        <>
+          {select("Question kind", "questionKind", [
+            ["causal", "causal"],
+            ["descriptive", "descriptive"],
+            ["comparative", "comparative"],
+            ["exploratory", "exploratory"],
+          ])}
+          {input("Research scope", "scope", "Population, place, or time range")}
+        </>
+      );
+    case "concept":
+      return (
+        <>
+          {select("Group role", "groupRole", [
+            ["theme", "theme"],
+            ["population", "population"],
+            ["mechanism", "mechanism"],
+            ["context", "context"],
+          ])}
+          {input("Discipline", "discipline", "e.g. urban climatology")}
+        </>
+      );
+    case "variable": {
+      const valueType = value("valueType");
+      return (
+        <>
+          {select("Value schema", "valueType", [
+            ["enum", "enum"],
+            ["bool", "bool"],
+            ["number", "number"],
+            ["text", "text"],
+          ])}
+          {input("Unit", "unit", valueType === "bool" ? "not applicable" : "%, °C, score…")}
+          {valueType === "enum" &&
+            input("Enum values", "enumValues", "low, medium, high")}
+          {valueType === "bool" &&
+            select("Fact role", "observationRole", [
+              ["measured", "measured fact"],
+              ["observed", "observed fact"],
+              ["assumed", "working assumption"],
+            ])}
+        </>
+      );
+    }
+    case "method":
+      return (
+        <>
+          {select("Method family", "methodFamily", [
+            ["observational", "observational"],
+            ["experimental", "experimental"],
+            ["classification", "classification"],
+            ["simulation", "simulation"],
+            ["statistical", "statistical"],
+          ])}
+          {input("Primary input", "input", "Dataset or measured variable")}
+          {input("Expected output", "output", "Classification, estimate, or model")}
+          <label className="mb-4 flex h-10 items-center gap-3 rounded-[4px] border border-ink/20 px-3 font-serif text-[12px]">
+            <input
+              className="size-4 accent-blue"
+              type="checkbox"
+              checked={Boolean(draft.data.reproducible)}
+              onChange={(event) => onData("reproducible", event.target.checked)}
+            />
+            Reproducible protocol
+          </label>
+        </>
+      );
+    case "dataset":
+      return (
+        <>
+          {select("Data format", "format", [
+            ["table", "table"],
+            ["raster", "raster"],
+            ["vector", "vector"],
+            ["time-series", "time series"],
+            ["text", "text corpus"],
+          ])}
+          {input("Source", "source", "Repository, sensor, or provider")}
+          {input("Coverage", "coverage", "2020–2025 / study region")}
+          {input("Resolution", "resolution", "10 m / daily / one record")}
+        </>
+      );
+    case "evidence":
+      return (
+        <>
+          {select("Source kind", "sourceKind", [
+            ["article", "article"],
+            ["measurement", "measurement"],
+            ["report", "report"],
+            ["raster", "raster"],
+            ["code", "code artifact"],
+          ])}
+          {input("Citation", "citation", "Author, venue, or source")}
+          {input("Publication year", "year", "2026", "number")}
+          {select("Confidence", "confidence", [
+            ["low", "low"],
+            ["medium", "medium"],
+            ["high", "high"],
+          ])}
+        </>
+      );
+    case "result":
+      return (
+        <>
+          {select("Outcome", "outcome", [
+            ["supports", "supports"],
+            ["refutes", "refutes"],
+            ["mixed", "mixed"],
+            ["neutral", "neutral"],
+          ])}
+          {input("Metric", "metric", "Primary measured outcome")}
+          {input("Confidence", "confidence", "0.80", "number")}
+          {select("Direction", "direction", [
+            ["positive", "positive"],
+            ["negative", "negative"],
+            ["mixed", "mixed"],
+            ["unknown", "unknown"],
+          ])}
+        </>
+      );
+    case "note":
+      return (
+        <>
+          {select("Note kind", "noteKind", [
+            ["observation", "observation"],
+            ["assumption", "assumption"],
+            ["decision", "decision"],
+            ["todo", "to do"],
+          ])}
+          {input("Author", "author", "Researcher or team")}
+        </>
+      );
+    default:
+      return null;
+  }
+}
+
 export function NodeComposer({
   state,
   onClose,
@@ -28,22 +257,30 @@ export function NodeComposer({
   onClose: () => void;
   onCreate: (draft: NodeDraft, x: number, y: number) => void;
 }) {
-  const [draft, setDraft] = useState<NodeDraft>({
-    title: "",
-    body: "",
-    type: state.type,
-  });
+  const [draft, setDraft] = useState<NodeDraft>(() => makeDraft(state.type));
+  const updateData = (key: string, nextValue: unknown) => {
+    setDraft((current) => {
+      const value =
+        key === "enumValues" && typeof nextValue === "string"
+          ? nextValue
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean)
+          : nextValue;
+      return { ...current, data: { ...current.data, [key]: value } };
+    });
+  };
 
   return (
     <div className="fixed inset-0 z-[80] grid place-items-center bg-ink/10 backdrop-blur-[2px]">
       <form
-        className="w-[390px] rounded-[7px] border border-ink/30 bg-paper p-5 shadow-[0_18px_60px_rgba(30,32,35,.15)]"
+        className="flex max-h-[86vh] w-[590px] flex-col overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)]"
         onSubmit={(event) => {
           event.preventDefault();
           onCreate(draft, state.x, state.y);
         }}
       >
-        <div className="mb-5 flex items-start justify-between">
+        <div className="flex shrink-0 items-start justify-between border-b border-ink/15 px-7 pb-5 pt-6">
           <div>
             <span className="font-sans text-[9px] uppercase tracking-[0.18em] text-blue">
               New research node
@@ -55,56 +292,90 @@ export function NodeComposer({
           </button>
         </div>
 
-        <label className="dialog-field">
-          Type
-          <select
-            value={draft.type}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                type: event.target.value as ResearchNodeType,
-              }))
-            }
-          >
-            {[
-              ["question", "question"],
-              ["concept", "group"],
-              ["variable", "variable"],
-              ["method", "method"],
-              ["dataset", "data"],
-              ["evidence", "evidence"],
-              ["result", "result"],
-              ["note", "note"],
-            ].map(([type, label]) => (
-              <option key={type} value={type}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="dialog-field">
-          Title
-          <input
-            autoFocus
-            value={draft.title}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, title: event.target.value }))
-            }
-            placeholder="Name the research object"
-          />
-        </label>
-        <label className="dialog-field">
-          Note
-          <textarea
-            value={draft.body}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, body: event.target.value }))
-            }
-            placeholder="Add a precise definition or observation"
-          />
-        </label>
+        <div className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
+          <div className="grid grid-cols-2 gap-x-4">
+            <label className="dialog-field col-span-2">
+              Type
+              <select
+                value={draft.type}
+                onChange={(event) => {
+                  const type = event.target.value as ResearchNodeType;
+                  setDraft((current) => ({
+                    ...makeDraft(type),
+                    title: current.title,
+                    body: current.body,
+                    tags: current.tags,
+                  }));
+                }}
+              >
+                {[
+                  ["question", "question"],
+                  ["concept", "group"],
+                  ["variable", "variable"],
+                  ["method", "method"],
+                  ["dataset", "data"],
+                  ["evidence", "evidence"],
+                  ["result", "result"],
+                  ["note", "note"],
+                ].map(([type, label]) => (
+                  <option key={type} value={type}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="dialog-field col-span-2">
+              Title
+              <input
+                autoFocus
+                value={draft.title}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, title: event.target.value }))
+                }
+                placeholder="Name the research object"
+              />
+            </label>
 
-        <div className="mt-5 flex justify-end gap-2">
+            <div className="col-span-2 mb-4 flex items-center gap-3">
+              <span className="font-sans text-[9px] uppercase tracking-[0.16em] text-ink/45">
+                Node profile
+              </span>
+              <span className="h-px flex-1 bg-ink/12" />
+              <IconCheck size={15} stroke={1.35} className="text-blue" />
+              <span className="font-serif text-[10px] text-ink/55">type-specific data</span>
+            </div>
+            <NodeTypeFields draft={draft} onData={updateData} />
+
+            <label className="dialog-field col-span-2">
+              Tags
+              <input
+                value={draft.tags.join(", ")}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    tags: event.target.value
+                      .split(",")
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  }))
+                }
+                placeholder="independent, verified, urban"
+              />
+            </label>
+            <label className="dialog-field col-span-2">
+              Note
+              <textarea
+                value={draft.body}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, body: event.target.value }))
+                }
+                placeholder="Add a precise definition or observation"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 justify-end gap-2 border-t border-ink/15 px-7 py-4">
           <button className="button-secondary" type="button" onClick={onClose}>
             Cancel
           </button>

@@ -35,6 +35,8 @@ export type NodeDraft = {
   title: string;
   body: string;
   type: ResearchNodeType;
+  tags: string[];
+  data: Record<string, unknown>;
 };
 
 export type WorkspaceHistory = {
