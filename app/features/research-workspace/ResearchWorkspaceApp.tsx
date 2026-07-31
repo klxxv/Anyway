@@ -2,18 +2,30 @@
 
 import { IconChevronRight, IconPlugConnected } from "@tabler/icons-react";
 import { useCallback, useEffect, useState } from "react";
-import type { LayoutMode, ResearchNodeType } from "../../lib/research-types";
+import type {
+  LayoutMode,
+  ResearchEdgeType,
+  ResearchNodeType,
+} from "../../lib/research-types";
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
 import { InspectorPanel } from "./components/inspector-panel";
 import {
   NodeComposer,
   ProjectMenu,
   SearchPalette,
+  SettingsDialog,
   type ComposerState,
 } from "./components/workspace-dialogs";
 import { WorkspaceTopbar } from "./components/workspace-topbar";
 import { useWorkspaceProject } from "./hooks/use-workspace-project";
 import type { LinkLegendFilter } from "./workspace-layout";
+import {
+  defaultWorkspacePreferences,
+  normalizeWorkspacePreferences,
+  type WorkspacePreferences,
+} from "./workspace-preferences";
+
+const preferencesStorageKey = "research-canvas.workspace-preferences.v1";
 
 function downloadProject(project: ReturnType<typeof useWorkspaceProject>["project"]) {
   const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
@@ -32,14 +44,19 @@ function downloadProject(project: ReturnType<typeof useWorkspaceProject>["projec
 export function ResearchWorkspaceApp() {
   const workspace = useWorkspaceProject();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [connectMode, setConnectMode] = useState(false);
+  const [connectType, setConnectType] = useState<ResearchEdgeType>("causes");
   const [addRequest, setAddRequest] = useState(0);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode | null>(null);
   const [linkFilter, setLinkFilter] = useState<LinkLegendFilter | null>(null);
   const [notice, setNotice] = useState("");
+  const [preferences, setPreferences] = useState<WorkspacePreferences>(
+    defaultWorkspacePreferences,
+  );
 
   const requestCreate = useCallback(
     (type: ResearchNodeType, x: number, y: number) => {
@@ -49,11 +66,29 @@ export function ResearchWorkspaceApp() {
   );
 
   useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const saved = window.localStorage.getItem(preferencesStorageKey);
+      if (!saved) return;
+      try {
+        setPreferences(
+          normalizeWorkspacePreferences(
+            JSON.parse(saved) as Partial<WorkspacePreferences>,
+          ),
+        );
+      } catch {
+        window.localStorage.removeItem(preferencesStorageKey);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
     const closeTransientUi = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setComposer(null);
       setSearchOpen(false);
       setMenuOpen(false);
+      setSettingsOpen(false);
       setConnectMode(false);
     };
     window.addEventListener("keydown", closeTransientUi);
@@ -65,11 +100,31 @@ export function ResearchWorkspaceApp() {
       <WorkspaceTopbar
         canUndo={workspace.canUndo}
         canRedo={workspace.canRedo}
+        connectMode={connectMode}
+        connectType={connectType}
+        commandDensity={preferences.commandDensity}
+        hoverDelay={preferences.hoverDelay}
         onMenu={() => setMenuOpen((current) => !current)}
         onAdd={() => setAddRequest((value) => value + 1)}
+        onAddType={(type) =>
+          setComposer({
+            type,
+            x: 720,
+            y: 430,
+          })
+        }
         onConnect={() => {
           setConnectMode((current) => !current);
-          setNotice(connectMode ? "" : "Connect mode · drag from one node to another");
+          setNotice(
+            connectMode
+              ? ""
+              : `${connectType.replaceAll("_", " ")} · drag from one node to another`,
+          );
+        }}
+        onConnectType={(type) => {
+          setConnectType(type);
+          setConnectMode(true);
+          setNotice(`${type.replaceAll("_", " ")} · drag from one node to another`);
         }}
         onNote={() =>
           setComposer({
@@ -107,9 +162,11 @@ export function ResearchWorkspaceApp() {
             addRequest={addRequest}
             connectMode={connectMode}
             linkFilter={linkFilter}
+            showMiniMap={preferences.showMiniMap}
+            showLinkCounts={preferences.showLinkCounts}
             referenceViewport={layoutMode === null && linkFilter === null}
             onLegendFilter={(nextFilter) => {
-              const mode = layoutMode ?? "tree";
+              const mode = layoutMode ?? preferences.defaultLayout;
               setLinkFilter(nextFilter);
               setLayoutMode(mode);
               workspace.applyLayout(mode, nextFilter);
@@ -125,9 +182,9 @@ export function ResearchWorkspaceApp() {
             }}
             onMoveNode={workspace.moveNode}
             onCreateEdge={(source, target) => {
-              workspace.createEdge(source, target);
+              workspace.createEdge(source, target, connectType);
               setConnectMode(false);
-              setNotice("Relation created");
+              setNotice(`${connectType.replaceAll("_", " ")} relation created`);
             }}
             onRequestCreate={requestCreate}
           />
@@ -168,12 +225,31 @@ export function ResearchWorkspaceApp() {
         <ProjectMenu
           project={workspace.project}
           onClose={() => setMenuOpen(false)}
+          onSettings={() => {
+            setMenuOpen(false);
+            setSettingsOpen(true);
+          }}
           onReset={() => {
             workspace.resetDemo();
             setLayoutMode(null);
             setLinkFilter(null);
             setNotice("");
             setMenuOpen(false);
+          }}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          preferences={preferences}
+          onClose={() => setSettingsOpen(false)}
+          onSave={(nextPreferences) => {
+            setPreferences(nextPreferences);
+            window.localStorage.setItem(
+              preferencesStorageKey,
+              JSON.stringify(nextPreferences),
+            );
+            setSettingsOpen(false);
+            setNotice("Settings saved");
           }}
         />
       )}

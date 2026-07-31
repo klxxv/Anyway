@@ -8,6 +8,10 @@ import {
   linkLegendFilterOf,
   projectForLegendFilter,
 } from "../app/features/research-workspace/workspace-layout";
+import {
+  defaultWorkspacePreferences,
+  normalizeWorkspacePreferences,
+} from "../app/features/research-workspace/workspace-preferences";
 
 function edge(type: ResearchEdge["type"]): ResearchEdge {
   return {
@@ -55,4 +59,31 @@ test("legend projection keeps connected nodes without mutating the project", () 
     ["paper-nguyen", "paper-zhang"],
   );
   assert.equal(JSON.stringify(zenWorkspaceFixture), before);
+});
+
+test("workspace preferences restore only supported values", () => {
+  assert.deepEqual(normalizeWorkspacePreferences(null), defaultWorkspacePreferences);
+  assert.deepEqual(
+    normalizeWorkspacePreferences({
+      commandDensity: "compact",
+      hoverDelay: 80,
+      defaultLayout: "table",
+      showMiniMap: false,
+      showLinkCounts: false,
+    }),
+    {
+      commandDensity: "compact",
+      hoverDelay: 80,
+      defaultLayout: "table",
+      showMiniMap: false,
+      showLinkCounts: false,
+    },
+  );
+  assert.deepEqual(
+    normalizeWorkspacePreferences({
+      hoverDelay: 999 as never,
+      defaultLayout: "unknown" as never,
+    }),
+    defaultWorkspacePreferences,
+  );
 });

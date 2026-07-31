@@ -22,6 +22,18 @@
 - Follow-up normalized comparison:
   `C:\Users\admin\Documents\Anyway\output\design-qa\comparison-source-vs-implementation.jpg`
   (1288 × 1600 px; source on the left, implementation on the right).
+- Hover/settings source visual truth:
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-0694ee0b-67a6-4f67-ab48-03dc8d6caf57.png` (835 × 153 px, command bar)
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-f7ce832c-f6d7-480b-a351-30859578bf8f.png` (353 × 480 px, layout menu)
+- Hover/settings implementation captures:
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\hover-add-menu.jpg`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\hover-connect-menu.jpg`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\hover-layout-menu.jpg`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\settings-interface.jpg`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\workspace-final-hover-settings-clean.jpg`
+- Hover/settings normalized comparison:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\comparison-hover-settings.jpg`
+  (1480 × 1430 px; source and implementation are paired in the same image input).
 - Capture viewport: 1443 × 931 physical/CSS px at device scale factor 1; the 29 px native
   title bar is excluded from the 1443 × 902 design comparison.
 - Compared state: Urban Heat Islands fixture, Tree Canopy Cover selected, eight-way quick-add
@@ -99,6 +111,27 @@
   menu, and count-bearing legend. The dedicated filtered-state capture shows only the derived
   relation and its connected nodes after automatic re-layout.
 
+### Pass 5
+
+- [P1][behavior] Add, Connect, and Layout required clicks before their available actions became
+  discoverable.
+  - Fix: introduced one shared delayed-hover disclosure contract. Pointer hover opens each menu,
+    keyboard focus opens it immediately, and the primary button click still performs its direct
+    action.
+- [P1][icons] Layout descriptions were text-only and slow to distinguish at a glance.
+  - Fix: assigned a real Tabler SVG icon to every node, relation, and layout option; active
+    relation and layout choices retain blue state feedback.
+- [P1][functionality] The project menu had no settings destination.
+  - Fix: added a persistent Settings action at the bottom and a three-section settings interface
+    for command density, hover delay, default filter layout, minimap visibility, and link counts.
+    Settings are normalized before restoration and persist in local storage.
+- [P2][state] Visual QA changed command density and canvas pan while testing.
+  - Fix: restored default preferences, refreshed the Tauri window, and captured a clean final
+    state without transient text selection.
+- Post-fix evidence: Computer Use opened Add and Connect by pointer entry, opened Layout with
+  distinct icons, entered Settings from the menu footer, saved Compact density, observed the
+  topbar change, and restored defaults. The paired comparison has no unresolved P0/P1/P2 drift.
+
 ## Final rubric
 
 | Surface | Result | Evidence |
@@ -108,7 +141,7 @@
 | Color and tokens | Passed | Intentional white/gray-black/blue mapping is consistent and accessible. |
 | Icons and shapes | Passed | Tabler icons, thin graph outlines, circular question nodes, straight semantic edges, and eight pie wedges are complete; the obsolete gesture hand is absent. |
 | Copy and content | Passed | Climate fixture, enum values, observed bool fact, methods, evidence, and relation labels use coherent realistic data. |
-| States and interactions | Passed | Computer Use evidence covers navigation, search, add, connect, six layout modes, four legend filters, automatic re-layout, Escape dismissal, selected, active, and disabled states. |
+| States and interactions | Passed | Computer Use evidence covers navigation, search, hover-open Add/Connect/Layout, direct clicks, six layout modes, four legend filters, settings persistence, automatic re-layout, Escape dismissal, selected, active, and disabled states. |
 | Accessibility | Passed | Semantic buttons/menus, labels, focus-visible styles, reduced-motion handling, and keyboard dismissal are present. |
 | Viewport resilience | Passed | Reference geometry is exact at desktop size; widths below 1050 px switch to fit-to-view and the 1180 px density rule. |
 | AI shortcut artifacts | Passed | No emoji, handcrafted SVG, placeholder illustration, decorative blob, or fake asset substitutes are used. |

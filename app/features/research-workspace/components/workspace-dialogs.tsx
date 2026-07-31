@@ -6,12 +6,21 @@ import {
   IconFileText,
   IconFolder,
   IconHistory,
+  IconLayoutGrid,
+  IconPalette,
+  IconPointer,
   IconRefresh,
   IconSearch,
+  IconSettings,
   IconX,
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
+import { layoutOptions } from "../workspace-layout";
+import {
+  defaultWorkspacePreferences,
+  type WorkspacePreferences,
+} from "../workspace-preferences";
 import type { NodeDraft } from "../workspace-types";
 
 export type ComposerState = {
@@ -454,20 +463,22 @@ export function ProjectMenu({
   project,
   onClose,
   onReset,
+  onSettings,
 }: {
   project: ProjectState;
   onClose: () => void;
   onReset: () => void;
+  onSettings: () => void;
 }) {
   return (
-    <aside className="fixed bottom-0 left-0 top-12 z-[60] w-[290px] border-r border-ink/20 bg-paper shadow-[12px_0_40px_rgba(30,32,35,.08)]">
+    <aside className="fixed bottom-0 left-0 top-12 z-[60] flex w-[290px] flex-col border-r border-ink/20 bg-paper shadow-[12px_0_40px_rgba(30,32,35,.08)]">
       <div className="flex h-14 items-center justify-between border-b border-ink/15 px-5">
         <h2 className="font-serif text-[18px]">Projects</h2>
         <button className="icon-quiet" onClick={onClose} aria-label="Close menu">
           <IconX size={18} stroke={1.35} />
         </button>
       </div>
-      <div className="p-4">
+      <div className="min-h-0 flex-1 p-4">
         <p className="font-sans text-[9px] uppercase tracking-[0.16em] text-ink/45">
           Current study
         </p>
@@ -505,6 +516,277 @@ export function ProjectMenu({
           Restore reference demo
         </button>
       </div>
+      <div className="border-t border-ink/15 p-3">
+        <button
+          className="flex w-full items-center gap-3 rounded-[4px] px-3 py-2.5 text-left transition hover:bg-blue-soft hover:text-blue"
+          onClick={onSettings}
+        >
+          <IconSettings size={18} stroke={1.35} />
+          <span className="flex-1 font-serif text-[13px]">Settings</span>
+          <IconArrowRight size={15} stroke={1.3} className="text-ink/40" />
+        </button>
+      </div>
     </aside>
+  );
+}
+
+type SettingsSection = "interface" | "interaction" | "canvas";
+
+function PreferenceToggle({
+  checked,
+  label,
+  description,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  description: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-4 border-b border-ink/12 py-4">
+      <span className="min-w-0 flex-1">
+        <span className="block font-serif text-[13px]">{label}</span>
+        <span className="mt-1 block font-serif text-[10px] leading-[1.45] text-ink/50">
+          {description}
+        </span>
+      </span>
+      <input
+        className="peer sr-only"
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="relative h-5 w-9 shrink-0 rounded-full border border-ink/25 bg-ink/10 transition peer-checked:border-blue peer-checked:bg-blue peer-focus-visible:ring-2 peer-focus-visible:ring-blue/30">
+        <span
+          className={`absolute top-[2px] size-3.5 rounded-full bg-paper shadow-sm transition ${
+            checked ? "left-[18px]" : "left-[2px]"
+          }`}
+        />
+      </span>
+    </label>
+  );
+}
+
+/**
+ * Focused settings surface for interface, hover, and canvas preferences.
+ * 面向界面、悬停和画布偏好的专注设置界面。
+ */
+export function SettingsDialog({
+  preferences,
+  onClose,
+  onSave,
+}: {
+  preferences: WorkspacePreferences;
+  onClose: () => void;
+  onSave: (preferences: WorkspacePreferences) => void;
+}) {
+  const [section, setSection] = useState<SettingsSection>("interface");
+  const [draft, setDraft] = useState(preferences);
+  const sections: Array<{
+    key: SettingsSection;
+    label: string;
+    description: string;
+    icon: typeof IconSettings;
+  }> = [
+    { key: "interface", label: "Interface", description: "Command density", icon: IconPalette },
+    { key: "interaction", label: "Interaction", description: "Hover behavior", icon: IconPointer },
+    { key: "canvas", label: "Canvas", description: "Graph defaults", icon: IconLayoutGrid },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[95] grid place-items-center bg-ink/10 backdrop-blur-[2px]">
+      <section
+        className="grid h-[580px] w-[760px] grid-cols-[190px_minmax(0,1fr)] overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+      >
+        <aside className="border-r border-ink/15 bg-canvas p-3">
+          <div className="px-3 pb-5 pt-3">
+            <span className="font-sans text-[8px] uppercase tracking-[0.18em] text-blue">
+              Research Canvas
+            </span>
+            <h2 id="settings-title" className="mt-1 font-serif text-[20px]">
+              Settings
+            </h2>
+          </div>
+          <nav className="space-y-1" aria-label="Settings sections">
+            {sections.map((item) => {
+              const SectionIcon = item.icon;
+              const selected = section === item.key;
+              return (
+                <button
+                  key={item.key}
+                  className={`flex w-full items-start gap-3 rounded-[4px] px-3 py-2.5 text-left transition ${
+                    selected ? "bg-blue-soft text-blue" : "hover:bg-ink/5"
+                  }`}
+                  onClick={() => setSection(item.key)}
+                >
+                  <SectionIcon className="mt-0.5" size={17} stroke={1.35} />
+                  <span>
+                    <span className="block font-serif text-[12px]">{item.label}</span>
+                    <span className="mt-0.5 block font-serif text-[9px] text-ink/45">
+                      {item.description}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        <div className="flex min-w-0 flex-col">
+          <div className="flex h-14 items-center justify-between border-b border-ink/15 px-6">
+            <div>
+              <p className="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
+                Workspace preferences
+              </p>
+              <p className="mt-0.5 font-serif text-[13px] capitalize">{section}</p>
+            </div>
+            <button className="icon-quiet" onClick={onClose} aria-label="Close settings">
+              <IconX size={18} stroke={1.35} />
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
+            {section === "interface" && (
+              <div>
+                <h3 className="font-serif text-[18px]">Command bar</h3>
+                <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
+                  Keep the interface calm while deciding how much horizontal space commands use.
+                </p>
+                <div className="mt-6 grid grid-cols-2 gap-3">
+                  {(["comfortable", "compact"] as const).map((density) => {
+                    const selected = draft.commandDensity === density;
+                    return (
+                      <button
+                        key={density}
+                        className={`rounded-[5px] border p-4 text-left transition ${
+                          selected
+                            ? "border-blue bg-blue-soft text-blue"
+                            : "border-ink/20 hover:border-ink/40"
+                        }`}
+                        onClick={() => setDraft((current) => ({ ...current, commandDensity: density }))}
+                      >
+                        <span className="font-serif text-[13px] capitalize">{density}</span>
+                        <span className="mt-1 block font-serif text-[10px] leading-[1.4] text-ink/50">
+                          {density === "comfortable"
+                            ? "More breathing room between commands."
+                            : "Tighter controls for smaller displays."}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-7 rounded-[5px] border border-ink/15 bg-canvas p-4">
+                  <p className="font-sans text-[8px] uppercase tracking-[0.15em] text-ink/45">
+                    Color system
+                  </p>
+                  <p className="mt-2 font-serif text-[12px]">White canvas · gray-black text · blue state</p>
+                  <p className="mt-1 font-serif text-[10px] text-ink/50">
+                    The focused visual language remains locked to the current product direction.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {section === "interaction" && (
+              <div>
+                <h3 className="font-serif text-[18px]">Hover disclosure</h3>
+                <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
+                  Add, Connect, and Layout open when the pointer rests over the command.
+                </p>
+                <label className="dialog-field mt-6">
+                  Opening delay
+                  <select
+                    value={draft.hoverDelay}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        hoverDelay: Number(event.target.value) as WorkspacePreferences["hoverDelay"],
+                      }))
+                    }
+                  >
+                    <option value={80}>Fast · 80 ms</option>
+                    <option value={180}>Balanced · 180 ms</option>
+                    <option value={320}>Deliberate · 320 ms</option>
+                  </select>
+                </label>
+                <div className="mt-4 rounded-[5px] border border-blue/20 bg-blue-soft p-4">
+                  <p className="font-serif text-[12px] text-blue">Click behavior remains direct</p>
+                  <p className="mt-1 font-serif text-[10px] leading-[1.45] text-ink/55">
+                    Clicking Add opens the radial chooser; clicking Connect toggles the selected relation mode.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {section === "canvas" && (
+              <div>
+                <h3 className="font-serif text-[18px]">Graph defaults</h3>
+                <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
+                  Choose the fallback arrangement and the amount of navigation detail on the canvas.
+                </p>
+                <label className="dialog-field mt-6">
+                  Default layout for link filtering
+                  <select
+                    value={draft.defaultLayout}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        defaultLayout: event.target.value as WorkspacePreferences["defaultLayout"],
+                      }))
+                    }
+                  >
+                    {layoutOptions.map((option) => (
+                      <option key={option.mode} value={option.mode}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="mt-3">
+                  <PreferenceToggle
+                    checked={draft.showMiniMap}
+                    label="Show minimap"
+                    description="Keep a compact overview in the lower-left corner."
+                    onChange={(showMiniMap) =>
+                      setDraft((current) => ({ ...current, showMiniMap }))
+                    }
+                  />
+                  <PreferenceToggle
+                    checked={draft.showLinkCounts}
+                    label="Show link counts"
+                    description="Display relation totals inside the clickable legend."
+                    onChange={(showLinkCounts) =>
+                      setDraft((current) => ({ ...current, showLinkCounts }))
+                    }
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <footer className="flex h-16 items-center justify-between border-t border-ink/15 px-6">
+            <button
+              className="font-serif text-[11px] text-ink/55 hover:text-blue"
+              onClick={() => setDraft(defaultWorkspacePreferences)}
+            >
+              Restore defaults
+            </button>
+            <div className="flex gap-2">
+              <button className="button-secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button className="button-primary" onClick={() => onSave(draft)}>
+                Save settings
+                <IconCheck size={15} stroke={1.45} />
+              </button>
+            </div>
+          </footer>
+        </div>
+      </section>
+    </div>
   );
 }

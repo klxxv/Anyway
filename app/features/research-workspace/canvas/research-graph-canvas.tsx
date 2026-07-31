@@ -37,6 +37,8 @@ type ResearchGraphCanvasProps = {
   addRequest: number;
   connectMode: boolean;
   linkFilter: LinkLegendFilter | null;
+  showMiniMap: boolean;
+  showLinkCounts: boolean;
   referenceViewport: boolean;
   onLegendFilter: (filter: LinkLegendFilter | null) => void;
   onSelectNode: (nodeId: string) => void;
@@ -83,6 +85,8 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     addRequest,
     connectMode,
     linkFilter,
+    showMiniMap,
+    showLinkCounts,
     referenceViewport,
     onLegendFilter,
     onSelectNode,
@@ -328,20 +332,24 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={28} size={0.55} color="#dfe2e5" />
-        <MiniMap
-          nodeColor={minimapColor}
-          maskColor="rgba(255,255,255,.72)"
-          pannable
-          zoomable
-          className="zen-minimap"
-        />
+        {showMiniMap && (
+          <MiniMap
+            nodeColor={minimapColor}
+            maskColor="rgba(255,255,255,.72)"
+            pannable
+            zoomable
+            className="zen-minimap"
+          />
+        )}
         <Controls showInteractive={false} className="zen-controls" />
       </ReactFlow>
 
       <div className="absolute bottom-5 right-5 z-10 w-[154px] rounded-[5px] border border-ink/30 bg-paper/96 p-2 font-serif text-[10px] text-ink/80">
         <div className="flex items-center justify-between px-2 pb-1.5 font-sans text-[7px] uppercase tracking-[0.14em] text-ink/40">
           <span>Link filter</span>
-          <span>{linkFilter ? legendCounts[linkFilter] : project.edges.length}</span>
+          {showLinkCounts && (
+            <span>{linkFilter ? legendCounts[linkFilter] : project.edges.length}</span>
+          )}
         </div>
         {legendItems.map((item) => {
           const selected = linkFilter === item.key;
@@ -357,9 +365,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
             >
               <span className={`block w-9 border-t ${item.lineClass}`} />
               <span className="min-w-0 flex-1">{item.label}</span>
-              <span className="font-sans text-[8px] text-ink/35">
-                {legendCounts[item.key]}
-              </span>
+              {showLinkCounts && (
+                <span className="font-sans text-[8px] text-ink/35">
+                  {legendCounts[item.key]}
+                </span>
+              )}
             </button>
           );
         })}
