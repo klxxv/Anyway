@@ -150,9 +150,23 @@ import {
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 /** React Flow 适配数据，不属于持久化研究模型 / React Flow adapter data, not persisted domain state. */
+/**
+ * Transient two-finger pie-menu state; it never belongs in the research model.
+ * 双指饼菜单的瞬时手势状态；它不属于可持久化的研究模型。
+ */
+type QuickAddGestureState = {
+  points: Map<number, { x: number; y: number }>;
+  origin: { x: number; y: number } | null;
+  latest: { x: number; y: number } | null;
+  holdTimer: ReturnType<typeof setTimeout> | null;
+  opened: boolean;
+  suppressNextPaneClick: boolean;
+};
+
 type CanvasNodeData = {
   record: ResearchNode;
   blockStyleId: BlockStyleId;
@@ -732,9 +746,155 @@ function AppShell() {
   const runResultInput = useRef<HTMLInputElement | null>(null);
   const evidenceFileInput = useRef<HTMLInputElement | null>(null);
   const mycPluginInput = useRef<HTMLInputElement | null>(null);
+  const quickAddGesture = useRef<QuickAddGestureState>({
+    points: new Map(),
+    origin: null,
+    latest: null,
+    holdTimer: null,
+    opened: false,
+    suppressNextPaneClick: false,
+  });
   const { fitView, setCenter, getViewport } = useReactFlow<CanvasNode, CanvasEdge>();
   const updateNodeInternals = useUpdateNodeInternals();
   const t = useCallback((key: MessageKey) => translate(locale, key), [locale]);
+
+  /** Open the node dialog from either a pie slice or a two-finger flick. / 由饼菜单或双指甩动打开节点对话框。 */
+  const beginQuickAdd = useCallback((type: ResearchNodeType) => {
+    setNewNode((current) => ({ ...current, type }));
+    setQuickAddMenu(null);
+    setModal("new-node");
+  }, []);
+
+  const resetQuickAddGesture = useCallback(() => {
+    const gesture = quickAddGesture.current;
+    if (gesture.holdTimer) clearTimeout(gesture.holdTimer);
+    gesture.points.clear();
+    gesture.origin = null;
+    gesture.latest = null;
+    gesture.holdTimer = null;
+    gesture.opened = false;
+  }, []);
+
+  /**
+   * A Blender-like pie gesture: two fingers hold on a blank pane, then flick and release.
+   * 类 Blender 饼菜单：在空白画布双指长按，再朝一个方向甩动并松开。
+   */
+  const handleCanvasPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const pane = (event.target as Element | null)?.closest(".react-flow__pane");
+      if (event.pointerType !== "touch" || !pane) return;
+
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const gesture = quickAddGesture.current;
+      gesture.points.set(event.pointerId, {
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      });
+
+      if (gesture.points.size !== 2) {
+        if (gesture.points.size > 2) resetQuickAddGesture();
+        return;
+      }
+
+      const points = [...gesture.points.values()];
+      gesture.origin = {
+        x: (points[0].x + points[1].x) / 2,
+        y: (points[0].y + points[1].y) / 2,
+      };
+      gesture.latest = gesture.origin;
+      gesture.opened = false;
+      gesture.holdTimer = setTimeout(() => {
+        if (gesture.points.size === 2 && gesture.origin) {
+          gesture.opened = true;
+          setQuickAddMenu(gesture.origin);
+        }
+      }, 360);
+    },
+    [resetQuickAddGesture],
+  );
+
+  const handleCanvasPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const gesture = quickAddGesture.current;
+      if (!gesture.points.has(event.pointerId)) return;
+
+      const bounds = event.currentTarget.getBoundingClientRect();
+      gesture.points.set(event.pointerId, {
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      });
+      if (gesture.points.size !== 2 || !gesture.origin) return;
+
+      const points = [...gesture.points.values()];
+      gesture.latest = {
+        x: (points[0].x + points[1].x) / 2,
+        y: (points[0].y + points[1].y) / 2,
+      };
+      const distance = Math.hypot(
+        gesture.latest.x - gesture.origin.x,
+        gesture.latest.y - gesture.origin.y,
+      );
+      if (distance > 14 && !gesture.opened && gesture.holdTimer) {
+        clearTimeout(gesture.holdTimer);
+        gesture.holdTimer = null;
+      }
+    },
+    [],
+  );
+
+  const handleCanvasPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const gesture = quickAddGesture.current;
+      if (!gesture.points.has(event.pointerId)) return;
+
+      const bounds = event.currentTarget.getBoundingClientRect();
+      gesture.points.set(event.pointerId, {
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      });
+      if (gesture.points.size === 2) {
+        const points = [...gesture.points.values()];
+        gesture.latest = {
+          x: (points[0].x + points[1].x) / 2,
+          y: (points[0].y + points[1].y) / 2,
+        };
+      }
+      gesture.points.delete(event.pointerId);
+      if (gesture.points.size > 0) return;
+
+      if (gesture.holdTimer) clearTimeout(gesture.holdTimer);
+      const origin = gesture.origin;
+      const latest = gesture.latest;
+      const opened = gesture.opened;
+      resetQuickAddGesture();
+
+      if (!opened || !origin || !latest) return;
+      const deltaX = latest.x - origin.x;
+      const deltaY = latest.y - origin.y;
+      if (Math.hypot(deltaX, deltaY) < 28) {
+        // Keep the radial menu available for a deliberate tap when there was no flick.
+        quickAddGesture.current.suppressNextPaneClick = true;
+        return;
+      }
+
+      const choices: Array<{ angle: number; type: ResearchNodeType }> = [
+        { angle: -90, type: "question" },
+        { angle: -30, type: "variable" },
+        { angle: 30, type: "method" },
+        { angle: 90, type: "evidence" },
+        { angle: 150, type: "result" },
+        { angle: 210, type: "note" },
+      ];
+      const angle = (Math.atan2(deltaY, deltaX) * 180) / Math.PI;
+      const selected = choices.reduce((nearest, choice) => {
+        const difference = Math.abs(((angle - choice.angle + 540) % 360) - 180);
+        const nearestDifference = Math.abs(((angle - nearest.angle + 540) % 360) - 180);
+        return difference < nearestDifference ? choice : nearest;
+      });
+      beginQuickAdd(selected.type);
+    },
+    [beginQuickAdd, resetQuickAddGesture],
+  );
   const themeCatalog = useMemo(
     () => [
       ...builtInThemeCatalog,
@@ -3083,7 +3243,13 @@ function AppShell() {
           </button>
         )}
 
-        <section className="canvas-region">
+        <section
+          className="canvas-region"
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerUp}
+          onPointerCancel={resetQuickAddGesture}
+        >
           <div className="canvas-toolbar">
             <button className="tool-button primary" onClick={() => setModal("new-node")}>
               <Plus size={15} />
@@ -3303,11 +3469,7 @@ function AppShell() {
                 <button
                   key={type}
                   className={`quick-add-${type}`}
-                  onClick={() => {
-                    setNewNode((current) => ({ ...current, type }));
-                    setQuickAddMenu(null);
-                    setModal("new-node");
-                  }}
+                  onClick={() => beginQuickAdd(type)}
                 >
                   {label}
                 </button>
@@ -3351,6 +3513,10 @@ function AppShell() {
               setActiveInspectorTab("properties");
             }}
             onPaneClick={() => {
+              if (quickAddGesture.current.suppressNextPaneClick) {
+                quickAddGesture.current.suppressNextPaneClick = false;
+                return;
+              }
               setSelectedNodeId("");
               setSelectedEdgeId("");
               setQuickAddMenu(null);
