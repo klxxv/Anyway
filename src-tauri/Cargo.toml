@@ -1,6 +1,6 @@
 [package]
 name = "research-canvas-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Human-led research graph and ablation planning workspace"
 authors = ["Research Canvas Contributors"]
 edition = "2021"

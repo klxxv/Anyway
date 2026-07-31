@@ -31,8 +31,8 @@ test("server-renders the Research Canvas application shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Human-led ablation mapping · Research Canvas<\/title>/i);
-  assert.match(html, /local-first research graph for evidence, traversal/i);
+  assert.match(html, /<title>Urban Heat Islands · Research Canvas<\/title>/i);
+  assert.match(html, /focused local-first canvas for mapping research variables/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Building your site/i);
 });
 
@@ -44,7 +44,7 @@ test("removes disposable starter assets and preserves product metadata", async (
   ]);
 
   assert.match(page, /ResearchCanvasApp/);
-  assert.match(page, /Human-led ablation mapping/);
+  assert.match(page, /Urban Heat Islands/);
   assert.match(layout, /title:\s*\{/);
   assert.match(layout, /Research Canvas/);
   assert.match(packageJson, /"@xyflow\/react"/);

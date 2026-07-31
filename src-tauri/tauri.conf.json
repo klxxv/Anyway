@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Research Canvas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.researchcanvas.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:desktop-web",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist/client"
+    "beforeBuildCommand": "npm run build:desktop",
+    "frontendDist": "../out"
   },
   "app": {
     "windows": [],
@@ -16,6 +16,14 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

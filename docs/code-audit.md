@@ -2,52 +2,44 @@
 
 ## Commenting policy
 
-Comments describe module responsibility, externally visible invariants, security
-boundaries, and non-obvious algorithmic limits. Avoid line-by-line restatements
-of TypeScript, because they quickly become stale and obscure the actual logic.
+The codebase uses English/Chinese bilingual comments for module responsibility, invariants,
+platform boundaries, gesture behavior, persistence, and non-obvious graph algorithms.
+Comments intentionally avoid narrating obvious JSX or TypeScript line by line, because those
+comments become stale and reduce signal.
 
-The domain contract and graph core now document their renderer independence,
-legacy migration, deterministic traversal order, scenario overlays, and the
-100-path cap used to protect the UI from dense-graph expansion.
+The redesigned workspace follows the same policy. Its public entrypoint, composition root,
+state hook, touch gesture hook, graph canvas, renderers, fixture, dialogs, inspector, top bar,
+and radial menu each document their responsibility in both languages.
 
-## TODOs worth adding
+## TODOs still worth keeping
 
-1. **`app/components/ResearchCanvasApp.tsx` — split the application shell.**
-   Extract state/action hooks and panels (canvas, inspector, plugin store,
-   settings, analysis) behind typed props or a small application store. This is
-   the highest-value TODO because it reduces change coupling and test setup.
-2. **`app/i18n/catalog.ts` — repair and validate text encoding.**
-   Several checked-in Chinese strings appear mojibaked in source output. Add a
-   UTF-8 catalog validation test and replace corrupted literals with verified
-   Simplified Chinese before translators extend the catalog.
-3. **`app/lib/research-core.ts` — explicitly model graph-analysis limits.**
-   Move the hard-coded all-shortest-path cap (`100`) to a named options value
-   and return truncation metadata, so callers can explain partial results.
-4. **`src-tauri/src/plugins.rs` — transactional installation cleanup.**
-   Ensure the staging directory is removed when `read_installed_plugin` fails
-   after extraction, and add archive-path, oversized-entry, and failure-cleanup
-   tests.
-5. **`db/schema.ts` — remove or implement the D1 placeholder.**
-   The database adapter is available but the schema is intentionally empty.
-   Either add migrations with an ownership/lifecycle design or delete the
-   dormant adapter until persistence is in scope.
-6. **`scripts/train_mnist_ablation.py` — make scientific thresholds configurable.**
-   The 1.5 and 1.0 percentage-point decision thresholds should be command-line
-   parameters recorded in the generated artifact, rather than implicit policy.
+1. **`app/lib/research-core.ts` — configurable graph-analysis limits.**
+   Move the all-shortest-path cap (`100`) into a named option and return truncation metadata.
+2. **`src-tauri/src/plugins.rs` — transactional installation cleanup.**
+   Remove staging data after extraction/read failures and add hostile-archive tests.
+3. **`db/schema.ts` — explicit persistence ownership.**
+   Implement the D1 schema and migration lifecycle, or remove the dormant adapter.
+4. **`scripts/train_mnist_ablation.py` — configurable scientific thresholds.**
+   Promote the 1.5 and 1.0 percentage-point policies to recorded CLI parameters.
+5. **`app/features/research-workspace/workspace-fixture.ts` — fixture extraction.**
+   Move the climate example into a versioned fixture file if the application gains additional
+   reference studies or user-selectable templates.
 
-## Coupling assessment
+## Coupling after the App-layer rewrite
 
-| Area | Level | Evidence | Recommended direction |
+| Area | Level | Evidence | Direction |
 | --- | --- | --- | --- |
-| `app/lib/research-types.ts` | Low | Type-only shared contract with no platform imports. | Keep it renderer and storage agnostic. |
-| `app/lib/research-core.ts` | Low | Pure operations over `ProjectState`; tests call it directly. | Preserve this boundary; pass limits as options. |
-| Fixtures and i18n | Low–medium | Depend on the domain types, but fixtures include presentation-ready text. | Keep fixture builders isolated; move shared builders to a helper if more fixtures arrive. |
-| Plugin contracts/catalog | Medium | Contracts correctly narrow the plugin context; catalog shares UI-facing manifests. | Separate installation/runtime state from display catalog if runtime behaviors grow. |
-| Tauri client and Rust installer | Medium | A deliberate browser/Rust IPC pair, isolated from graph semantics. | Retain the adapter; add end-to-end installation tests. |
-| Worker and D1 adapter | Low | Thin platform wiring with no UI/domain imports. | Keep database schema ownership explicit. |
-| `ResearchCanvasApp.tsx` | High | One client component coordinates graph state, algorithms, persistence, keyboard input, React Flow, plugins, modals, and rendering. | Split by feature and introduce a focused state/action boundary. |
-| Global CSS and component markup | Medium–high | Many class-name contracts span a large JSX file and several global stylesheets. | Co-locate feature styles or adopt CSS modules after the UI split. |
+| `app/lib/research-types.ts` | Low | Type-only shared contract with no renderer or platform imports. | Keep renderer/storage agnostic. |
+| `app/lib/research-core.ts` | Low | Pure deterministic operations tested without UI. | Preserve the boundary; expose limits through options. |
+| `app/components/ResearchCanvasApp.tsx` | Low | Eight-line stable public export only. | Keep as the route-facing compatibility seam. |
+| `ResearchWorkspaceApp.tsx` | Medium | 185-line composition root coordinates feature state and overlays through typed callbacks. | Do not move domain algorithms back into it. |
+| `use-workspace-project.ts` | Medium | Owns persistence, history, and mutations but no rendering. | Split persistence adapter only if remote storage is added. |
+| Graph canvas and renderers | Medium | React Flow-specific state is isolated from domain records. | Keep React Flow types inside the canvas boundary. |
+| Inspector/dialog/top-bar components | Low | Presentational components receive typed data and callbacks. | Continue adding behavior through props or focused hooks. |
+| `use-two-finger-pie.ts` | Low | Gesture state is isolated and reports semantic menu choices. | Add device-specific tests when trackpad automation becomes available. |
+| Tailwind tokens and component CSS | Medium | Global tokens are centralized; React Flow and pie geometry require named class contracts. | Keep complex third-party overrides in the dedicated component layer. |
+| Tauri client and Rust installer | Medium | IPC is isolated from graph semantics but spans a browser/Rust boundary. | Add end-to-end installer and error cleanup tests. |
 
-`ResearchCanvasApp.tsx` is the only high-coupling hotspot. The surrounding
-architecture already has useful seams: domain logic, platform adapters, and
-declarative plugin data are substantially decoupled.
+The former high-coupling hotspot is removed: the public App file fell from 5,821 lines to 8
+lines, while behavior is distributed across cohesive feature modules. No current module is
+assessed as high coupling.

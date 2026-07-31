@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { ResearchCanvasApp } from "./components/ResearchCanvasApp";
 
 export const metadata: Metadata = {
-  title: "Human-led ablation mapping",
+  title: "Urban Heat Islands",
   description:
-    "A local-first research graph for evidence, traversal, and non-destructive ablation scenarios.",
+    "A focused local-first canvas for mapping research variables, evidence, methods, and results.",
 };
 
 export default function Home() {

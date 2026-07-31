@@ -1,0 +1,185 @@
+"use client";
+
+import { IconChevronRight, IconPlugConnected } from "@tabler/icons-react";
+import { useCallback, useEffect, useState } from "react";
+import type { ResearchNodeType } from "../../lib/research-types";
+import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
+import { InspectorPanel } from "./components/inspector-panel";
+import {
+  NodeComposer,
+  ProjectMenu,
+  SearchPalette,
+  type ComposerState,
+} from "./components/workspace-dialogs";
+import { WorkspaceTopbar } from "./components/workspace-topbar";
+import { useWorkspaceProject } from "./hooks/use-workspace-project";
+
+function downloadProject(project: ReturnType<typeof useWorkspaceProject>["project"]) {
+  const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${project.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Thin composition root for the white, canvas-first desktop experience.
+ * 白色画布优先桌面体验的轻量组合根。
+ */
+export function ResearchWorkspaceApp() {
+  const workspace = useWorkspaceProject();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [connectMode, setConnectMode] = useState(false);
+  const [addRequest, setAddRequest] = useState(0);
+  const [composer, setComposer] = useState<ComposerState | null>(null);
+  const [notice, setNotice] = useState("");
+
+  const requestCreate = useCallback(
+    (type: ResearchNodeType, x: number, y: number) => {
+      setComposer({ type, x, y });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const closeTransientUi = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setComposer(null);
+      setSearchOpen(false);
+      setMenuOpen(false);
+      setConnectMode(false);
+    };
+    window.addEventListener("keydown", closeTransientUi);
+    return () => window.removeEventListener("keydown", closeTransientUi);
+  }, []);
+
+  return (
+    <main className="flex h-screen min-h-[680px] w-screen flex-col overflow-hidden bg-paper text-ink">
+      <WorkspaceTopbar
+        canUndo={workspace.canUndo}
+        canRedo={workspace.canRedo}
+        onMenu={() => setMenuOpen((current) => !current)}
+        onAdd={() => setAddRequest((value) => value + 1)}
+        onConnect={() => {
+          setConnectMode((current) => !current);
+          setNotice(connectMode ? "" : "Connect mode · drag from one node to another");
+        }}
+        onNote={() =>
+          setComposer({
+            type: "note",
+            x: 610,
+            y: 430,
+          })
+        }
+        onFind={() => setSearchOpen(true)}
+        onLayout={() => {
+          workspace.autoLayout();
+          setNotice("Layout refreshed");
+        }}
+        onUndo={workspace.undo}
+        onRedo={workspace.redo}
+        onExport={() => downloadProject(workspace.project)}
+      />
+
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px]">
+        <section className="grid min-h-0 grid-rows-[42px_minmax(0,1fr)] bg-canvas">
+          <div className="flex items-center gap-2 border-b border-ink/10 px-6 font-serif text-[12px] text-olive">
+            <button className="hover:text-blue" onClick={() => setMenuOpen(true)}>
+              Projects
+            </button>
+            <IconChevronRight size={13} stroke={1.3} />
+            <span>{workspace.project.discipline}</span>
+            <IconChevronRight size={13} stroke={1.3} />
+            <span>{workspace.project.title}</span>
+          </div>
+          <ResearchGraphCanvas
+            project={workspace.project}
+            selectedNodeId={workspace.selectedNodeId}
+            addRequest={addRequest}
+            connectMode={connectMode}
+            onSelectNode={(nodeId) => {
+              workspace.setSelectedNodeId(nodeId);
+              setInspectorOpen(true);
+            }}
+            onMoveNode={workspace.moveNode}
+            onCreateEdge={(source, target) => {
+              workspace.createEdge(source, target);
+              setConnectMode(false);
+              setNotice("Relation created");
+            }}
+            onRequestCreate={requestCreate}
+          />
+        </section>
+
+        {inspectorOpen ? (
+          <InspectorPanel
+            node={workspace.selectedNode}
+            onUpdate={workspace.updateNode}
+            onDelete={workspace.removeNode}
+            onClose={() => setInspectorOpen(false)}
+          />
+        ) : (
+          <button
+            className="absolute right-3 top-20 z-20 rounded-full border border-ink/25 bg-paper p-2 text-blue shadow-sm"
+            onClick={() => setInspectorOpen(true)}
+            aria-label="Open inspector"
+          >
+            <IconChevronRight className="rotate-180" size={17} stroke={1.35} />
+          </button>
+        )}
+      </div>
+
+      {connectMode && (
+        <div className="pointer-events-none fixed left-1/2 top-[62px] z-50 -translate-x-1/2 rounded-full border border-blue/35 bg-blue-soft px-4 py-2 font-serif text-[11px] text-blue shadow-sm">
+          <IconPlugConnected className="mr-2 inline" size={15} stroke={1.35} />
+          Connect mode · drag between node handles
+        </div>
+      )}
+
+      {notice && !connectMode && (
+        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full border border-ink/20 bg-paper px-4 py-2 font-serif text-[11px] shadow-sm">
+          {notice}
+        </div>
+      )}
+
+      {menuOpen && (
+        <ProjectMenu
+          project={workspace.project}
+          onClose={() => setMenuOpen(false)}
+          onReset={() => {
+            workspace.resetDemo();
+            setMenuOpen(false);
+          }}
+        />
+      )}
+      {searchOpen && (
+        <SearchPalette
+          project={workspace.project}
+          onClose={() => setSearchOpen(false)}
+          onSelect={(nodeId) => {
+            workspace.setSelectedNodeId(nodeId);
+            setInspectorOpen(true);
+            setSearchOpen(false);
+          }}
+        />
+      )}
+      {composer && (
+        <NodeComposer
+          key={`${composer.type}-${composer.x}-${composer.y}`}
+          state={composer}
+          onClose={() => setComposer(null)}
+          onCreate={(draft, x, y) => {
+            workspace.createNode(draft, x, y);
+            setComposer(null);
+            setInspectorOpen(true);
+            setNotice("Node added");
+          }}
+        />
+      )}
+    </main>
+  );
+}
