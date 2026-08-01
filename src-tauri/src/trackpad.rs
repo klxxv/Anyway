@@ -1,12 +1,11 @@
-//! Windows 精确式触控板缩放桥；仅转发实现捏合缩放所需的接触点。
-//! Precision Touchpad bridge that forwards only contacts needed for pinch zoom.
+//! Windows 精确式触控板完整帧桥；每条事件同时包含两个触点及合成缩放数据。
+//! Complete-frame Precision Touchpad bridge with two contacts and composed pinch data.
 
 #![cfg(windows)]
 
 use serde::Serialize;
 use std::{
-    collections::HashSet,
-    mem,
+    mem, ptr,
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Sender},
@@ -21,9 +20,7 @@ use windows::{
         Graphics::Gdi::ScreenToClient,
         System::LibraryLoader::{GetModuleHandleW, GetProcAddress},
         UI::{
-            Input::Pointer::{
-                GetPointerInfo, POINTER_FLAG_CANCELED, POINTER_INFO, POINTER_TOUCH_INFO,
-            },
+            Input::Pointer::POINTER_TOUCH_INFO,
             WindowsAndMessaging::{
                 CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, PT_TOUCHPAD,
                 WM_POINTERCAPTURECHANGED, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE, WNDPROC,
@@ -32,37 +29,54 @@ use windows::{
     },
 };
 
-const EVENT_NAME: &str = "research-canvas://trackpad-contact";
+const EVENT_NAME: &str = "research-canvas://trackpad-frame";
 // Windows 11 currently publishes these Precision Touchpad entry points by ordinal only.
 // Windows 11 当前仅按序号导出这些 Precision Touchpad 入口，因此必须运行时解析。
 const REGISTER_TOUCHPAD_CAPABLE_WINDOW_ORDINAL: u16 = 2689;
-const GET_POINTER_TOUCHPAD_INFO_ORDINAL: u16 = 2691;
+const GET_POINTER_FRAME_TOUCHPAD_INFO_ORDINAL: u16 = 2693;
 
 type RegisterTouchpadCapableWindowFn = unsafe extern "system" fn(HWND, BOOL) -> BOOL;
-type GetPointerTouchpadInfoFn = unsafe extern "system" fn(u32, *mut POINTER_TOUCH_INFO) -> BOOL;
+type GetPointerFrameTouchpadInfoFn =
+    unsafe extern "system" fn(u32, *mut u32, *mut POINTER_TOUCH_INFO) -> BOOL;
 
 #[derive(Clone, Copy)]
 struct TouchpadApis {
     register_window: RegisterTouchpadCapableWindowFn,
-    get_pointer_info: GetPointerTouchpadInfoFn,
+    get_frame: GetPointerFrameTouchpadInfoFn,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrackpadContact {
+    id: u32,
+    x: i32,
+    y: i32,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TrackpadContactEvent {
+struct TrackpadFrameEvent {
     phase: &'static str,
-    pointer_id: u32,
-    contact_count: usize,
-    x: f64,
-    y: f64,
-    physical_x: i32,
-    physical_y: i32,
-    timestamp_ms: u32,
+    frame_id: u32,
+    contacts: Vec<TrackpadContact>,
+    center_x: f64,
+    center_y: f64,
+    span: f64,
+    scale: f64,
+    cursor_x: f64,
+    cursor_y: f64,
+}
+
+#[derive(Default)]
+struct PinchState {
+    active: bool,
+    initial_span: f64,
+    last_frame_id: u32,
 }
 
 static ORIGINAL_WNDPROC: OnceLock<isize> = OnceLock::new();
-static EVENT_SENDER: OnceLock<Sender<TrackpadContactEvent>> = OnceLock::new();
-static ACTIVE_CONTACTS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+static EVENT_SENDER: OnceLock<Sender<TrackpadFrameEvent>> = OnceLock::new();
+static PINCH_STATE: OnceLock<Mutex<PinchState>> = OnceLock::new();
 static SCALE_FACTOR_BITS: AtomicU64 = AtomicU64::new(1_f64.to_bits());
 static TOUCHPAD_APIS: OnceLock<TouchpadApis> = OnceLock::new();
 
@@ -79,42 +93,121 @@ fn resolve_touchpad_apis() -> Result<TouchpadApis, String> {
         "this Windows build does not provide RegisterTouchpadCapableWindow (ordinal 2689)"
             .to_string()
     })?;
-    let get_pointer_info = unsafe {
+    let get_frame = unsafe {
         GetProcAddress(
             user32,
-            PCSTR(GET_POINTER_TOUCHPAD_INFO_ORDINAL as usize as *const u8),
+            PCSTR(GET_POINTER_FRAME_TOUCHPAD_INFO_ORDINAL as usize as *const u8),
         )
     }
     .ok_or_else(|| {
-        "this Windows build does not provide GetPointerTouchpadInfo (ordinal 2691)".to_string()
+        "this Windows build does not provide GetPointerFrameTouchpadInfo (ordinal 2693)".to_string()
     })?;
 
     Ok(TouchpadApis {
         // The resolved ordinals have the signatures documented in Winuser.h.
         // 这些序号的签名来自 Winuser.h；动态解析可兼容尚未更新的 Rust SDK 元数据。
         register_window: unsafe { mem::transmute(register) },
-        get_pointer_info: unsafe { mem::transmute(get_pointer_info) },
+        get_frame: unsafe { mem::transmute(get_frame) },
     })
 }
 
-fn touchpad_info_for_pointer(pointer_id: u32) -> Option<POINTER_TOUCH_INFO> {
-    if let Some(apis) = TOUCHPAD_APIS.get() {
-        let mut touchpad_info = POINTER_TOUCH_INFO::default();
-        if unsafe { (apis.get_pointer_info)(pointer_id, &mut touchpad_info) }.as_bool() {
-            return Some(touchpad_info);
-        }
-    }
+fn pointer_id(wparam: WPARAM) -> u32 {
+    (wparam.0 as u32) & 0xffff
+}
 
-    // Keep GetPointerInfo as a compatibility fallback for early preview builds.
-    // 为早期预览版保留 GetPointerInfo 兼容回退。
-    let mut pointer_info = POINTER_INFO::default();
-    if unsafe { GetPointerInfo(pointer_id, &mut pointer_info) }.is_err() {
+fn read_complete_frame(pointer_id: u32) -> Option<Vec<POINTER_TOUCH_INFO>> {
+    let apis = TOUCHPAD_APIS.get()?;
+    let mut count = 0_u32;
+    let _ = unsafe { (apis.get_frame)(pointer_id, &mut count, ptr::null_mut()) };
+    if count == 0 || count > 16 {
         return None;
     }
-    Some(POINTER_TOUCH_INFO {
-        pointerInfo: pointer_info,
-        ..Default::default()
+    let mut frame = vec![POINTER_TOUCH_INFO::default(); count as usize];
+    if !unsafe { (apis.get_frame)(pointer_id, &mut count, frame.as_mut_ptr()) }.as_bool() {
+        return None;
+    }
+    frame.truncate(count as usize);
+    Some(frame)
+}
+
+fn combined_geometry(contacts: &[TrackpadContact]) -> Option<(f64, f64, f64)> {
+    if contacts.len() != 2 {
+        return None;
+    }
+    let first = contacts[0];
+    let second = contacts[1];
+    Some((
+        f64::from(first.x + second.x) / 2.0,
+        f64::from(first.y + second.y) / 2.0,
+        f64::from(second.x - first.x).hypot(f64::from(second.y - first.y)),
+    ))
+}
+
+fn frame_event(hwnd: HWND, pointer_id: u32) -> Option<TrackpadFrameEvent> {
+    let frame = read_complete_frame(pointer_id)?;
+    let contacts: Vec<TrackpadContact> = frame
+        .iter()
+        .filter(|info| info.pointerInfo.pointerType == PT_TOUCHPAD)
+        .map(|info| TrackpadContact {
+            id: info.pointerInfo.pointerId,
+            x: info.pointerInfo.ptHimetricLocation.x,
+            y: info.pointerInfo.ptHimetricLocation.y,
+        })
+        .collect();
+    let (center_x, center_y, span) = combined_geometry(&contacts)?;
+    let pointer_info = frame.first()?.pointerInfo;
+    let mut cursor = pointer_info.ptPixelLocation;
+    let _ = unsafe { ScreenToClient(hwnd, &mut cursor) };
+    let window_scale = f64::from_bits(SCALE_FACTOR_BITS.load(Ordering::Relaxed)).max(0.5);
+    let pinch = PINCH_STATE.get_or_init(|| Mutex::new(PinchState::default()));
+    let mut pinch = pinch.lock().ok()?;
+    let phase = if pinch.active {
+        "update"
+    } else {
+        pinch.active = true;
+        pinch.initial_span = span.max(1.0);
+        "start"
+    };
+    pinch.last_frame_id = pointer_info.frameId;
+
+    Some(TrackpadFrameEvent {
+        phase,
+        frame_id: pointer_info.frameId,
+        contacts,
+        center_x,
+        center_y,
+        span,
+        scale: span / pinch.initial_span,
+        cursor_x: f64::from(cursor.x) / window_scale,
+        cursor_y: f64::from(cursor.y) / window_scale,
     })
+}
+
+fn end_event() -> Option<TrackpadFrameEvent> {
+    let pinch = PINCH_STATE.get_or_init(|| Mutex::new(PinchState::default()));
+    let mut pinch = pinch.lock().ok()?;
+    if !pinch.active {
+        return None;
+    }
+    pinch.active = false;
+    pinch.initial_span = 0.0;
+    Some(TrackpadFrameEvent {
+        phase: "end",
+        frame_id: pinch.last_frame_id,
+        contacts: Vec::new(),
+        center_x: 0.0,
+        center_y: 0.0,
+        span: 0.0,
+        scale: 1.0,
+        cursor_x: 0.0,
+        cursor_y: 0.0,
+    })
+}
+
+fn send_event(event: Option<TrackpadFrameEvent>) {
+    if let (Some(event), Some(sender)) = (event, EVENT_SENDER.get()) {
+        let _ = sender.send(event);
+    }
 }
 
 unsafe extern "system" fn trackpad_wnd_proc(
@@ -123,71 +216,14 @@ unsafe extern "system" fn trackpad_wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if matches!(message, WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP) {
-        let pointer_id = (wparam.0 as u32) & 0xffff;
-        if let Some(touchpad_info) = touchpad_info_for_pointer(pointer_id)
-            .filter(|touchpad_info| touchpad_info.pointerInfo.pointerType == PT_TOUCHPAD)
-        {
-            let pointer_info = touchpad_info.pointerInfo;
-            let cancelled =
-                (pointer_info.pointerFlags & POINTER_FLAG_CANCELED) != Default::default();
-            let phase = if cancelled {
-                "cancel"
-            } else {
-                match message {
-                    WM_POINTERDOWN => "down",
-                    WM_POINTERUP => "up",
-                    _ => "move",
-                }
-            };
-            let mut point = pointer_info.ptPixelLocation;
-            let _ = unsafe { ScreenToClient(hwnd, &mut point) };
-            let contacts = ACTIVE_CONTACTS.get_or_init(|| Mutex::new(HashSet::new()));
-            if let Ok(mut active) = contacts.lock() {
-                if message == WM_POINTERUP || cancelled {
-                    active.remove(&pointer_id);
-                } else {
-                    active.insert(pointer_id);
-                }
-                let scale = f64::from_bits(SCALE_FACTOR_BITS.load(Ordering::Relaxed)).max(0.5);
-                if let Some(sender) = EVENT_SENDER.get() {
-                    let _ = sender.send(TrackpadContactEvent {
-                        phase,
-                        pointer_id,
-                        contact_count: active.len(),
-                        x: f64::from(point.x) / scale,
-                        y: f64::from(point.y) / scale,
-                        // Device-relative HIMETRIC coordinates expose the distance
-                        // between fingers; pixel coordinates intentionally stay at
-                        // the mouse cursor for the whole touchpad gesture.
-                        // HIMETRIC 是触控板设备坐标，可用于计算双指间距；像素坐标则
-                        // 在整个手势期间固定为鼠标位置，不能用于捏合比例。
-                        physical_x: pointer_info.ptHimetricLocation.x,
-                        physical_y: pointer_info.ptHimetricLocation.y,
-                        timestamp_ms: pointer_info.dwTime,
-                    });
-                }
-            }
+    match message {
+        WM_POINTERDOWN | WM_POINTERUPDATE => {
+            send_event(frame_event(hwnd, pointer_id(wparam)));
         }
-    } else if message == WM_POINTERCAPTURECHANGED {
-        // 驱动或窗口焦点中断时清理全部接触点，避免下一次手势继承陈旧状态。
-        // Clear stale contacts after capture loss so the next gesture starts cleanly.
-        let contacts = ACTIVE_CONTACTS.get_or_init(|| Mutex::new(HashSet::new()));
-        if let Ok(mut active) = contacts.lock() {
-            active.clear();
+        WM_POINTERUP | WM_POINTERCAPTURECHANGED => {
+            send_event(end_event());
         }
-        if let Some(sender) = EVENT_SENDER.get() {
-            let _ = sender.send(TrackpadContactEvent {
-                phase: "cancel",
-                pointer_id: (wparam.0 as u32) & 0xffff,
-                contact_count: 0,
-                x: 0.0,
-                y: 0.0,
-                physical_x: 0,
-                physical_y: 0,
-                timestamp_ms: 0,
-            });
-        }
+        _ => {}
     }
 
     let original = ORIGINAL_WNDPROC.get().copied().unwrap_or_default();
@@ -198,8 +234,8 @@ unsafe extern "system" fn trackpad_wnd_proc(
     unsafe { CallWindowProcW(previous, hwnd, message, wparam, lparam) }
 }
 
-/// 注册观察型触控板输入；失败时 WebView 的标准缩放与触屏 PointerEvent 仍然可用。
-/// Registers observation-only touchpad input with safe web fallbacks on failure.
+/// 注册完整帧触控板输入；失败时 WebView 的标准缩放回退仍然可用。
+/// Registers complete-frame touchpad input with the WebView wheel fallback on failure.
 pub fn install(window: &WebviewWindow, app: AppHandle) -> Result<bool, String> {
     if ORIGINAL_WNDPROC.get().is_some() {
         return Ok(true);
@@ -212,10 +248,10 @@ pub fn install(window: &WebviewWindow, app: AppHandle) -> Result<bool, String> {
         .set(apis)
         .map_err(|_| "Precision Touchpad APIs are already registered".to_string())?;
 
-    let (sender, receiver) = mpsc::channel::<TrackpadContactEvent>();
+    let (sender, receiver) = mpsc::channel::<TrackpadFrameEvent>();
     EVENT_SENDER
         .set(sender)
-        .map_err(|_| "Trackpad event channel is already registered".to_string())?;
+        .map_err(|_| "Trackpad frame channel is already registered".to_string())?;
     std::thread::spawn(move || {
         while let Ok(event) = receiver.recv() {
             let _ = app.emit(EVENT_NAME, event);
@@ -231,8 +267,6 @@ pub fn install(window: &WebviewWindow, app: AppHandle) -> Result<bool, String> {
         .set(previous)
         .map_err(|_| "Trackpad window procedure is already registered".to_string())?;
 
-    // This is the supported Windows 11 opt-in for touchpad pan/zoom WM_POINTER input.
-    // 这是 Windows 11 为触控板平移/缩放 WM_POINTER 提供的受支持入口。
     let registered = unsafe { (apis.register_window)(hwnd, true.into()) }.as_bool();
     if !registered {
         let error_code = unsafe { GetLastError() }.0;
@@ -244,4 +278,27 @@ pub fn install(window: &WebviewWindow, app: AppHandle) -> Result<bool, String> {
         ));
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{combined_geometry, TrackpadContact};
+
+    #[test]
+    fn combines_both_axes_and_span_from_one_native_frame() {
+        let contacts = [
+            TrackpadContact {
+                id: 1,
+                x: 10,
+                y: 20,
+            },
+            TrackpadContact {
+                id: 2,
+                x: 40,
+                y: 60,
+            },
+        ];
+        assert_eq!(combined_geometry(&contacts), Some((25.0, 40.0, 50.0)));
+        assert_eq!(combined_geometry(&contacts[..1]), None);
+    }
 }

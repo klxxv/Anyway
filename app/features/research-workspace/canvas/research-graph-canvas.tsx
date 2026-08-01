@@ -25,9 +25,11 @@ import type {
   ResearchNodeType,
 } from "../../../lib/research-types";
 import type { ResolvedPluginContextMenuAction } from "../../../plugins/context-menu";
-import { listenForNativeTrackpadContacts } from "../../../platform/trackpad";
 import {
-  measurePhysicalPinchSpan,
+  listenForNativeTrackpadFrames,
+  type NativeTrackpadFrame,
+} from "../../../platform/trackpad";
+import {
   viewportForNativeTrackpadPinch,
   viewportForTrackpadWheel,
   type GesturePoint,
@@ -171,11 +173,20 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance<WorkspaceNode, WorkspaceEdge> | null>(null);
   const nativePinchRef = useRef<{
-    contacts: Map<number, GesturePoint>;
-    originSpan: number | null;
+    latestFrame: NativeTrackpadFrame | null;
     originViewport: GestureViewport | null;
     anchor: GesturePoint | null;
-  }>({ contacts: new Map(), originSpan: null, originViewport: null, anchor: null });
+    originScale: number;
+    animationFrame: number | null;
+    ending: boolean;
+  }>({
+    latestFrame: null,
+    originViewport: null,
+    anchor: null,
+    originScale: 1,
+    animationFrame: null,
+    ending: false,
+  });
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
@@ -335,53 +346,67 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     let cancelled = false;
     let stop: () => void = () => undefined;
     const nativePinch = nativePinchRef.current;
-    void listenForNativeTrackpadContacts((contact) => {
-      const gesture = nativePinch;
-      if (contact.phase === "cancel" || contact.phase === "up") {
-        gesture.contacts.clear();
-        gesture.originSpan = null;
-        gesture.originViewport = null;
-        gesture.anchor = null;
-        return;
+    const reset = () => {
+      nativePinch.latestFrame = null;
+      nativePinch.originViewport = null;
+      nativePinch.anchor = null;
+      nativePinch.originScale = 1;
+      nativePinch.animationFrame = null;
+      nativePinch.ending = false;
+    };
+    const applyLatestFrame = () => {
+      nativePinch.animationFrame = null;
+      const frame = nativePinch.latestFrame;
+      const originViewport = nativePinch.originViewport;
+      const anchor = nativePinch.anchor;
+      const instance = flowRef.current;
+      nativePinch.latestFrame = null;
+      if (frame && originViewport && anchor && instance) {
+        const relativeScale = frame.scale / nativePinch.originScale;
+        if (Math.abs(relativeScale - 1) >= 0.003) {
+          void instance.setViewport(
+            viewportForNativeTrackpadPinch(originViewport, anchor, 1, relativeScale),
+          );
+        }
       }
+      if (nativePinch.ending) reset();
+    };
+    const scheduleLatestFrame = () => {
+      if (nativePinch.animationFrame !== null) return;
+      nativePinch.animationFrame = window.requestAnimationFrame(applyLatestFrame);
+    };
+
+    void listenForNativeTrackpadFrames((frame) => {
       const bounds = wrapperRef.current?.getBoundingClientRect();
       const instance = flowRef.current;
       if (!bounds || !instance) return;
-      if (contact.phase === "down" && contact.contactCount === 1) {
-        gesture.contacts.clear();
-      }
-      gesture.contacts.set(contact.pointerId, {
-        x: contact.physicalX,
-        y: contact.physicalY,
-      });
-      const span = measurePhysicalPinchSpan([...gesture.contacts.values()]);
-      if (span === null || span <= 0) return;
-      if (!gesture.originSpan || !gesture.originViewport || !gesture.anchor) {
-        gesture.originSpan = span;
-        gesture.originViewport = instance.getViewport();
-        gesture.anchor = {
-          x: contact.x - bounds.left,
-          y: contact.y - bounds.top,
+      if (frame.phase === "start" || !nativePinch.originViewport || !nativePinch.anchor) {
+        nativePinch.originViewport = instance.getViewport();
+        nativePinch.anchor = {
+          x: frame.cursorX - bounds.left,
+          y: frame.cursorY - bounds.top,
         };
+        nativePinch.originScale = frame.scale > 0 ? frame.scale : 1;
+        nativePinch.ending = false;
+      }
+      if (frame.phase === "end") {
+        nativePinch.ending = true;
+        if (nativePinch.latestFrame) scheduleLatestFrame();
+        else reset();
         return;
       }
-      const ratio = span / gesture.originSpan;
-      if (Math.abs(ratio - 1) < 0.003) return;
-      void instance.setViewport(
-        viewportForNativeTrackpadPinch(
-          gesture.originViewport,
-          gesture.anchor,
-          gesture.originSpan,
-          span,
-        ),
-      );
+      nativePinch.latestFrame = frame;
+      scheduleLatestFrame();
     }).then((unlisten) => {
       if (cancelled) unlisten();
       else stop = unlisten;
     });
     return () => {
       cancelled = true;
-      nativePinch.contacts.clear();
+      if (nativePinch.animationFrame !== null) {
+        window.cancelAnimationFrame(nativePinch.animationFrame);
+      }
+      reset();
       stop();
     };
   }, []);

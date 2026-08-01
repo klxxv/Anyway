@@ -8,7 +8,7 @@ Comments intentionally avoid narrating obvious JSX or TypeScript line by line, b
 comments become stale and reduce signal.
 
 The redesigned workspace follows the same policy. Its public entrypoint, composition root,
-state hook, touch gesture hook, graph canvas, renderers, fixture, dialogs, inspector, top bar,
+state hook, native pinch bridge, graph canvas, renderers, fixture, dialogs, inspector, top bar,
 and radial menu each document their responsibility in both languages.
 
 ## TODOs still worth keeping
@@ -36,7 +36,7 @@ and radial menu each document their responsibility in both languages.
 | `use-workspace-project.ts` | Medium | Owns persistence, history, and mutations but no rendering. | Split persistence adapter only if remote storage is added. |
 | Graph canvas and renderers | Medium | React Flow-specific state is isolated from domain records. | Keep React Flow types inside the canvas boundary. |
 | Inspector/dialog/top-bar components | Low | Presentational components receive typed data and callbacks. | Continue adding behavior through props or focused hooks. |
-| `trackpad-pinch.ts` | Low | Native and browser pinch math is isolated from the canvas UI. | Add hardware-in-loop tests when Precision Touchpad automation becomes available. |
+| `trackpad.rs` + `trackpad-pinch.ts` | Medium | Rust emits one atomic two-contact frame; the UI consumes only composed scale through rAF. | Keep the standalone hardware demo as the platform acceptance gate. |
 | Tailwind tokens and component CSS | Medium | Global tokens are centralized; React Flow and pie geometry require named class contracts. | Keep complex third-party overrides in the dedicated component layer. |
 | Tauri client and Rust installer | Medium | IPC is isolated from graph semantics but spans a browser/Rust boundary. | Add end-to-end installer and error cleanup tests. |
 

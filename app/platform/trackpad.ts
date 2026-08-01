@@ -1,25 +1,25 @@
-export type NativeTrackpadContact = {
-  phase: "down" | "move" | "up" | "cancel";
-  pointerId: number;
-  contactCount: number;
-  x: number;
-  y: number;
-  /** Device-relative HIMETRIC coordinates used to calculate physical pinch distance. */
-  physicalX: number;
-  physicalY: number;
-  timestampMs: number;
+export type NativeTrackpadFrame = {
+  phase: "start" | "update" | "end";
+  frameId: number;
+  contacts: Array<{ id: number; x: number; y: number }>;
+  centerX: number;
+  centerY: number;
+  span: number;
+  scale: number;
+  cursorX: number;
+  cursorY: number;
 };
 
 /**
- * 仅在 Tauri/Windows 提供原始触控板事件；浏览器继续使用标准 PointerEvent。
- * Uses native contacts only when Tauri exposes them; browsers retain PointerEvent fallbacks.
+ * 仅在 Tauri/Windows 监听原子化完整触控板帧；浏览器继续使用 WheelEvent 回退。
+ * Listens for atomic complete touchpad frames only in Tauri/Windows.
  */
-export async function listenForNativeTrackpadContacts(
-  handler: (contact: NativeTrackpadContact) => void,
+export async function listenForNativeTrackpadFrames(
+  handler: (frame: NativeTrackpadFrame) => void,
 ): Promise<() => void> {
   if (!("__TAURI_INTERNALS__" in window)) return () => undefined;
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<NativeTrackpadContact>("research-canvas://trackpad-contact", (event) => {
+  return listen<NativeTrackpadFrame>("research-canvas://trackpad-frame", (event) => {
     handler(event.payload);
   });
 }
