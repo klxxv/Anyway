@@ -6,7 +6,11 @@ import {
   IconArrowUp,
   IconCheck,
   IconFileText,
+  IconFileImport,
+  IconDeviceFloppy,
   IconFolder,
+  IconFolderOpen,
+  IconGitBranch,
   IconHistory,
   IconKeyboard,
   IconLayoutGrid,
@@ -512,12 +516,20 @@ export function ProjectMenu({
   onReset,
   onSettings,
   onPlugins,
+  onSaveProject,
+  onImportProject,
+  onFolderWorkspace,
+  onGitWorkspace,
 }: {
   project: ProjectState;
   onClose: () => void;
   onReset: () => void;
   onSettings: () => void;
   onPlugins: () => void;
+  onSaveProject: () => void;
+  onImportProject: () => void;
+  onFolderWorkspace?: () => void;
+  onGitWorkspace?: () => void;
 }) {
   const { t } = useI18n();
   const [closing, setClosing] = useState(false);
@@ -541,7 +553,7 @@ export function ProjectMenu({
           <IconX size={18} stroke={1.35} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <p className="font-sans text-[9px] uppercase tracking-[0.16em] text-ink/45">
           {t("workspace.currentStudy")}
         </p>
@@ -555,6 +567,40 @@ export function ProjectMenu({
             {t("workspace.relations")}
           </p>
         </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button className="button-secondary justify-center" onClick={onSaveProject}>
+            <IconDeviceFloppy size={15} stroke={1.35} />
+            {t("workspace.saveProject")}
+          </button>
+          <button className="button-secondary justify-center" onClick={onImportProject}>
+            <IconFileImport size={15} stroke={1.35} />
+            {t("workspace.importProject")}
+          </button>
+        </div>
+
+        {(onFolderWorkspace || onGitWorkspace) && (
+          <div className="mt-4 space-y-1 border-t border-ink/12 pt-4">
+            {onFolderWorkspace && (
+              <button
+                className="flex w-full items-center gap-3 rounded-[4px] px-2 py-2.5 text-left hover:bg-blue-soft"
+                onClick={onFolderWorkspace}
+              >
+                <IconFolderOpen size={18} stroke={1.35} />
+                <span className="font-serif text-[13px]">{t("workspace.folderMode")}</span>
+              </button>
+            )}
+            {onGitWorkspace && (
+              <button
+                className="flex w-full items-center gap-3 rounded-[4px] px-2 py-2.5 text-left hover:bg-blue-soft"
+                onClick={onGitWorkspace}
+              >
+                <IconGitBranch size={18} stroke={1.35} />
+                <span className="font-serif text-[13px]">{t("workspace.gitWorkspace")}</span>
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="mt-6 space-y-1">
           {[
@@ -654,7 +700,7 @@ export function SettingsDialog({
   onClose: () => void;
   onSave: (preferences: WorkspacePreferences) => void;
 }) {
-  const { locale, setLocale, t } = useI18n();
+  const { availableLocales, locale, setLocale, t } = useI18n();
   const [section, setSection] = useState<SettingsSection>("interface");
   const [draft, setDraft] = useState(preferences);
   const [recordingShortcut, setRecordingShortcut] = useState<ShortcutAction | null>(null);
@@ -839,13 +885,14 @@ export function SettingsDialog({
                     {t("settings.language")}
                   </p>
                   <div className="mt-2 flex gap-2">
-                    {(["en", "zh-CN"] as const).map((candidate) => (
+                    {availableLocales.map((candidate) => (
                       <button
-                        key={candidate}
-                        className={locale === candidate ? "button-primary" : "button-secondary"}
-                        onClick={() => setLocale(candidate)}
+                        key={candidate.locale}
+                        className={locale === candidate.locale ? "button-primary" : "button-secondary"}
+                        onClick={() => setLocale(candidate.locale)}
+                        title={candidate.source === "plugin" ? "Community i18n plugin" : undefined}
                       >
-                        {candidate === "en" ? t("settings.english") : t("settings.chinese")}
+                        {candidate.name}
                       </button>
                     ))}
                   </div>

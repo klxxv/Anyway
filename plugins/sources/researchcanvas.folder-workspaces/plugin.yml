@@ -1,0 +1,23 @@
+apiVersion: researchcanvas.dev/v1alpha1
+kind: WorkspacePlugin
+metadata:
+  id: researchcanvas.folder-workspaces
+  name: Folder Workspaces
+  version: 1.0.0
+  publisher: Research Canvas
+  developer: Workspace Platform Team
+  description: Scans a selected folder for Research Canvas projects and presents them as one workspace.
+  license: MIT
+spec:
+  engine: host-mediated
+  entry: workspace-plugin.json
+  capabilities:
+    - project.folder
+  permissions: []
+  contributes:
+    commands:
+      - id: open-folder-workspace
+        label: Open project folder
+        description: Index .mycproj and compatible JSON projects below a selected folder.
+        category: folder
+        capability: project.folder

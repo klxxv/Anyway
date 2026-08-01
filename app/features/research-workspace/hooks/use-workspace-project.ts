@@ -8,6 +8,8 @@ import type {
   ResearchEdgeType,
   ResearchNodeType,
 } from "../../../lib/research-types";
+import { EDGE_TYPES, NODE_TYPES } from "../../../lib/research-types";
+import type { PluginGraphPatch } from "../../../plugins/contracts";
 import {
   projectForLegendFilter,
   type LinkLegendFilter,
@@ -333,6 +335,132 @@ export function useWorkspaceProject() {
     setFuture([]);
   }, []);
 
+  /** Replaces the aggregate after native import while preserving one undo checkpoint. */
+  const replaceProject = useCallback((nextProject: ProjectState, label = "Import project") => {
+    setProject((current) => {
+      setPast((entries) => [
+        ...entries.slice(-39),
+        { project: cloneProject(current), label },
+      ]);
+      setFuture([]);
+      return cloneProject(nextProject);
+    });
+    setSelectedNodeId(nextProject.nodes[0]?.id ?? "");
+    setSelectedEdgeId("");
+  }, []);
+
+  /** Applies a previously reviewed portable GraphPatch; plugins never mutate this store directly. */
+  const applyGraphPatch = useCallback(
+    (patch: PluginGraphPatch) => {
+      commit(`Apply plugin patch: ${patch.title}`, (draft) => {
+        const now = new Date().toISOString();
+        const phase = { "add-node": 0, "update-node": 1, "add-edge": 2, "update-edge": 3 } as const;
+        const operations = [...patch.operations].sort(
+          (left, right) => phase[left.op] - phase[right.op],
+        );
+        for (const operation of operations) {
+          if (operation.op === "add-node") {
+            if (draft.nodes.some((node) => node.id === operation.node.id)) continue;
+            if (!NODE_TYPES.includes(operation.node.type as (typeof NODE_TYPES)[number])) continue;
+            const index = draft.nodes.length;
+            draft.nodes.push({
+              id: operation.node.id,
+              type: operation.node.type as ResearchNodeType,
+              title: operation.node.title,
+              body: operation.node.body ?? "Imported through a reviewed plugin GraphPatch.",
+              tags: operation.node.tags ?? [],
+              status: "draft",
+              evidenceIds: [],
+              data: operation.node.data ?? {},
+              provenance: {
+                origin: "import",
+                actorId: patch.source.pluginId,
+                sourceRefs: patch.source.externalId ? [patch.source.externalId] : [],
+              },
+              createdAt: now,
+              updatedAt: now,
+            });
+            draft.placements.push({
+              id: `placement-${operation.node.id}`,
+              viewId: "view-main",
+              nodeId: operation.node.id,
+              x: 120 + (index % 5) * 220,
+              y: 140 + Math.floor(index / 5) * 160,
+              width: operation.node.type === "question" ? 136 : 176,
+              height: operation.node.type === "question" ? 136 : 118,
+            });
+          } else if (operation.op === "add-edge") {
+            if (
+              draft.edges.some((edge) => edge.id === operation.edge.id) ||
+              !EDGE_TYPES.includes(operation.edge.type as (typeof EDGE_TYPES)[number]) ||
+              !draft.nodes.some((node) => node.id === operation.edge.source) ||
+              !draft.nodes.some((node) => node.id === operation.edge.target)
+            ) {
+              continue;
+            }
+            draft.edges.push({
+              id: operation.edge.id,
+              type: operation.edge.type as ResearchEdgeType,
+              source: operation.edge.source,
+              target: operation.edge.target,
+              directed: true,
+              polarity: operation.edge.type === "contradicts" ? "negative" : "positive",
+              conditions: [],
+              evidenceIds: [],
+              note: operation.edge.note,
+              provenance: { origin: "import", actorId: patch.source.pluginId },
+            });
+          } else if (operation.op === "update-node") {
+            const node = draft.nodes.find((item) => item.id === operation.nodeId);
+            if (node) {
+              if (typeof operation.changes.title === "string") node.title = operation.changes.title;
+              if (typeof operation.changes.body === "string") node.body = operation.changes.body;
+              if (
+                Array.isArray(operation.changes.tags) &&
+                operation.changes.tags.every((tag) => typeof tag === "string")
+              ) {
+                node.tags = operation.changes.tags;
+              }
+              if (
+                operation.changes.data &&
+                typeof operation.changes.data === "object" &&
+                !Array.isArray(operation.changes.data)
+              ) {
+                node.data = { ...node.data, ...operation.changes.data };
+              }
+              node.updatedAt = now;
+            }
+          } else if (operation.op === "update-edge") {
+            const edge = draft.edges.find((item) => item.id === operation.edgeId);
+            if (edge) {
+              if (typeof operation.changes.note === "string") edge.note = operation.changes.note;
+              if (
+                typeof operation.changes.type === "string" &&
+                EDGE_TYPES.includes(operation.changes.type as ResearchEdgeType)
+              ) {
+                edge.type = operation.changes.type as ResearchEdgeType;
+              }
+              if (
+                typeof operation.changes.confidence === "number" &&
+                operation.changes.confidence >= 0 &&
+                operation.changes.confidence <= 1
+              ) {
+                edge.confidence = operation.changes.confidence;
+              }
+            }
+          }
+        }
+        draft.activity.push({
+          id: makeId("activity"),
+          label: `${patch.title} · ${patch.operations.length} proposed operations`,
+          origin: "import",
+          createdAt: now,
+        });
+      });
+    },
+    [commit],
+  );
+
   return {
     project,
     selectedNode,
@@ -356,6 +484,8 @@ export function useWorkspaceProject() {
     undo,
     redo,
     resetDemo,
+    replaceProject,
+    applyGraphPatch,
   };
 }
 

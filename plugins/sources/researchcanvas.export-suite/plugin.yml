@@ -1,0 +1,24 @@
+apiVersion: researchcanvas.dev/v1alpha1
+kind: WorkspacePlugin
+metadata:
+  id: researchcanvas.export-suite
+  name: Export Suite
+  version: 1.0.0
+  publisher: Research Canvas
+  developer: Workspace Platform Team
+  description: Exports the current research graph as PDF, SVG, or PNG through a user-selected path.
+  license: MIT
+spec:
+  engine: host-mediated
+  entry: workspace-plugin.json
+  capabilities:
+    - project.export
+  permissions: []
+  contributes:
+    commands:
+      - id: export-artifacts
+        label: Export PDF / SVG / PNG
+        description: Render the current project through the bounded vector export host.
+        category: export
+        capability: project.export
+        formats: [pdf, svg, png]

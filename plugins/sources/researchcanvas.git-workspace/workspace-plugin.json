@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "mode": "git",
+  "testFixture": "pinn-architecture",
+  "config": {
+    "autoSaveSeconds": 300,
+    "projectDirectory": ".research-canvas",
+    "directives": ["canvas-node:", "canvas-edge:", "ablation:"],
+    "graphPatchReviewRequired": true
+  }
+}

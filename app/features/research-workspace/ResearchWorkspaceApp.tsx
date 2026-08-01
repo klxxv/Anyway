@@ -9,6 +9,22 @@ import type {
 } from "../../lib/research-types";
 import { useI18n } from "../../i18n/provider";
 import {
+  exportProjectWithPlugin,
+  gitAutosaveProject,
+  importProjectAtPath,
+  importProjectNative,
+  openFolderWorkspace,
+  openGitWorkspace,
+  saveProjectNative,
+  type FolderProjectSummary,
+  type GitWorkspaceSnapshot,
+} from "../../platform/native-project";
+import {
+  normalizePluginGraphPatch,
+  workspaceCommandsFromPlugins,
+  type EnabledWorkspaceCommand,
+} from "../../plugins/workspace";
+import {
   contextMenuContributionsFromPlugins,
   pluginsChangedEvent,
   readEnabledPluginKeys,
@@ -21,6 +37,10 @@ import {
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
 import { InspectorPanel } from "./components/inspector-panel";
 import { PluginStoreDialog } from "./components/plugin-store-dialog";
+import {
+  FolderWorkspaceDialog,
+  GitWorkspaceDialog,
+} from "./components/workspace-plugin-dialogs";
 import {
   NodeComposer,
   ProjectMenu,
@@ -80,6 +100,14 @@ export function ResearchWorkspaceApp() {
   );
   const [installedPlugins, setInstalledPlugins] = useState<InstalledMycPlugin[]>([]);
   const [enabledPluginKeys, setEnabledPluginKeys] = useState<Set<string>>(new Set());
+  const [folderWorkspace, setFolderWorkspace] = useState<{
+    root: string;
+    projects: FolderProjectSummary[];
+  } | null>(null);
+  const [gitSnapshot, setGitSnapshot] = useState<GitWorkspaceSnapshot | null>(null);
+  const [gitCommand, setGitCommand] = useState<EnabledWorkspaceCommand | null>(null);
+  const [gitAutoSave, setGitAutoSave] = useState(false);
+  const [pluginBusy, setPluginBusy] = useState(false);
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
@@ -91,6 +119,18 @@ export function ResearchWorkspaceApp() {
         ? contextMenuContributionsFromPlugins(installedPlugins, enabledPluginKeys)
         : [],
     [enabledPluginKeys, installedPlugins, preferences.showPluginContextMenuActions],
+  );
+
+  const workspaceCommands = useMemo(
+    () => workspaceCommandsFromPlugins(installedPlugins, enabledPluginKeys),
+    [enabledPluginKeys, installedPlugins],
+  );
+  const exportCommand = workspaceCommands.find((command) => command.category === "export");
+  const folderCommand = workspaceCommands.find((command) => command.category === "folder");
+  const availableGitCommand = workspaceCommands.find((command) => command.category === "git");
+  const gitPatch = useMemo(
+    () => normalizePluginGraphPatch(gitSnapshot?.graphPatch),
+    [gitSnapshot?.graphPatch],
   );
 
   const requestCreate = useCallback(
@@ -125,6 +165,94 @@ export function ResearchWorkspaceApp() {
 
   const exportProject = useCallback(() => downloadProject(workspace.project), [workspace.project]);
 
+  const saveProject = useCallback(async () => {
+    try {
+      const result = await saveProjectNative(workspace.project);
+      if (result) {
+        setNotice(t("workspace.projectSaved"));
+        setMenuOpen(false);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "DESKTOP_REQUIRED") {
+        downloadProject(workspace.project);
+        setNotice(t("workspace.projectSaved"));
+        setMenuOpen(false);
+        return;
+      }
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [t, workspace.project]);
+
+  const importProject = useCallback(async () => {
+    try {
+      const result = await importProjectNative();
+      if (!result) return;
+      workspace.replaceProject(result.project, t("workspace.importProject"));
+      setMenuOpen(false);
+      setLayoutMode(null);
+      setLinkFilter(null);
+      setNotice(t("workspace.projectImported"));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [t, workspace]);
+
+  const runPluginExport = useCallback(
+    async (format: "pdf" | "svg" | "png") => {
+      if (!exportCommand) return;
+      try {
+        const path = await exportProjectWithPlugin(workspace.project, exportCommand, format);
+        if (path) setNotice(`${format.toUpperCase()} · ${t("workspace.exportComplete")}`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [exportCommand, t, workspace.project],
+  );
+
+  const openFolder = useCallback(async () => {
+    if (!folderCommand) return;
+    try {
+      const result = await openFolderWorkspace(folderCommand);
+      if (!result) return;
+      setMenuOpen(false);
+      setFolderWorkspace({ root: result.path, projects: result.projects });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [folderCommand]);
+
+  const openGit = useCallback(async () => {
+    if (!availableGitCommand) return;
+    try {
+      const snapshot = await openGitWorkspace(availableGitCommand);
+      if (!snapshot) return;
+      setMenuOpen(false);
+      setGitCommand(availableGitCommand);
+      setGitSnapshot(snapshot);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [availableGitCommand]);
+
+  const saveGitSnapshot = useCallback(async () => {
+    if (!gitCommand || !gitSnapshot || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      const snapshot = await gitAutosaveProject(
+        gitCommand,
+        gitSnapshot.repoPath,
+        workspace.project,
+      );
+      setGitSnapshot(snapshot);
+      setNotice(t("workspace.gitSnapshotSaved"));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [gitCommand, gitSnapshot, pluginBusy, t, workspace.project]);
+
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       const saved = window.localStorage.getItem(preferencesStorageKey);
@@ -146,9 +274,13 @@ export function ResearchWorkspaceApp() {
     let cancelled = false;
     const refreshPlugins = () => {
       setEnabledPluginKeys(readEnabledPluginKeys());
-      void listInstalledMycPlugins().then((plugins) => {
-        if (!cancelled) setInstalledPlugins(plugins);
-      });
+      void listInstalledMycPlugins()
+        .then((plugins) => {
+          if (!cancelled) setInstalledPlugins(plugins);
+        })
+        .catch(() => {
+          if (!cancelled) setInstalledPlugins([]);
+        });
     };
     refreshPlugins();
     window.addEventListener(pluginsChangedEvent, refreshPlugins);
@@ -157,6 +289,14 @@ export function ResearchWorkspaceApp() {
       window.removeEventListener(pluginsChangedEvent, refreshPlugins);
     };
   }, []);
+
+  useEffect(() => {
+    if (!gitAutoSave || !gitCommand || !gitSnapshot) return;
+    const timer = window.setInterval(() => {
+      void saveGitSnapshot();
+    }, 300_000);
+    return () => window.clearInterval(timer);
+  }, [gitAutoSave, gitCommand, gitSnapshot, saveGitSnapshot]);
 
   useEffect(() => {
     const runShortcut = (event: KeyboardEvent) => {
@@ -275,6 +415,8 @@ export function ResearchWorkspaceApp() {
         onUndo={workspace.undo}
         onRedo={workspace.redo}
         onExport={exportProject}
+        exportFormats={exportCommand?.formats}
+        onExportFormat={exportCommand ? runPluginExport : undefined}
       />
 
       <div
@@ -445,6 +587,10 @@ export function ResearchWorkspaceApp() {
             setMenuOpen(false);
             setPluginStoreOpen(true);
           }}
+          onSaveProject={() => void saveProject()}
+          onImportProject={() => void importProject()}
+          onFolderWorkspace={folderCommand ? () => void openFolder() : undefined}
+          onGitWorkspace={availableGitCommand ? () => void openGit() : undefined}
           onReset={() => {
             workspace.resetDemo();
             setLayoutMode(null);
@@ -471,6 +617,46 @@ export function ResearchWorkspaceApp() {
       )}
       {pluginStoreOpen && (
         <PluginStoreDialog onClose={() => setPluginStoreOpen(false)} />
+      )}
+      {folderWorkspace && (
+        <FolderWorkspaceDialog
+          root={folderWorkspace.root}
+          projects={folderWorkspace.projects}
+          onClose={() => setFolderWorkspace(null)}
+          onOpen={(path) => {
+            void importProjectAtPath(path)
+              .then((result) => {
+                workspace.replaceProject(result.project, t("workspace.importProject"));
+                setFolderWorkspace(null);
+                setLayoutMode(null);
+                setLinkFilter(null);
+                setNotice(t("workspace.projectImported"));
+              })
+              .catch((error: unknown) => {
+                setNotice(error instanceof Error ? error.message : String(error));
+              });
+          }}
+        />
+      )}
+      {gitSnapshot && (
+        <GitWorkspaceDialog
+          snapshot={gitSnapshot}
+          autoSave={gitAutoSave}
+          busy={pluginBusy}
+          patch={gitPatch}
+          onClose={() => {
+            setGitSnapshot(null);
+            setGitCommand(null);
+            setGitAutoSave(false);
+          }}
+          onToggleAutoSave={setGitAutoSave}
+          onSaveNow={() => void saveGitSnapshot()}
+          onApplyPatch={() => {
+            if (!gitPatch) return;
+            workspace.applyGraphPatch(gitPatch);
+            setNotice(t("workspace.patchApplied"));
+          }}
+        />
       )}
       {searchOpen && (
         <SearchPalette

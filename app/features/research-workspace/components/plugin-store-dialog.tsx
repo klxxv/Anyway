@@ -5,10 +5,12 @@ import {
   IconCheck,
   IconCode,
   IconDatabaseImport,
+  IconFolder,
   IconPlayerPlay,
   IconPlugConnected,
   IconRefresh,
   IconShieldCheck,
+  IconWorld,
   IconX,
 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -26,7 +28,7 @@ import {
   listInstalledMycPlugins,
 } from "../../../plugins/tauri-client";
 
-type StoreFilter = "all" | "installed" | "runtime";
+type StoreFilter = "all" | "installed" | "runtime" | "workspace" | "locales";
 
 function pluginKey(plugin: InstalledMycPlugin) {
   return `${plugin.manifest.metadata.id}@${plugin.manifest.metadata.version}`;
@@ -98,6 +100,10 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
     () =>
       filter === "runtime"
         ? installed.filter((plugin) => plugin.runtime)
+        : filter === "workspace"
+          ? installed.filter((plugin) => plugin.workspace)
+          : filter === "locales"
+            ? installed.filter((plugin) => plugin.locales?.length)
         : installed,
     [filter, installed],
   );
@@ -150,6 +156,8 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
                 ["all", t("plugins.all"), IconBox],
                 ["installed", t("plugins.installed"), IconCheck],
                 ["runtime", t("plugins.runtime"), IconCode],
+                ["workspace", t("plugins.workspace"), IconFolder],
+                ["locales", t("plugins.locales"), IconWorld],
               ] as const).map(([value, label, Icon]) => (
                 <button
                   key={value}
@@ -193,7 +201,7 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            {filter !== "installed" && filter !== "runtime" && (
+            {filter === "all" && (
               <section className="mt-6">
                 <h3 className="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
                   {t("plugins.builtInCatalog")}
@@ -260,6 +268,20 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
                               title={`${t("plugins.sha256")}: ${plugin.runtime.entrySha256}`}
                             >
                               {t("plugins.sha256")} · {plugin.runtime.entrySha256}
+                            </p>
+                          )}
+                          {plugin.workspace && (
+                            <p className="mt-1 font-serif text-[8px] text-ink/45">
+                              {(plugin.manifest.spec.contributes?.commands ?? [])
+                                .map((command) => command.label)
+                                .join(" · ")}
+                            </p>
+                          )}
+                          {plugin.locales && plugin.locales.length > 0 && (
+                            <p className="mt-1 font-serif text-[8px] text-ink/45">
+                              {plugin.locales
+                                .map((locale) => `${locale.name} (${locale.locale})`)
+                                .join(" · ")}
                             </p>
                           )}
                         </div>

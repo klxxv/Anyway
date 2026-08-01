@@ -11,9 +11,11 @@ ALLOWED_ROOT_FILES = {
     "plugin.yml",
     "theme.json",
     "edge-style.json",
+    "workspace-plugin.json",
     "README.md",
     "LICENSE",
 }
+ALLOWED_DIRECTORIES = {"locales"}
 
 
 def build(source: pathlib.Path, destination: pathlib.Path) -> None:
@@ -26,7 +28,12 @@ def build(source: pathlib.Path, destination: pathlib.Path) -> None:
     files = sorted(path for path in source.rglob("*") if path.is_file())
     for path in files:
         relative = path.relative_to(source)
-        if relative.parts[0] not in ALLOWED_ROOT_FILES:
+        root = relative.parts[0]
+        if root in ALLOWED_DIRECTORIES:
+            if len(relative.parts) != 2 or relative.suffix.lower() != ".json":
+                raise SystemExit(f"unsupported package entry: {relative.as_posix()}")
+            continue
+        if root not in ALLOWED_ROOT_FILES:
             raise SystemExit(f"unsupported package entry: {relative.as_posix()}")
 
     destination.parent.mkdir(parents=True, exist_ok=True)

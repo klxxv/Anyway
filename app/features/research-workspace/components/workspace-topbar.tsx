@@ -65,6 +65,8 @@ type WorkspaceTopbarProps = {
   onUndo: () => void;
   onRedo: () => void;
   onExport: () => void;
+  exportFormats?: Array<"pdf" | "svg" | "png">;
+  onExportFormat?: (format: "pdf" | "svg" | "png") => void;
 };
 
 type MenuOption<T extends string> = {
@@ -272,6 +274,8 @@ export function WorkspaceTopbar({
   onUndo,
   onRedo,
   onExport,
+  exportFormats = [],
+  onExportFormat,
 }: WorkspaceTopbarProps) {
   const { t } = useI18n();
   return (
@@ -358,17 +362,93 @@ export function WorkspaceTopbar({
           {t("workspace.redo")}
           <ShortcutTooltip binding={shortcuts.redo} />
         </button>
-        <button
-          className={`${commandClass(commandDensity)} border-l border-r-0`}
-          onClick={onExport}
-          aria-keyshortcuts={shortcutToAria(shortcuts.export)}
-        >
-          <IconFlag3 size={19} stroke={1.4} />
-          {t("workspace.export")}
-          <ShortcutTooltip binding={shortcuts.export} />
-        </button>
+        <ExportMenu
+          density={commandDensity}
+          hoverDelay={hoverDelay}
+          shortcut={shortcuts.export}
+          formats={exportFormats}
+          onPrimary={onExport}
+          onFormat={onExportFormat}
+        />
       </nav>
     </header>
+  );
+}
+
+function ExportMenu({
+  density,
+  hoverDelay,
+  shortcut,
+  formats,
+  onPrimary,
+  onFormat,
+}: {
+  density: CommandDensity;
+  hoverDelay: HoverDelay;
+  shortcut: string;
+  formats: Array<"pdf" | "svg" | "png">;
+  onPrimary: () => void;
+  onFormat?: (format: "pdf" | "svg" | "png") => void;
+}) {
+  const { t } = useI18n();
+  const disclosure = useHoverDisclosure(hoverDelay);
+  const hasPluginFormats = formats.length > 0 && Boolean(onFormat);
+  return (
+    <div
+      className="relative"
+      onMouseEnter={hasPluginFormats ? disclosure.openSoon : undefined}
+      onMouseLeave={hasPluginFormats ? disclosure.closeSoon : undefined}
+      onFocusCapture={() => {
+        if (!hasPluginFormats) return;
+        disclosure.clearTimer();
+        disclosure.setOpen(true);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) disclosure.setOpen(false);
+      }}
+    >
+      <button
+        className={`${commandClass(density)} border-l border-r-0`}
+        onClick={() => {
+          onPrimary();
+          disclosure.setOpen(false);
+        }}
+        aria-keyshortcuts={shortcutToAria(shortcut)}
+        aria-haspopup={hasPluginFormats ? "menu" : undefined}
+        aria-expanded={hasPluginFormats ? disclosure.open : undefined}
+      >
+        <IconFlag3 size={19} stroke={1.4} />
+        {t("workspace.export")}
+        {hasPluginFormats && <IconChevronDown size={13} stroke={1.35} />}
+        <ShortcutTooltip binding={shortcut} />
+      </button>
+      {hasPluginFormats && disclosure.open && (
+        <div
+          className="absolute right-2 top-[46px] z-[90] w-[220px] overflow-hidden rounded-[6px] border border-ink/25 bg-paper p-1.5 shadow-[0_14px_40px_rgba(30,32,35,.14)]"
+          role="menu"
+          aria-label={t("workspace.export")}
+        >
+          <div className="flex items-center justify-between px-3 pb-2 pt-1 font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
+            <span>{t("workspace.export")}</span>
+            {shortcut && <kbd className="shortcut-key">{shortcut}</kbd>}
+          </div>
+          {formats.map((format) => (
+            <button
+              key={format}
+              className="flex w-full items-center gap-3 rounded-[4px] px-3 py-2 text-left transition hover:bg-blue-soft hover:text-blue"
+              role="menuitem"
+              onClick={() => {
+                onFormat?.(format);
+                disclosure.setOpen(false);
+              }}
+            >
+              <IconFileText size={17} stroke={1.35} />
+              <span className="font-serif text-[12px]">{format.toUpperCase()}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

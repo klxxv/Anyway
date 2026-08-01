@@ -10,6 +10,8 @@ export const MYC_API_VERSION = "researchcanvas.dev/v1alpha1";
 export type MycPluginKind =
   | "ThemePlugin"
   | "EdgeStylePlugin"
+  | "WorkspacePlugin"
+  | "LocalePlugin"
   | "SourcePlugin"
   | "ConnectorPlugin"
   | "AnalysisPlugin"
@@ -52,6 +54,40 @@ export interface PluginContextMenuContribution {
 /** 插件只能声明菜单与自己的沙箱命令，不能直接持有 UI 回调 / Plugins declare sandbox commands, never UI callbacks. */
 export interface MycPluginContributions {
   contextMenus?: PluginContextMenuContribution[];
+  locales?: PluginLocaleContribution[];
+  commands?: PluginCommandContribution[];
+}
+
+/** 语言包是声明式数据，只能覆盖已知宿主消息键 / Locale bundles are declarative overlays for known host keys. */
+export interface PluginLocaleContribution {
+  locale: string;
+  name: string;
+  path: string;
+}
+
+export type PluginCommandCategory = "export" | "folder" | "git" | "import";
+
+/** 由宿主中介的命令元数据；执行时仍需复核命名能力 / Host-mediated metadata still requires its named capability. */
+export interface PluginCommandContribution {
+  id: string;
+  label: string;
+  description: string;
+  category: PluginCommandCategory;
+  capability: string;
+  formats?: Array<"pdf" | "svg" | "png">;
+}
+
+export interface InstalledPluginLocale {
+  locale: string;
+  name: string;
+  messages: Record<string, string>;
+}
+
+export interface WorkspacePluginDescriptor {
+  schemaVersion: 1;
+  mode: "export" | "folder" | "git";
+  testFixture?: string;
+  config?: Record<string, unknown>;
 }
 
 /**
@@ -71,6 +107,8 @@ export interface InstalledMycPlugin {
   theme?: ThemeManifest;
   edgeStyle?: EdgeStyleManifest;
   runtime?: MycPluginRuntime;
+  locales?: InstalledPluginLocale[];
+  workspace?: WorkspacePluginDescriptor;
 }
 
 export interface MycPluginRuntime {
@@ -85,6 +123,49 @@ export interface PluginExecutionResult {
   output: unknown;
   fuelConsumed: number;
   durationMs: number;
+}
+
+export type GraphPatchOperation =
+  | {
+      op: "add-node";
+      node: {
+        id: string;
+        type: string;
+        title: string;
+        body?: string;
+        tags?: string[];
+        data?: Record<string, unknown>;
+      };
+    }
+  | {
+      op: "add-edge";
+      edge: {
+        id: string;
+        source: string;
+        target: string;
+        type: string;
+        note?: string;
+        data?: Record<string, unknown>;
+      };
+    }
+  | { op: "update-node"; nodeId: string; changes: Record<string, unknown> }
+  | { op: "update-edge"; edgeId: string; changes: Record<string, unknown> };
+
+/**
+ * 可移植、需审阅的图谱同步协议 / Portable, review-gated graph synchronization contract.
+ * Torch/ONNX/社区适配器返回此结构；宿主永不暴露可变项目仓库引用。
+ */
+export interface PluginGraphPatch {
+  apiVersion: "researchcanvas.dev/graph-patch/v1alpha1";
+  source: {
+    pluginId: string;
+    operation: string;
+    externalId?: string;
+  };
+  title: string;
+  summary: string;
+  reviewRequired: true;
+  operations: GraphPatchOperation[];
 }
 
 /**

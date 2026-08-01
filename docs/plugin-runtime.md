@@ -29,8 +29,13 @@ bytes must be valid UTF-8 JSON.
 
 Every call creates a fresh VM instance and receives an immutable JSON request.
 There is no ambient graph, filesystem, network, clock, process, environment, or
-UI access. Future host capabilities must be added as named imports and approved
-individually; the current runtime rejects every import.
+UI access. The executable WASM runtime continues to reject every import.
+
+Filesystem, export, folder, Git, and i18n integrations are a separate,
+non-executable `WorkspacePlugin`/`LocalePlugin` path. A declarative command names
+a capability, and a fixed Rust command revalidates the installed package before
+performing that one bounded action. These capabilities are not WASM imports and
+cannot be used to escape the analysis VM.
 
 ## Enforced limits
 
@@ -51,6 +56,15 @@ during extraction. Installed executable metadata includes the entry SHA-256.
 
 Packages are currently local and unsigned. SHA-256 provides integrity identity,
 not publisher authentication; do not treat an unknown local package as trusted.
+
+## GraphPatch boundary
+
+Network extractors, including a future Torch block adapter, communicate through
+`researchcanvas.dev/graph-patch/v1alpha1`. The patch is a portable proposal,
+not an imperative callback: it has bounded operations, records plugin/external
+provenance, requires review, and is applied by the host store only after explicit
+user acceptance. This keeps model inspection, graph semantics, placement, and
+project persistence independently replaceable.
 
 ## Lifecycle
 

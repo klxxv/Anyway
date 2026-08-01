@@ -2,7 +2,9 @@
  * 类型化、本地优先的界面词条；研究数据本身保持原始语言。
  * Typed, local-first UI messages; research data itself retains its source language.
  */
-export type Locale = "en" | "zh-CN";
+export type BuiltinLocale = "en" | "zh-CN";
+/** English and Simplified Chinese ship with the app; any other BCP-47 tag comes from a plugin. */
+export type Locale = string;
 
 const en = {
   "app.name": "Research Canvas",
@@ -81,6 +83,27 @@ const en = {
   "workspace.restoreDemo": "Restore reference demo",
   "workspace.settings": "Settings",
   "workspace.pluginStore": "Plugin store",
+  "workspace.saveProject": "Save project",
+  "workspace.importProject": "Import project",
+  "workspace.projectSaved": "Project saved.",
+  "workspace.projectImported": "Project imported.",
+  "workspace.exportComplete": "export complete",
+  "workspace.folderMode": "Folder mode",
+  "workspace.folderProjects": "Projects in this folder",
+  "workspace.noFolderProjects": "No compatible projects were found in this folder.",
+  "workspace.openProject": "Open",
+  "workspace.gitWorkspace": "Git workspace",
+  "workspace.gitTree": "Git tree",
+  "workspace.gitDirty": "Uncommitted changes",
+  "workspace.gitClean": "Clean working tree",
+  "workspace.gitAutosave": "Timed autosave",
+  "workspace.gitAutosaveHint": "When enabled, save and commit only the project snapshot every five minutes.",
+  "workspace.gitSaveNow": "Save snapshot now",
+  "workspace.gitSnapshotSaved": "Git project snapshot saved.",
+  "workspace.patchOperations": "reviewable operations",
+  "workspace.noPatch": "No valid graph proposal was produced.",
+  "workspace.reviewApplyPatch": "Review and apply",
+  "workspace.patchApplied": "Reviewed graph proposal applied.",
   "workspace.nodes": "nodes",
   "workspace.relations": "relations",
   "workspace.sources": "sources",
@@ -165,6 +188,8 @@ const en = {
   "plugins.refresh": "Refresh",
   "plugins.noInstalled": "No installed .myc packages yet.",
   "plugins.runtime": "Sandboxed runtime",
+  "plugins.workspace": "Workspace",
+  "plugins.locales": "Languages",
   "plugins.runtimeHint": "Rust and C++ plugins run as capability-limited WebAssembly.",
   "plugins.all": "All plugins",
   "plugins.builtInCatalog": "Built-in catalog",
@@ -450,6 +475,27 @@ const zhCN: Record<MessageKey, string> = {
   "workspace.restoreDemo": "恢复参考示例",
   "workspace.settings": "设置",
   "workspace.pluginStore": "插件商店",
+  "workspace.saveProject": "保存项目",
+  "workspace.importProject": "导入项目",
+  "workspace.projectSaved": "项目已保存。",
+  "workspace.projectImported": "项目已导入。",
+  "workspace.exportComplete": "导出完成",
+  "workspace.folderMode": "文件夹模式",
+  "workspace.folderProjects": "文件夹中的项目",
+  "workspace.noFolderProjects": "此文件夹中没有兼容的项目。",
+  "workspace.openProject": "打开",
+  "workspace.gitWorkspace": "Git 工作区",
+  "workspace.gitTree": "Git 树",
+  "workspace.gitDirty": "存在未提交更改",
+  "workspace.gitClean": "工作树干净",
+  "workspace.gitAutosave": "定时自动保存",
+  "workspace.gitAutosaveHint": "启用后每五分钟仅保存并提交项目快照。",
+  "workspace.gitSaveNow": "立即保存快照",
+  "workspace.gitSnapshotSaved": "Git 项目快照已保存。",
+  "workspace.patchOperations": "项待审操作",
+  "workspace.noPatch": "插件没有生成有效的图谱提案。",
+  "workspace.reviewApplyPatch": "审阅并应用",
+  "workspace.patchApplied": "已应用审阅过的图谱提案。",
   "workspace.nodes": "个节点",
   "workspace.relations": "条关系",
   "workspace.sources": "个来源",
@@ -534,6 +580,8 @@ const zhCN: Record<MessageKey, string> = {
   "plugins.refresh": "刷新",
   "plugins.noInstalled": "尚未安装 .myc 插件包。",
   "plugins.runtime": "沙箱运行时",
+  "plugins.workspace": "工作区",
+  "plugins.locales": "语言",
   "plugins.runtimeHint": "Rust 与 C++ 插件以能力受限的 WebAssembly 运行。",
   "plugins.all": "全部插件",
   "plugins.builtInCatalog": "内置目录",
@@ -740,17 +788,33 @@ const zhCN: Record<MessageKey, string> = {
   "option.todo": "待办",
 };
 
-export const localeCatalog: Record<Locale, Record<MessageKey, string>> = {
+export const localeCatalog: Record<BuiltinLocale, Record<MessageKey, string>> = {
   en,
   "zh-CN": zhCN,
 };
 
 /** 将浏览器语言折叠到当前支持的集合 / Collapses browser language tags into the currently supported set. */
-export function normalizeLocale(value?: string | null): Locale {
-  return value?.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+export function normalizeLocale(
+  value?: string | null,
+  available: readonly string[] = ["en", "zh-CN"],
+): Locale {
+  if (!value) return "en";
+  const exact = available.find((locale) => locale.toLowerCase() === value.toLowerCase());
+  if (exact) return exact;
+  const language = value.toLowerCase().split("-")[0];
+  const languageMatch = available.find(
+    (locale) => locale.toLowerCase().split("-")[0] === language,
+  );
+  if (languageMatch) return languageMatch;
+  return value.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 }
 
 /** 以英文词条兜底，保证新增 UI 不会渲染空文案 / Falls back to English so new UI never renders an empty label. */
-export function translate(locale: Locale, key: MessageKey): string {
-  return localeCatalog[locale][key] ?? localeCatalog.en[key];
+export function translate(
+  locale: Locale,
+  key: MessageKey,
+  extensions: Readonly<Record<string, Partial<Record<MessageKey, string>>>> = {},
+): string {
+  const builtin = localeCatalog[locale as BuiltinLocale];
+  return extensions[locale]?.[key] ?? builtin?.[key] ?? localeCatalog.en[key];
 }

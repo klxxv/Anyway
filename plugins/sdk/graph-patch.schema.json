@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcanvas.dev/schemas/graph-patch-v1alpha1.json",
+  "title": "Research Canvas GraphPatch v1alpha1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "source", "title", "summary", "reviewRequired", "operations"],
+  "properties": {
+    "apiVersion": { "const": "researchcanvas.dev/graph-patch/v1alpha1" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pluginId", "operation"],
+      "properties": {
+        "pluginId": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "operation": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "externalId": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "summary": { "type": "string", "maxLength": 2000 },
+    "reviewRequired": { "const": true },
+    "operations": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/addNode" },
+          { "$ref": "#/$defs/addEdge" },
+          { "$ref": "#/$defs/updateNode" },
+          { "$ref": "#/$defs/updateEdge" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "addNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "node"],
+      "properties": {
+        "op": { "const": "add-node" },
+        "node": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "title"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "type": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "body": { "type": "string" },
+            "tags": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+            },
+            "data": { "type": "object" }
+          }
+        }
+      }
+    },
+    "addEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "edge"],
+      "properties": {
+        "op": { "const": "add-edge" },
+        "edge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "source", "target", "type"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "source": { "$ref": "#/$defs/id" },
+            "target": { "$ref": "#/$defs/id" },
+            "type": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "note": { "type": "string" },
+            "data": { "type": "object" }
+          }
+        }
+      }
+    },
+    "updateNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "nodeId", "changes"],
+      "properties": {
+        "op": { "const": "update-node" },
+        "nodeId": { "$ref": "#/$defs/id" },
+        "changes": { "type": "object" }
+      }
+    },
+    "updateEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "edgeId", "changes"],
+      "properties": {
+        "op": { "const": "update-edge" },
+        "edgeId": { "$ref": "#/$defs/id" },
+        "changes": { "type": "object" }
+      }
+    }
+  }
+}

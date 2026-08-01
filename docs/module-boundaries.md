@@ -8,7 +8,8 @@ influence propagation, exports, and migrations.
 
 ## Application features
 
-- `app/i18n` owns locale catalogs, persisted device locale, and typed lookup.
+- `app/i18n` owns the English/Chinese host catalogs, persisted device locale,
+  community locale merging, English fallback, and typed lookup.
 - `app/plugins` owns plugin contracts, built-in catalog metadata, and the sole
   browser-to-Tauri adapter. The plugin store is a workspace feature that only
   consumes this adapter.
@@ -30,6 +31,17 @@ verified metadata to the Webview.
 no host imports, receive JSON through linear memory, and are bounded by memory,
 fuel, input, and output limits. Neither graph stores nor React components can
 load native libraries or execute guest bytes directly.
+
+`src-tauri/src/projects.rs` owns validated native `.mycproj`/JSON persistence.
+`src-tauri/src/workspace_host.rs` owns fixed export, folder scan, and Git host
+actions. These commands revalidate the installed `WorkspacePlugin` identity and
+declared capability on every call; no filesystem handle or process API crosses
+into plugin code.
+
+`app/plugins/contracts.ts` defines the review-gated GraphPatch interchange.
+Torch/ONNX/model adapters may propose semantic nodes and relations, but only
+`use-workspace-project.ts` can apply the validated proposal and create layout,
+provenance, undo, and activity state.
 
 ## Plugin source tree
 

@@ -23,3 +23,22 @@ test("runtime documentation records enforceable sandbox limits", () => {
   assert.match(documentation, /5,000,000 fuel units/i);
   assert.match(documentation, /1 MB\s+JSON input\/output limits/i);
 });
+
+test("community model adapters share a review-gated GraphPatch schema", () => {
+  const schema = JSON.parse(read("plugins/sdk/graph-patch.schema.json")) as {
+    properties: {
+      apiVersion: { const: string };
+      reviewRequired: { const: boolean };
+      operations: { maxItems: number };
+    };
+  };
+  const python = read("plugins/sdk/python/research_canvas.py");
+  assert.equal(
+    schema.properties.apiVersion.const,
+    "researchcanvas.dev/graph-patch/v1alpha1",
+  );
+  assert.equal(schema.properties.reviewRequired.const, true);
+  assert.equal(schema.properties.operations.maxItems, 2000);
+  assert.match(python, /class NetworkBlockExtractor\(Protocol\)/);
+  assert.match(python, /"reviewRequired": True/);
+});

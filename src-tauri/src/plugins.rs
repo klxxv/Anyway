@@ -46,8 +46,29 @@ pub struct PluginContextMenuContribution {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginLocaleContribution {
+    locale: String,
+    name: String,
+    path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCommandContribution {
+    id: String,
+    label: String,
+    description: String,
+    category: String,
+    capability: String,
+    formats: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MycPluginContributions {
     context_menus: Option<Vec<PluginContextMenuContribution>>,
+    locales: Option<Vec<PluginLocaleContribution>>,
+    commands: Option<Vec<PluginCommandContribution>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -91,6 +112,16 @@ pub struct InstalledMycPlugin {
     theme: Option<ThemeManifest>,
     edge_style: Option<serde_json::Value>,
     runtime: Option<MycPluginRuntime>,
+    locales: Option<Vec<InstalledPluginLocale>>,
+    workspace: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledPluginLocale {
+    locale: String,
+    name: String,
+    messages: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -171,9 +202,106 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 return Err("Context menu labels must contain 1 to 64 characters".to_string());
             }
             if item.icon.as_ref().is_some_and(|icon| {
-                !matches!(icon.as_str(), "sparkles" | "search" | "wand" | "database" | "link")
+                !matches!(
+                    icon.as_str(),
+                    "sparkles" | "search" | "wand" | "database" | "link"
+                )
             }) {
                 return Err("Unsupported context menu icon".to_string());
+            }
+        }
+    }
+    if let Some(locales) = manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.locales.as_ref())
+    {
+        if manifest.kind != "LocalePlugin"
+            || !manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|capability| capability == "i18n.register")
+        {
+            return Err(
+                "Locale contributions require a LocalePlugin with i18n.register".to_string(),
+            );
+        }
+        if locales.len() > 16 {
+            return Err("A plugin can contribute at most 16 locales".to_string());
+        }
+        for locale in locales {
+            if locale.locale.len() > 35
+                || locale.locale.is_empty()
+                || !locale
+                    .locale
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+            {
+                return Err(format!("Invalid locale tag: {}", locale.locale));
+            }
+            if locale.name.trim().is_empty() || locale.name.chars().count() > 48 {
+                return Err("Locale names must contain 1 to 48 characters".to_string());
+            }
+            let path = Path::new(&locale.path);
+            if path.is_absolute()
+                || path.components().count() != 2
+                || path.parent() != Some(Path::new("locales"))
+                || path.extension().and_then(|value| value.to_str()) != Some("json")
+            {
+                return Err("Locale bundles must use locales/<tag>.json".to_string());
+            }
+        }
+    }
+    if let Some(commands) = manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.commands.as_ref())
+    {
+        if manifest.kind != "WorkspacePlugin" {
+            return Err("Workspace commands require WorkspacePlugin".to_string());
+        }
+        if commands.len() > 24 {
+            return Err("A plugin can contribute at most 24 workspace commands".to_string());
+        }
+        for command in commands {
+            validate_slug(&command.id, "workspace command id")?;
+            if command.label.trim().is_empty()
+                || command.label.chars().count() > 64
+                || command.description.chars().count() > 180
+            {
+                return Err("Workspace command copy exceeds its bounded length".to_string());
+            }
+            if !matches!(
+                command.category.as_str(),
+                "export" | "folder" | "git" | "import"
+            ) {
+                return Err(format!(
+                    "Unsupported workspace command category: {}",
+                    command.category
+                ));
+            }
+            if !manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|capability| capability == &command.capability)
+            {
+                return Err(format!(
+                    "Workspace command {} requires undeclared capability {}",
+                    command.id, command.capability
+                ));
+            }
+            if command.formats.as_ref().is_some_and(|formats| {
+                formats.is_empty()
+                    || formats.len() > 3
+                    || formats
+                        .iter()
+                        .any(|format| !matches!(format.as_str(), "pdf" | "svg" | "png"))
+            }) {
+                return Err("Export formats are limited to pdf, svg, and png".to_string());
             }
         }
     }
@@ -226,17 +354,101 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 return Err("AnalysisPlugin language must be rust, cpp, or other".to_string());
             }
         }
+        "WorkspacePlugin" => {
+            if manifest.spec.engine != "host-mediated" {
+                return Err("WorkspacePlugin engine must be host-mediated".to_string());
+            }
+            if manifest.spec.entry != "workspace-plugin.json" {
+                return Err("WorkspacePlugin entry must be workspace-plugin.json".to_string());
+            }
+            if manifest.spec.language.is_some() {
+                return Err("WorkspacePlugin must not declare a guest language".to_string());
+            }
+            if manifest
+                .spec
+                .contributes
+                .as_ref()
+                .and_then(|contributions| contributions.commands.as_ref())
+                .is_none_or(Vec::is_empty)
+            {
+                return Err("WorkspacePlugin must contribute at least one command".to_string());
+            }
+        }
+        "LocalePlugin" => {
+            if manifest.spec.engine != "declarative"
+                || manifest.spec.language.is_some()
+                || manifest
+                    .spec
+                    .contributes
+                    .as_ref()
+                    .and_then(|contributions| contributions.locales.as_ref())
+                    .is_none_or(Vec::is_empty)
+            {
+                return Err(
+                    "LocalePlugin requires declarative i18n locale contributions".to_string(),
+                );
+            }
+            if !manifest.spec.entry.starts_with("locales/")
+                || !manifest.spec.entry.ends_with(".json")
+            {
+                return Err("LocalePlugin entry must reference locales/<tag>.json".to_string());
+            }
+        }
         _ => {
             return Err(
-                "Installer accepts ThemePlugin, EdgeStylePlugin, and AnalysisPlugin packages"
+                "Installer accepts ThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, and WorkspacePlugin packages"
                     .to_string(),
             );
         }
     }
     if !manifest.spec.permissions.is_empty() {
-        return Err("Declarative visual plugins cannot request permissions in the MVP".to_string());
+        return Err(
+            "Plugins declare capabilities; ambient permission requests are not accepted"
+                .to_string(),
+        );
     }
     Ok(())
+}
+
+fn read_locale_bundles(
+    directory: &Path,
+    manifest: &MycPluginManifest,
+) -> Result<Option<Vec<InstalledPluginLocale>>, String> {
+    let Some(contributions) = manifest.spec.contributes.as_ref() else {
+        return Ok(None);
+    };
+    let Some(locales) = contributions.locales.as_ref() else {
+        return Ok(None);
+    };
+    let mut bundles = Vec::with_capacity(locales.len());
+    for contribution in locales {
+        let path = directory.join(&contribution.path);
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| error.to_string())?;
+        let messages = value
+            .as_object()
+            .ok_or_else(|| format!("Locale bundle must be an object: {}", path.display()))?;
+        if messages.len() > 2_000 {
+            return Err("Locale bundle exceeds 2,000 messages".to_string());
+        }
+        if messages.iter().any(|(key, value)| {
+            key.is_empty()
+                || key.chars().count() > 128
+                || value
+                    .as_str()
+                    .is_none_or(|message| message.chars().count() > 2_000)
+        }) {
+            return Err("Locale bundles accept bounded string-to-string messages only".to_string());
+        }
+        bundles.push(InstalledPluginLocale {
+            locale: contribution.locale.clone(),
+            name: contribution.name.clone(),
+            messages: messages.clone(),
+        });
+    }
+    Ok(Some(bundles))
 }
 
 fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String> {
@@ -248,12 +460,13 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     validate_manifest(&manifest)?;
 
     let entry_path = directory.join(&manifest.spec.entry);
-    let (theme, edge_style, runtime) = match manifest.kind.as_str() {
+    let (theme, edge_style, runtime, workspace) = match manifest.kind.as_str() {
         "ThemePlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
                 .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
             (
                 Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+                None,
                 None,
                 None,
             )
@@ -264,6 +477,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             (
                 None,
                 Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+                None,
                 None,
             )
         }
@@ -286,10 +500,30 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
                         .unwrap_or_else(|| "other".to_string()),
                     entry_sha256: format!("{digest:x}"),
                 }),
+                None,
             )
         }
-        _ => (None, None, None),
+        "WorkspacePlugin" => {
+            let entry_text = fs::read_to_string(&entry_path)
+                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            let descriptor: serde_json::Value =
+                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+            if descriptor
+                .get("schemaVersion")
+                .and_then(serde_json::Value::as_u64)
+                != Some(1)
+                || !matches!(
+                    descriptor.get("mode").and_then(serde_json::Value::as_str),
+                    Some("export" | "folder" | "git")
+                )
+            {
+                return Err("Invalid workspace-plugin.json descriptor".to_string());
+            }
+            (None, None, None, Some(descriptor))
+        }
+        _ => (None, None, None, None),
     };
+    let locales = read_locale_bundles(directory, &manifest)?;
 
     Ok(InstalledMycPlugin {
         manifest,
@@ -297,6 +531,8 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         theme,
         edge_style,
         runtime,
+        locales,
+        workspace,
     })
 }
 
@@ -401,18 +637,37 @@ fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycP
 }
 
 fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
-    let packages = plugin_base(app)?.join("packages");
-    if !packages.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(packages).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        if path
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("myc"))
-        {
-            install_archive(app, &path)?;
+    let base = plugin_base(app)?;
+    #[cfg(debug_assertions)]
+    let package_roots = vec![base.join("packages")];
+    #[cfg(not(debug_assertions))]
+    let package_roots = vec![
+        base.join("packages"),
+        app.path()
+            .resource_dir()
+            .map_err(|error| error.to_string())?
+            .join("plugins/packages"),
+    ];
+    for packages in package_roots {
+        if !packages.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(packages).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            if !path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("myc"))
+            {
+                continue;
+            }
+            let already_installed = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .is_some_and(|package| base.join("installed").join(package).is_dir());
+            if !already_installed {
+                install_archive(app, &path)?;
+            }
         }
     }
     Ok(())
@@ -442,6 +697,81 @@ pub fn list_installed_plugins(app: AppHandle) -> Result<Vec<InstalledMycPlugin>,
     }
     plugins.sort_by(|left, right| left.manifest.metadata.id.cmp(&right.manifest.metadata.id));
     Ok(plugins)
+}
+
+/** 原生动作前解析已安装包并验证一个命名能力 / Resolve an installed package and prove one capability. */
+pub fn require_plugin_capability(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+    capability: &str,
+) -> Result<PathBuf, String> {
+    require_plugin_capabilities(app, plugin_id, plugin_version, &[capability])
+}
+
+/** 解析一个 WorkspacePlugin 并验证全部宿主能力 / Resolve one WorkspacePlugin and prove all requested capabilities. */
+pub fn require_plugin_capabilities(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+    capabilities: &[&str],
+) -> Result<PathBuf, String> {
+    validate_slug(plugin_id, "plugin id")?;
+    validate_slug(plugin_version, "plugin version")?;
+    let directory = plugin_base(app)?
+        .join("installed")
+        .join(format!("{plugin_id}@{plugin_version}"));
+    let installed = read_installed_plugin(&directory)?;
+    if installed.manifest.kind != "WorkspacePlugin" {
+        return Err("Native workspace actions require WorkspacePlugin".to_string());
+    }
+    for capability in capabilities {
+        if !installed
+            .manifest
+            .spec
+            .capabilities
+            .iter()
+            .any(|declared| declared == capability)
+        {
+            return Err(format!(
+                "Plugin {plugin_id}@{plugin_version} does not declare {capability}"
+            ));
+        }
+    }
+    Ok(directory)
+}
+
+/** 再次确认导出格式属于已声明命令 / Revalidate that an export format belongs to a declared command. */
+pub fn require_plugin_export_format(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+    format: &str,
+) -> Result<PathBuf, String> {
+    let directory = require_plugin_capability(app, plugin_id, plugin_version, "project.export")?;
+    let installed = read_installed_plugin(&directory)?;
+    let declared = installed
+        .manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.commands.as_ref())
+        .is_some_and(|commands| {
+            commands.iter().any(|command| {
+                command.category == "export"
+                    && command.capability == "project.export"
+                    && command
+                        .formats
+                        .as_ref()
+                        .is_some_and(|formats| formats.iter().any(|candidate| candidate == format))
+            })
+        });
+    if !declared {
+        return Err(format!(
+            "Plugin {plugin_id}@{plugin_version} does not contribute {format} export"
+        ));
+    }
+    Ok(directory)
 }
 
 #[tauri::command]
@@ -573,6 +903,8 @@ spec:
                 label: "Analyze node context".to_string(),
                 icon: Some("sparkles".to_string()),
             }]),
+            locales: None,
+            commands: None,
         });
         assert!(validate_manifest(&manifest)
             .expect_err("missing contribution capability is rejected")
@@ -582,5 +914,83 @@ spec:
             .capabilities
             .push("context-menu.contribute".to_string());
         validate_manifest(&manifest).expect("bounded runtime contribution is accepted");
+    }
+
+    #[test]
+    fn installs_host_mediated_workspace_and_declarative_locale_packages() {
+        let root = tempdir().expect("temp root");
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+        let workspace_package = root.path().join("workspace.myc");
+        let file = File::create(&workspace_package).expect("workspace archive");
+        let mut archive = ZipWriter::new(file);
+        archive.start_file("plugin.yml", options).expect("manifest");
+        archive
+            .write_all(
+                br#"apiVersion: researchcanvas.dev/v1alpha1
+kind: WorkspacePlugin
+metadata:
+  id: researchcanvas.test-export
+  name: Test Export
+  version: 1.0.0
+  publisher: Research Canvas
+  developer: Workspace Tests
+  description: Test host mediated export capability.
+spec:
+  engine: host-mediated
+  entry: workspace-plugin.json
+  capabilities: [project.export]
+  permissions: []
+  contributes:
+    commands:
+      - id: export
+        label: Export SVG
+        description: Export the reviewed project.
+        category: export
+        capability: project.export
+        formats: [svg]
+"#,
+            )
+            .expect("manifest bytes");
+        archive
+            .start_file("workspace-plugin.json", options)
+            .expect("workspace descriptor");
+        archive
+            .write_all(br#"{"schemaVersion":1,"mode":"export","testFixture":"pinn-architecture"}"#)
+            .expect("workspace descriptor bytes");
+        archive.finish().expect("workspace package");
+
+        let installed =
+            install_archive_into(root.path(), &workspace_package).expect("install workspace");
+        assert_eq!(installed.manifest.kind, "WorkspacePlugin");
+        assert_eq!(
+            installed.workspace.expect("workspace descriptor")["mode"],
+            "export"
+        );
+        assert!(installed.runtime.is_none());
+
+        let locale_package = root.path().join("locale.myc");
+        let file = File::create(&locale_package).expect("locale archive");
+        let mut archive = ZipWriter::new(file);
+        archive.start_file("plugin.yml", options).expect("manifest");
+        archive
+            .write_all(
+                "apiVersion: researchcanvas.dev/v1alpha1\nkind: LocalePlugin\nmetadata:\n  id: researchcanvas.test-ja\n  name: Test Japanese\n  version: 1.0.0\n  publisher: Research Canvas\n  developer: Locale Tests\n  description: Test declarative community language.\nspec:\n  engine: declarative\n  entry: locales/ja-JP.json\n  capabilities: [i18n.register]\n  permissions: []\n  contributes:\n    locales:\n      - locale: ja-JP\n        name: 日本語\n        path: locales/ja-JP.json\n"
+                    .as_bytes(),
+            )
+            .expect("locale manifest bytes");
+        archive
+            .start_file("locales/ja-JP.json", options)
+            .expect("locale bundle");
+        archive
+            .write_all("{\"workspace.menu\":\"メニュー\"}".as_bytes())
+            .expect("locale bytes");
+        archive.finish().expect("locale package");
+
+        let installed = install_archive_into(root.path(), &locale_package).expect("install locale");
+        let locales = installed.locales.expect("installed locales");
+        assert_eq!(locales[0].locale, "ja-JP");
+        assert_eq!(locales[0].messages["workspace.menu"], "メニュー");
+        assert!(installed.runtime.is_none());
     }
 }
