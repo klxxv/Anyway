@@ -51,3 +51,10 @@ export type WorkspaceHistory = {
 export type InspectorUpdate = Partial<
   Pick<ResearchNode, "title" | "body" | "status" | "tags" | "data">
 >;
+
+export type EdgeInspectorUpdate = Partial<
+  Pick<
+    ResearchEdge,
+    "type" | "source" | "target" | "directed" | "polarity" | "confidence" | "conditions" | "note"
+  >
+>;

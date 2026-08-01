@@ -262,6 +262,52 @@
   matching to the bug source is not desired. The implementation retains the established white,
   gray-black, blue, serif, thin-border, and Tabler-icon language.
 
+### Pass 9
+
+- Source visual truth:
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-9eaf7eb0-b441-4c7e-a017-742876ce7e2c.png`
+    (closed-inspector blank-strip bug).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-7f6914d6-0a91-4fa9-947f-7e9f596f66c2.png`
+    (selected edge with the untranslated `causes` label and no editable inspector).
+- Rendered implementation:
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\inspector-collapsed-full-canvas.png`
+    (1443 × 931 physical pixels, 1443 × 931 CSS viewport, density 1).
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\edge-inspector-zh.png`
+    (1443 × 931 physical pixels, 1443 × 931 CSS viewport, density 1).
+- Same-input full-view evidence:
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\compare-sidebar-collapse.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\compare-edge-inspector.png`
+  The bug captures use narrower crops, so each source is aspect-fit without stretching beside
+  the full-window implementation; the comparison is intentionally before/after rather than an
+  identical interaction state.
+- [P1][layout] Closing the inspector retained a wide empty grid track instead of returning the
+  area to the graph.
+  - Fix: animate the second grid track from 320 px to 0 px, fade and translate the panel during
+    the same transition, then fit the graph after the transition. The post-fix capture shows the
+    graph, evidence nodes, legend, and selected edge occupying the recovered width.
+- [P1][functionality] Edges had no property surface after selection.
+  - Fix: added an edge inspector with relation type, source, target, direction, polarity,
+    confidence, visible label, conditions, reverse, and delete controls. Computer Use selected
+    the persisted 建筑密度 → 基于 NDVI 的树冠分类 edge and verified the complete panel.
+- [P1][copy] Legacy edges persisted the raw default type name in `note`, allowing English
+  `causes` to override the locale catalog.
+  - Fix: treat a raw legacy default note as an empty override and map every one of the twelve
+    relation types through English and Simplified Chinese catalog entries. The selected edge
+    now reads `导致` on the canvas, badge, type selector, and placeholder.
+- [P2][accessibility] The visually collapsed inspector remained exposed to Windows UI
+  Automation during the CSS transition.
+  - Fix: apply both `aria-hidden` and the native `inert` attribute while collapsed. A fresh
+    Computer Use accessibility capture contains only the `打开属性栏` button and no hidden edge
+    fields.
+- Focused evidence was required because the relation label and inspector controls are too small
+  to judge in the full-view comparison. The edge comparison places the original `causes` crop
+  beside the selected blue `导致` edge and its editable Chinese property panel.
+- Typography remains the established serif stack; spacing retains the 320 px inspector rhythm;
+  colors remain white, gray-black, and blue; existing Tabler icons stay sharp; no raster or
+  substitute assets were introduced; Chinese copy is complete for all relation fields.
+- Post-fix verification: TypeScript, ESLint, the 13 workspace tests, and the complete application,
+  SDK, Rust, and rendered-HTML suite pass. No unresolved P0/P1/P2 finding remains.
+
 ## Final rubric
 
 | Surface | Result | Evidence |

@@ -12,7 +12,12 @@ import {
   projectForLegendFilter,
   type LinkLegendFilter,
 } from "../workspace-layout";
-import type { InspectorUpdate, NodeDraft, WorkspaceHistory } from "../workspace-types";
+import type {
+  EdgeInspectorUpdate,
+  InspectorUpdate,
+  NodeDraft,
+  WorkspaceHistory,
+} from "../workspace-types";
 import { zenWorkspaceFixture } from "../workspace-fixture";
 
 const storageKey = "research-canvas.zen-workspace.v1";
@@ -32,6 +37,7 @@ function makeId(prefix: string) {
 export function useWorkspaceProject() {
   const [project, setProject] = useState<ProjectState>(() => cloneProject(zenWorkspaceFixture));
   const [selectedNodeId, setSelectedNodeId] = useState("variable-canopy");
+  const [selectedEdgeId, setSelectedEdgeId] = useState("");
   const [past, setPast] = useState<WorkspaceHistory[]>([]);
   const [future, setFuture] = useState<WorkspaceHistory[]>([]);
   const hydrated = useRef(false);
@@ -67,6 +73,20 @@ export function useWorkspaceProject() {
     () => project.nodes.find((node) => node.id === selectedNodeId) ?? null,
     [project.nodes, selectedNodeId],
   );
+  const selectedEdge = useMemo(
+    () => project.edges.find((edge) => edge.id === selectedEdgeId) ?? null,
+    [project.edges, selectedEdgeId],
+  );
+
+  const selectNode = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setSelectedEdgeId("");
+  }, []);
+
+  const selectEdge = useCallback((edgeId: string) => {
+    setSelectedEdgeId(edgeId);
+    setSelectedNodeId("");
+  }, []);
 
   const commit = useCallback((label: string, transform: (draft: ProjectState) => void) => {
     setProject((current) => {
@@ -87,6 +107,17 @@ export function useWorkspaceProject() {
         const node = draft.nodes.find((item) => item.id === nodeId);
         if (!node) return;
         Object.assign(node, update, { updatedAt: new Date().toISOString() });
+      });
+    },
+    [commit],
+  );
+
+  const updateEdge = useCallback(
+    (edgeId: string, update: EdgeInspectorUpdate) => {
+      commit("Update relation", (draft) => {
+        const edge = draft.edges.find((item) => item.id === edgeId);
+        if (!edge) return;
+        Object.assign(edge, update);
       });
     },
     [commit],
@@ -133,6 +164,7 @@ export function useWorkspaceProject() {
         });
       });
       setSelectedNodeId(id);
+      setSelectedEdgeId("");
       return id;
     },
     [commit],
@@ -141,10 +173,11 @@ export function useWorkspaceProject() {
   const createEdge = useCallback(
     (source: string, target: string, type: ResearchEdgeType = "causes") => {
       if (!source || !target || source === target) return;
+      if (project.edges.some((edge) => edge.source === source && edge.target === target)) return;
+      const edgeId = makeId("edge");
       commit("Create relation", (draft) => {
-        if (draft.edges.some((edge) => edge.source === source && edge.target === target)) return;
         draft.edges.push({
-          id: makeId("edge"),
+          id: edgeId,
           source,
           target,
           type,
@@ -153,12 +186,14 @@ export function useWorkspaceProject() {
           confidence: 1,
           conditions: [],
           evidenceIds: [],
-          note: type.replaceAll("_", " "),
           provenance: { origin: "human", actorId: "local-researcher" },
         });
       });
+      setSelectedEdgeId(edgeId);
+      setSelectedNodeId("");
+      return edgeId;
     },
-    [commit],
+    [commit, project.edges],
   );
 
   const removeNode = useCallback(
@@ -171,6 +206,7 @@ export function useWorkspaceProject() {
         draft.placements = draft.placements.filter((placement) => placement.nodeId !== nodeId);
       });
       setSelectedNodeId("");
+      setSelectedEdgeId("");
     },
     [commit],
   );
@@ -200,6 +236,7 @@ export function useWorkspaceProject() {
         });
       });
       setSelectedNodeId(nextId);
+      setSelectedEdgeId("");
     },
     [commit],
   );
@@ -209,6 +246,7 @@ export function useWorkspaceProject() {
       commit("Delete relation", (draft) => {
         draft.edges = draft.edges.filter((edge) => edge.id !== edgeId);
       });
+      setSelectedEdgeId("");
     },
     [commit],
   );
@@ -290,6 +328,7 @@ export function useWorkspaceProject() {
   const resetDemo = useCallback(() => {
     setProject(cloneProject(zenWorkspaceFixture));
     setSelectedNodeId("variable-canopy");
+    setSelectedEdgeId("");
     setPast([]);
     setFuture([]);
   }, []);
@@ -298,10 +337,14 @@ export function useWorkspaceProject() {
     project,
     selectedNode,
     selectedNodeId,
+    selectedEdge,
+    selectedEdgeId,
     canUndo: past.length > 0,
     canRedo: future.length > 0,
-    setSelectedNodeId,
+    selectNode,
+    selectEdge,
     updateNode,
+    updateEdge,
     moveNode,
     createNode,
     createEdge,

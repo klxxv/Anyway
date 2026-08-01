@@ -42,6 +42,7 @@ import {
   shortcutFromKeyboardEvent,
 } from "./workspace-shortcuts";
 import type { WorkspaceContextMenuState } from "./workspace-context-menu";
+import { edgeTypeMessageKeys } from "./workspace-edge-labels";
 
 const preferencesStorageKey = "research-canvas.workspace-preferences.v1";
 
@@ -79,6 +80,10 @@ export function ResearchWorkspaceApp() {
   );
   const [installedPlugins, setInstalledPlugins] = useState<InstalledMycPlugin[]>([]);
   const [enabledPluginKeys, setEnabledPluginKeys] = useState<Set<string>>(new Set());
+  const edgeTypeLabel = useCallback(
+    (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
+    [t],
+  );
 
   const pluginContextMenuActions = useMemo(
     () =>
@@ -99,11 +104,13 @@ export function ResearchWorkspaceApp() {
     setConnectMode((current) => {
       const next = !current;
       setNotice(
-        next ? `${connectType.replaceAll("_", " ")} · drag from one node to another` : "",
+        next
+          ? `${edgeTypeLabel(connectType)} · ${t("workspace.connectInstruction")}`
+          : "",
       );
       return next;
     });
-  }, [connectType]);
+  }, [connectType, edgeTypeLabel, t]);
 
   const addNote = useCallback(() => {
     setComposer({ type: "note", x: 610, y: 430 });
@@ -255,7 +262,7 @@ export function ResearchWorkspaceApp() {
         onConnectType={(type) => {
           setConnectType(type);
           setConnectMode(true);
-          setNotice(`${type.replaceAll("_", " ")} · drag from one node to another`);
+          setNotice(`${edgeTypeLabel(type)} · ${t("workspace.connectInstruction")}`);
         }}
         onNote={addNote}
         onFind={() => setSearchOpen(true)}
@@ -270,7 +277,13 @@ export function ResearchWorkspaceApp() {
         onExport={exportProject}
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px]">
+      <div
+        className={`relative grid min-h-0 flex-1 transition-[grid-template-columns] duration-[360ms] ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${
+          inspectorOpen
+            ? "grid-cols-[minmax(0,1fr)_320px]"
+            : "grid-cols-[minmax(0,1fr)_0px]"
+        }`}
+      >
         <section className="grid min-h-0 grid-rows-[42px_minmax(0,1fr)] bg-canvas">
           <div className="flex items-center gap-2 border-b border-ink/10 px-6 font-serif text-[12px] text-olive">
             <button className="hover:text-blue" onClick={() => setMenuOpen(true)}>
@@ -284,8 +297,11 @@ export function ResearchWorkspaceApp() {
           <ResearchGraphCanvas
             project={workspace.project}
             selectedNodeId={workspace.selectedNodeId}
+            selectedEdgeId={workspace.selectedEdgeId}
             addRequest={addRequest}
             connectMode={connectMode}
+            connectType={connectType}
+            inspectorOpen={inspectorOpen}
             linkFilter={linkFilter}
             showMiniMap={preferences.showMiniMap}
             showLinkCounts={preferences.showLinkCounts}
@@ -305,14 +321,18 @@ export function ResearchWorkspaceApp() {
               );
             }}
             onSelectNode={(nodeId) => {
-              workspace.setSelectedNodeId(nodeId);
+              workspace.selectNode(nodeId);
+              setInspectorOpen(true);
+            }}
+            onSelectEdge={(edgeId) => {
+              workspace.selectEdge(edgeId);
               setInspectorOpen(true);
             }}
             onMoveNode={workspace.moveNode}
             onRequestConnect={(nodeId) => {
-              workspace.setSelectedNodeId(nodeId);
+              workspace.selectNode(nodeId);
               setConnectMode(true);
-              setNotice(`${connectType.replaceAll("_", " ")} · drag from the selected node`);
+              setNotice(`${edgeTypeLabel(connectType)} · ${t("workspace.connectInstruction")}`);
             }}
             onDuplicateNode={(nodeId) => {
               workspace.duplicateNode(nodeId);
@@ -333,9 +353,12 @@ export function ResearchWorkspaceApp() {
             }}
             onApplyDefaultLayout={applyDefaultLayout}
             onCreateEdge={(source, target) => {
-              workspace.createEdge(source, target, connectType);
+              const edgeId = workspace.createEdge(source, target, connectType);
               setConnectMode(false);
-              setNotice(`${connectType.replaceAll("_", " ")} relation created`);
+              if (edgeId) {
+                setInspectorOpen(true);
+                setNotice(`${edgeTypeLabel(connectType)} · ${t("workspace.relationCreated")}`);
+              }
             }}
             onRequestCreate={requestCreate}
             onPluginContextMenuAction={async (action, context: WorkspaceContextMenuState) => {
@@ -365,18 +388,32 @@ export function ResearchWorkspaceApp() {
           />
         </section>
 
-        {inspectorOpen ? (
+        <div
+          className={`min-w-0 overflow-hidden transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+            inspectorOpen
+              ? "translate-x-0 opacity-100"
+              : "pointer-events-none translate-x-5 opacity-0"
+          }`}
+          aria-hidden={!inspectorOpen}
+          inert={!inspectorOpen}
+        >
           <InspectorPanel
             node={workspace.selectedNode}
+            edge={workspace.selectedEdge}
+            nodes={workspace.project.nodes}
             onUpdate={workspace.updateNode}
+            onUpdateEdge={workspace.updateEdge}
             onDelete={workspace.removeNode}
+            onDeleteEdge={workspace.removeEdge}
+            onReverseEdge={workspace.reverseEdge}
             onClose={() => setInspectorOpen(false)}
           />
-        ) : (
+        </div>
+        {!inspectorOpen && (
           <button
             className="absolute right-3 top-20 z-20 rounded-full border border-ink/25 bg-paper p-2 text-blue shadow-sm"
             onClick={() => setInspectorOpen(true)}
-            aria-label="Open inspector"
+            aria-label={t("inspector.open")}
           >
             <IconChevronRight className="rotate-180" size={17} stroke={1.35} />
           </button>
@@ -386,7 +423,7 @@ export function ResearchWorkspaceApp() {
       {connectMode && (
         <div className="pointer-events-none fixed left-1/2 top-[62px] z-50 -translate-x-1/2 rounded-full border border-blue/35 bg-blue-soft px-4 py-2 font-serif text-[11px] text-blue shadow-sm">
           <IconPlugConnected className="mr-2 inline" size={15} stroke={1.35} />
-          Connect mode · drag between node handles
+          {edgeTypeLabel(connectType)} · {t("workspace.connectInstruction")}
         </div>
       )}
 
@@ -440,7 +477,7 @@ export function ResearchWorkspaceApp() {
           project={workspace.project}
           onClose={() => setSearchOpen(false)}
           onSelect={(nodeId) => {
-            workspace.setSelectedNodeId(nodeId);
+            workspace.selectNode(nodeId);
             setInspectorOpen(true);
             setSearchOpen(false);
           }}

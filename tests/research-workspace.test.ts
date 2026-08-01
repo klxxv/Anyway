@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LAYOUT_MODES, type ResearchEdge } from "../app/lib/research-types";
+import { EDGE_TYPES, LAYOUT_MODES, type ResearchEdge } from "../app/lib/research-types";
+import { translate } from "../app/i18n/catalog";
 import { zenWorkspaceFixture } from "../app/features/research-workspace/workspace-fixture";
 import {
   edgeMatchesLegendFilter,
@@ -18,6 +19,10 @@ import {
   shortcutFromKeyboardEvent,
 } from "../app/features/research-workspace/workspace-shortcuts";
 import { computeEdgeRoutes } from "../app/features/research-workspace/canvas/edge-routing";
+import {
+  customEdgeNote,
+  edgeTypeMessageKeys,
+} from "../app/features/research-workspace/workspace-edge-labels";
 import {
   clampPieMenuPoint,
   isStableTwoFingerHold,
@@ -66,6 +71,24 @@ test("legend families classify relation semantics deterministically", () => {
   assert.equal(linkLegendFilterOf(edge("contradicts")), "contradicts");
   assert.equal(edgeMatchesLegendFilter(edge("uses"), "causal"), true);
   assert.equal(edgeMatchesLegendFilter(edge("uses"), "derived"), false);
+});
+
+test("every persisted relation type has English and Chinese UI copy", () => {
+  assert.deepEqual(Object.keys(edgeTypeMessageKeys).sort(), [...EDGE_TYPES].sort());
+  for (const type of EDGE_TYPES) {
+    const key = edgeTypeMessageKeys[type];
+    assert.ok(translate("en", key).trim());
+    assert.ok(translate("zh-CN", key).trim());
+    assert.notEqual(translate("zh-CN", key), type);
+  }
+});
+
+test("legacy raw relation notes fall back to localized labels", () => {
+  const legacy = edge("depends_on");
+  legacy.note = "depends on";
+  assert.equal(customEdgeNote(legacy), "");
+  legacy.note = "仅在高温日成立";
+  assert.equal(customEdgeNote(legacy), "仅在高温日成立");
 });
 
 test("legend projection keeps connected nodes without mutating the project", () => {

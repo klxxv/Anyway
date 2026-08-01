@@ -19,7 +19,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
-import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
+import type {
+  ProjectState,
+  ResearchEdgeType,
+  ResearchNodeType,
+} from "../../../lib/research-types";
 import type { ResolvedPluginContextMenuAction } from "../../../plugins/context-menu";
 import { listenForNativeTrackpadContacts } from "../../../platform/trackpad";
 import { useTwoFingerPie } from "../hooks/use-two-finger-pie";
@@ -31,6 +35,7 @@ import {
   type WorkspaceContextMenuState,
 } from "../workspace-context-menu";
 import type { WorkspaceShortcuts } from "../workspace-shortcuts";
+import { customEdgeNote, edgeTypeMessageKeys } from "../workspace-edge-labels";
 import {
   linkLegendFilterOf,
   projectForLegendFilter,
@@ -48,8 +53,11 @@ const edgeTypes = { researchEdge: ResearchEdgeLine };
 type ResearchGraphCanvasProps = {
   project: ProjectState;
   selectedNodeId: string;
+  selectedEdgeId: string;
   addRequest: number;
   connectMode: boolean;
+  connectType: ResearchEdgeType;
+  inspectorOpen: boolean;
   linkFilter: LinkLegendFilter | null;
   showMiniMap: boolean;
   showLinkCounts: boolean;
@@ -59,6 +67,7 @@ type ResearchGraphCanvasProps = {
   pluginContextMenuActions: ResolvedPluginContextMenuAction[];
   onLegendFilter: (filter: LinkLegendFilter | null) => void;
   onSelectNode: (nodeId: string) => void;
+  onSelectEdge: (edgeId: string) => void;
   onMoveNode: (nodeId: string, x: number, y: number) => void;
   onCreateEdge: (source: string, target: string) => void;
   onRequestCreate: (type: ResearchNodeType, x: number, y: number) => void;
@@ -95,7 +104,12 @@ function buildNodes(
   });
 }
 
-function buildEdges(project: ProjectState, filter: LinkLegendFilter | null): WorkspaceEdge[] {
+function buildEdges(
+  project: ProjectState,
+  filter: LinkLegendFilter | null,
+  selectedEdgeId: string,
+  edgeTypeLabel: (type: ResearchEdgeType) => string,
+): WorkspaceEdge[] {
   const projected = projectForLegendFilter(project, filter);
   const routes = computeEdgeRoutes(projected);
   return projected.edges.map((record) => {
@@ -107,9 +121,10 @@ function buildEdges(project: ProjectState, filter: LinkLegendFilter | null): Wor
       sourceHandle: route?.sourceHandle,
       targetHandle: route?.targetHandle,
       type: "researchEdge",
+      selected: record.id === selectedEdgeId,
       data: {
         record,
-        label: record.note ?? record.type.replaceAll("_", " "),
+        label: customEdgeNote(record) || edgeTypeLabel(record.type),
         labelOffsetX: route?.labelOffsetX,
         labelOffsetY: route?.labelOffsetY,
       },
@@ -122,8 +137,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   const {
     project,
     selectedNodeId,
+    selectedEdgeId,
     addRequest,
     connectMode,
+    connectType,
+    inspectorOpen,
     linkFilter,
     showMiniMap,
     showLinkCounts,
@@ -133,6 +151,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     pluginContextMenuActions,
     onLegendFilter,
     onSelectNode,
+    onSelectEdge,
     onMoveNode,
     onCreateEdge,
     onRequestCreate,
@@ -146,10 +165,16 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   } = props;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance<WorkspaceNode, WorkspaceEdge> | null>(null);
+  const edgeTypeLabel = useCallback(
+    (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
+    [t],
+  );
   const [nodes, setNodes] = useState(() =>
     buildNodes(project, selectedNodeId, linkFilter),
   );
-  const [edges, setEdges] = useState(() => buildEdges(project, linkFilter));
+  const [edges, setEdges] = useState(() =>
+    buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel),
+  );
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [contextMenu, setContextMenu] = useState<WorkspaceContextMenuState | null>(null);
   const [pieMenu, setPieMenu] = useState<PieMenuState | null>(null);
@@ -187,10 +212,20 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       setNodes(buildNodes(project, selectedNodeId, linkFilter));
-      setEdges(buildEdges(project, linkFilter));
+      setEdges(buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [linkFilter, project, selectedNodeId]);
+  }, [edgeTypeLabel, linkFilter, project, selectedEdgeId, selectedNodeId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const instance = flowRef.current;
+      if (!instance) return;
+      if (inspectorOpen) void applyWorkspaceViewport(instance);
+      else void instance.fitView({ padding: 0.12, maxZoom: 1, duration: 240 });
+    }, 380);
+    return () => window.clearTimeout(timer);
+  }, [applyWorkspaceViewport, inspectorOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -372,12 +407,12 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
             id: `edge-preview-${Date.now()}`,
             type: "researchEdge",
             data: {
-              label: "causes",
+              label: edgeTypeLabel(connectType),
               record: {
                 id: "edge-preview",
                 source: connection.source,
                 target: connection.target,
-                type: "causes",
+                type: connectType,
                 directed: true,
                 polarity: "positive",
                 conditions: [],
@@ -391,7 +426,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       );
       onCreateEdge(connection.source, connection.target);
     },
-    [onCreateEdge],
+    [connectType, edgeTypeLabel, onCreateEdge],
   );
 
   const minimapColor = useCallback(
@@ -496,6 +531,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
           event.preventDefault();
           event.stopPropagation();
           const point = contextPoint(event.clientX, event.clientY);
+          onSelectEdge(edge.id);
           setPieMenu(null);
           setContextMenu({
             scope: "edge",
@@ -506,6 +542,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
             flowX: point.flow.x,
             flowY: point.flow.y,
           });
+        }}
+        onEdgeClick={(_, edge) => {
+          onSelectEdge(edge.id);
+          setPieMenu(null);
+          setContextMenu(null);
         }}
         onNodeDragStop={(_, node) => onMoveNode(node.id, node.position.x, node.position.y)}
         onPaneClick={() => {
@@ -553,7 +594,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
 
       <div className="absolute bottom-5 right-5 z-10 w-[154px] rounded-[5px] border border-ink/30 bg-paper/96 p-2 font-serif text-[10px] text-ink/80">
         <div className="flex items-center justify-between px-2 pb-1.5 font-sans text-[7px] uppercase tracking-[0.14em] text-ink/40">
-          <span>Link filter</span>
+          <span>{t("workspace.linkFilter")}</span>
           {showLinkCounts && (
             <span>{linkFilter ? legendCounts[linkFilter] : project.edges.length}</span>
           )}
