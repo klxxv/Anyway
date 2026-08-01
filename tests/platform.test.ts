@@ -32,6 +32,10 @@ test("locale normalization and Simplified Chinese catalog are deterministic", ()
   assert.equal(translate("en", "toolbar.filter"), "Filter");
   assert.equal(translate("zh-CN", "workspace.pluginStore"), "插件商店");
   assert.equal(translate("zh-CN", "layout.neural"), "神经网络");
+  assert.equal(
+    translate("zh-CN", "toast.linksFiltered", {}, { relation: "控制" }),
+    "已筛选“控制”关系并重新布局。",
+  );
   for (const [locale, messages] of Object.entries(localeCatalog)) {
     for (const [key, value] of Object.entries(messages)) {
       assert.ok(value.trim(), `${locale}:${key} must not be empty`);

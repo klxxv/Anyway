@@ -3,7 +3,7 @@ kind: LocalePlugin
 metadata:
   id: researchcanvas.i18n-ja
   name: Japanese UI
-  version: 1.0.0
+  version: 1.0.1
   publisher: Research Canvas Community
   developer: Localization Example Team
   description: Demonstrates community-provided interface translations without adding languages to the host bundle.

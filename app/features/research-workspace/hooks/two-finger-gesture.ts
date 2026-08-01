@@ -2,11 +2,15 @@ import type { ResearchNodeType } from "../../../lib/research-types";
 
 export type GesturePoint = { x: number; y: number };
 
+export type GestureViewport = GesturePoint & { zoom: number };
+
 export const TWO_FINGER_HOLD_MS = 1_000;
-export const HOLD_CENTER_TOLERANCE_PX = 14;
-export const HOLD_SPAN_TOLERANCE_PX = 12;
+export const HOLD_CENTER_TOLERANCE_PX = 24;
+export const HOLD_SPAN_TOLERANCE_PX = 24;
 export const PIE_SELECTION_DEAD_ZONE_PX = 34;
 export const PIE_DIAMETER_PX = 276;
+export const TRACKPAD_MIN_ZOOM = 0.45;
+export const TRACKPAD_MAX_ZOOM = 1.7;
 
 const pieDirections: Array<{ angle: number; type: ResearchNodeType }> = [
   { angle: -90, type: "question" },
@@ -23,6 +27,33 @@ export type TwoFingerFrame = {
   center: GesturePoint;
   span: number;
 };
+
+/**
+ * 将 Windows/WebView 的合成捏合滚轮换算为以手势中心为锚点的视口。
+ * Converts a Windows/WebView synthetic pinch wheel into a cursor-anchored viewport.
+ */
+export function viewportForTrackpadPinch(
+  viewport: GestureViewport,
+  cursor: GesturePoint,
+  deltaY: number,
+  deltaMode = 0,
+  minZoom = TRACKPAD_MIN_ZOOM,
+  maxZoom = TRACKPAD_MAX_ZOOM,
+): GestureViewport {
+  const modeScale = deltaMode === 1 ? 16 : deltaMode === 2 ? 120 : 1;
+  const normalizedDelta = Math.max(-80, Math.min(80, deltaY * modeScale));
+  const nextZoom = Math.max(
+    minZoom,
+    Math.min(maxZoom, viewport.zoom * Math.exp(-normalizedDelta * 0.005)),
+  );
+  const flowX = (cursor.x - viewport.x) / viewport.zoom;
+  const flowY = (cursor.y - viewport.y) / viewport.zoom;
+  return {
+    x: cursor.x - flowX * nextZoom,
+    y: cursor.y - flowY * nextZoom,
+    zoom: nextZoom,
+  };
+}
 
 /** 计算双触点中心与间距；间距用于把捏合缩放和长按明确分流。 / Measures center and span so pinch and hold take separate paths. */
 export function measureTwoFingerFrame(points: readonly GesturePoint[]): TwoFingerFrame | null {

@@ -21,7 +21,7 @@
   html,
   body {
     width: 100%;
-    min-width: 980px;
+    min-width: 0;
     height: 100%;
     margin: 0;
     overflow: hidden;
@@ -387,15 +387,59 @@
     margin-bottom: -8px;
   }
 
+  .workspace-toast {
+    position: fixed;
+    left: 50%;
+    top: 69px;
+    z-index: 80;
+    max-width: min(520px, calc(100vw - 32px));
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    border: 1px solid rgb(36 39 43 / 18%);
+    border-radius: 999px;
+    background: rgb(255 255 255 / 97%);
+    padding: 7px 16px;
+    box-shadow: 0 5px 18px rgb(28 31 35 / 10%);
+    color: var(--color-ink);
+    font-family: var(--font-serif);
+    font-size: 11px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    animation: workspace-toast-lifecycle 3200ms cubic-bezier(.22, 1, .36, 1) both;
+  }
+
+}
+
+@keyframes workspace-toast-lifecycle {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% - 5px));
+  }
+
+  8%,
+  74% {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% - 5px));
+  }
 }
 
 @media (max-width: 1180px) {
-  main > .grid {
-    grid-template-columns: minmax(0, 1fr) 280px;
-  }
-
   header nav button {
     padding-inline: 12px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace-toast {
+    max-width: calc(100vw - 16px);
+    padding-inline: 12px;
+    font-size: 10px;
   }
 }
 

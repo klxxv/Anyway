@@ -42,8 +42,8 @@ type GestureCallbacks = {
 };
 
 /**
- * 识别“一秒双指长按—移动选择—松开提交”，并让捏合缩放保持在 React Flow 中。
- * Recognizes one-second hold, directional selection, and release while leaving pinch to React Flow.
+ * 识别“一秒双指长按—移动选择—松开提交”，并让捏合缩放走独立事件通道。
+ * Recognizes one-second hold, directional selection, and release while pinch uses a separate path.
  */
 export function useTwoFingerPie(callbacks: GestureCallbacks) {
   const { toFlowPoint, onOpen, onHighlight, onChoose, onDismiss } = callbacks;
@@ -155,8 +155,9 @@ export function useTwoFingerPie(callbacks: GestureCallbacks) {
       if (!frame || !gesture.origin) return;
       gesture.latest = frame;
       if (!gesture.opened && !isStableTwoFingerHold(gesture.origin, frame)) {
-        if (gesture.timer) clearTimeout(gesture.timer);
-        gesture.timer = null;
+        // 精确式触控板会产生少量自然抖动；稳定后重新计时，而不是永久取消本次手势。
+        // Precision touchpads jitter naturally; restart the dwell timer once contacts settle.
+        armHold();
         return;
       }
       if (!gesture.opened) return;
@@ -166,7 +167,7 @@ export function useTwoFingerPie(callbacks: GestureCallbacks) {
         onHighlight(selectedType);
       }
     },
-    [onHighlight],
+    [armHold, onHighlight],
   );
 
   const finishContact = useCallback(
@@ -246,11 +247,18 @@ export function useTwoFingerPie(callbacks: GestureCallbacks) {
     (contact: NativeTrackpadContact, canvasOffset: GesturePoint) => {
       const key = `trackpad:${contact.pointerId}`;
       const point = { x: contact.x - canvasOffset.x, y: contact.y - canvasOffset.y };
-      if (contact.phase === "down") beginContact("trackpad", key, point);
-      else if (contact.phase === "move") moveContact(key, point);
+      if (contact.phase === "cancel") {
+        if (state.current.opened) onDismiss();
+        reset();
+      } else if (contact.phase === "down") {
+        // 从驱动漏报的结束事件中恢复，避免陈旧触点阻塞下一次双指长按。
+        // Recover from a driver-missed release so stale contacts cannot block the next hold.
+        if (contact.contactCount === 1 && state.current.source === "trackpad") reset();
+        beginContact("trackpad", key, point);
+      } else if (contact.phase === "move") moveContact(key, point);
       else finishContact(key, point);
     },
-    [beginContact, finishContact, moveContact],
+    [beginContact, finishContact, moveContact, onDismiss, reset],
   );
 
   const onPointerCancelCapture = useCallback(() => {

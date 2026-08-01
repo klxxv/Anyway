@@ -1,7 +1,7 @@
 "use client";
 
 import { IconChevronRight, IconPlugConnected } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   LayoutMode,
   ResearchEdgeType,
@@ -65,6 +65,25 @@ import type { WorkspaceContextMenuState } from "./workspace-context-menu";
 import { edgeTypeMessageKeys } from "./workspace-edge-labels";
 
 const preferencesStorageKey = "research-canvas.workspace-preferences.v1";
+const toastVisibleMs = 3_200;
+
+const layoutLabelKeys = {
+  "evidence-chain": "layout.evidenceChain",
+  "refutation-chain": "layout.refutationChain",
+  tree: "layout.tree",
+  huffman: "layout.huffman",
+  table: "layout.table",
+  "neural-network": "layout.neural",
+} as const;
+
+const linkFilterLabelKeys = {
+  causal: "relation.causal",
+  control: "relation.control",
+  derived: "relation.derived",
+  contradicts: "relation.contradicts",
+} as const;
+
+type WorkspaceNotice = { id: number; text: string };
 
 function downloadProject(project: ReturnType<typeof useWorkspaceProject>["project"]) {
   const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
@@ -94,7 +113,8 @@ export function ResearchWorkspaceApp() {
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode | null>(null);
   const [linkFilter, setLinkFilter] = useState<LinkLegendFilter | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
+  const noticeSequence = useRef(0);
   const [preferences, setPreferences] = useState<WorkspacePreferences>(
     defaultWorkspacePreferences,
   );
@@ -111,6 +131,22 @@ export function ResearchWorkspaceApp() {
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
+  );
+  const layoutLabel = useCallback((mode: LayoutMode) => t(layoutLabelKeys[mode]), [t]);
+  const linkFilterLabel = useCallback(
+    (filter: LinkLegendFilter) => t(linkFilterLabelKeys[filter]),
+    [t],
+  );
+  const showNotice = useCallback((text: string) => {
+    noticeSequence.current += 1;
+    setNotice({ id: noticeSequence.current, text });
+  }, []);
+  const showOperationError = useCallback(
+    (error: unknown) => {
+      console.error(error);
+      showNotice(t("toast.operationFailed"));
+    },
+    [showNotice, t],
   );
 
   const pluginContextMenuActions = useMemo(
@@ -143,14 +179,11 @@ export function ResearchWorkspaceApp() {
   const toggleConnectMode = useCallback(() => {
     setConnectMode((current) => {
       const next = !current;
-      setNotice(
-        next
-          ? `${edgeTypeLabel(connectType)} · ${t("workspace.connectInstruction")}`
-          : "",
-      );
+      if (next) showNotice(`${edgeTypeLabel(connectType)} · ${t("workspace.connectInstruction")}`);
+      else setNotice(null);
       return next;
     });
-  }, [connectType, edgeTypeLabel, t]);
+  }, [connectType, edgeTypeLabel, showNotice, t]);
 
   const addNote = useCallback(() => {
     setComposer({ type: "note", x: 610, y: 430 });
@@ -160,8 +193,8 @@ export function ResearchWorkspaceApp() {
     const mode = preferences.defaultLayout;
     workspace.applyLayout(mode, linkFilter);
     setLayoutMode(mode);
-    setNotice(`${mode.replaceAll("-", " ")} layout applied`);
-  }, [linkFilter, preferences.defaultLayout, workspace]);
+    showNotice(t("toast.layoutApplied", { layout: layoutLabel(mode) }));
+  }, [layoutLabel, linkFilter, preferences.defaultLayout, showNotice, t, workspace]);
 
   const exportProject = useCallback(() => downloadProject(workspace.project), [workspace.project]);
 
@@ -169,19 +202,19 @@ export function ResearchWorkspaceApp() {
     try {
       const result = await saveProjectNative(workspace.project);
       if (result) {
-        setNotice(t("workspace.projectSaved"));
+        showNotice(t("workspace.projectSaved"));
         setMenuOpen(false);
       }
     } catch (error) {
       if (error instanceof Error && error.message === "DESKTOP_REQUIRED") {
         downloadProject(workspace.project);
-        setNotice(t("workspace.projectSaved"));
+        showNotice(t("workspace.projectSaved"));
         setMenuOpen(false);
         return;
       }
-      setNotice(error instanceof Error ? error.message : String(error));
+      showOperationError(error);
     }
-  }, [t, workspace.project]);
+  }, [showNotice, showOperationError, t, workspace.project]);
 
   const importProject = useCallback(async () => {
     try {
@@ -191,23 +224,23 @@ export function ResearchWorkspaceApp() {
       setMenuOpen(false);
       setLayoutMode(null);
       setLinkFilter(null);
-      setNotice(t("workspace.projectImported"));
+      showNotice(t("workspace.projectImported"));
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      showOperationError(error);
     }
-  }, [t, workspace]);
+  }, [showNotice, showOperationError, t, workspace]);
 
   const runPluginExport = useCallback(
     async (format: "pdf" | "svg" | "png") => {
       if (!exportCommand) return;
       try {
         const path = await exportProjectWithPlugin(workspace.project, exportCommand, format);
-        if (path) setNotice(`${format.toUpperCase()} · ${t("workspace.exportComplete")}`);
+        if (path) showNotice(`${format.toUpperCase()} · ${t("workspace.exportComplete")}`);
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error));
+        showOperationError(error);
       }
     },
-    [exportCommand, t, workspace.project],
+    [exportCommand, showNotice, showOperationError, t, workspace.project],
   );
 
   const openFolder = useCallback(async () => {
@@ -218,9 +251,9 @@ export function ResearchWorkspaceApp() {
       setMenuOpen(false);
       setFolderWorkspace({ root: result.path, projects: result.projects });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      showOperationError(error);
     }
-  }, [folderCommand]);
+  }, [folderCommand, showOperationError]);
 
   const openGit = useCallback(async () => {
     if (!availableGitCommand) return;
@@ -231,9 +264,9 @@ export function ResearchWorkspaceApp() {
       setGitCommand(availableGitCommand);
       setGitSnapshot(snapshot);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      showOperationError(error);
     }
-  }, [availableGitCommand]);
+  }, [availableGitCommand, showOperationError]);
 
   const saveGitSnapshot = useCallback(async () => {
     if (!gitCommand || !gitSnapshot || pluginBusy) return;
@@ -245,13 +278,21 @@ export function ResearchWorkspaceApp() {
         workspace.project,
       );
       setGitSnapshot(snapshot);
-      setNotice(t("workspace.gitSnapshotSaved"));
+      showNotice(t("workspace.gitSnapshotSaved"));
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      showOperationError(error);
     } finally {
       setPluginBusy(false);
     }
-  }, [gitCommand, gitSnapshot, pluginBusy, t, workspace.project]);
+  }, [gitCommand, gitSnapshot, pluginBusy, showNotice, showOperationError, t, workspace.project]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => {
+      setNotice((current) => (current?.id === notice.id ? null : current));
+    }, toastVisibleMs);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -402,7 +443,7 @@ export function ResearchWorkspaceApp() {
         onConnectType={(type) => {
           setConnectType(type);
           setConnectMode(true);
-          setNotice(`${edgeTypeLabel(type)} · ${t("workspace.connectInstruction")}`);
+          showNotice(`${edgeTypeLabel(type)} · ${t("workspace.connectInstruction")}`);
         }}
         onNote={addNote}
         onFind={() => setSearchOpen(true)}
@@ -410,7 +451,7 @@ export function ResearchWorkspaceApp() {
         onLayout={(mode) => {
           workspace.applyLayout(mode, linkFilter);
           setLayoutMode(mode);
-          setNotice(`${mode.replaceAll("-", " ")} layout applied`);
+          showNotice(t("toast.layoutApplied", { layout: layoutLabel(mode) }));
         }}
         onUndo={workspace.undo}
         onRedo={workspace.redo}
@@ -422,7 +463,7 @@ export function ResearchWorkspaceApp() {
       <div
         className={`relative grid min-h-0 flex-1 transition-[grid-template-columns] duration-[360ms] ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${
           inspectorOpen
-            ? "grid-cols-[minmax(0,1fr)_320px]"
+            ? "grid-cols-[minmax(0,1fr)_min(320px,40vw)]"
             : "grid-cols-[minmax(0,1fr)_0px]"
         }`}
       >
@@ -456,10 +497,10 @@ export function ResearchWorkspaceApp() {
               setLinkFilter(nextFilter);
               setLayoutMode(mode);
               workspace.applyLayout(mode, nextFilter);
-              setNotice(
+              showNotice(
                 nextFilter
-                  ? `${nextFilter} links filtered and re-laid out`
-                  : `All links restored in ${mode.replaceAll("-", " ")} layout`,
+                  ? t("toast.linksFiltered", { relation: linkFilterLabel(nextFilter) })
+                  : t("toast.linksRestored", { layout: layoutLabel(mode) }),
               );
             }}
             onSelectNode={(nodeId) => {
@@ -474,24 +515,24 @@ export function ResearchWorkspaceApp() {
             onRequestConnect={(nodeId) => {
               workspace.selectNode(nodeId);
               setConnectMode(true);
-              setNotice(`${edgeTypeLabel(connectType)} · ${t("workspace.connectInstruction")}`);
+              showNotice(`${edgeTypeLabel(connectType)} · ${t("workspace.connectInstruction")}`);
             }}
             onDuplicateNode={(nodeId) => {
               workspace.duplicateNode(nodeId);
               setInspectorOpen(true);
-              setNotice("Node duplicated");
+              showNotice(t("toast.nodeDuplicated"));
             }}
             onDeleteNode={(nodeId) => {
               workspace.removeNode(nodeId);
-              setNotice("Node deleted · Undo is available");
+              showNotice(t("toast.nodeDeleted"));
             }}
             onReverseEdge={(edgeId) => {
               workspace.reverseEdge(edgeId);
-              setNotice("Relation direction reversed");
+              showNotice(t("toast.relationReversed"));
             }}
             onDeleteEdge={(edgeId) => {
               workspace.removeEdge(edgeId);
-              setNotice("Relation deleted · Undo is available");
+              showNotice(t("toast.relationDeleted"));
             }}
             onApplyDefaultLayout={applyDefaultLayout}
             onCreateEdge={(source, target) => {
@@ -499,7 +540,7 @@ export function ResearchWorkspaceApp() {
               setConnectMode(false);
               if (edgeId) {
                 setInspectorOpen(true);
-                setNotice(`${edgeTypeLabel(connectType)} · ${t("workspace.relationCreated")}`);
+                showNotice(`${edgeTypeLabel(connectType)} · ${t("workspace.relationCreated")}`);
               }
             }}
             onRequestCreate={requestCreate}
@@ -520,11 +561,14 @@ export function ResearchWorkspaceApp() {
                   },
                 );
                 const output = JSON.stringify(result.output);
-                setNotice(
-                  `${action.pluginName} · ${output.slice(0, 160)}${output.length > 160 ? "…" : ""}`,
+                showNotice(
+                  t("toast.pluginResult", {
+                    plugin: action.pluginName,
+                    result: `${output.slice(0, 160)}${output.length > 160 ? "…" : ""}`,
+                  }),
                 );
               } catch (error) {
-                setNotice(error instanceof Error ? error.message : String(error));
+                showOperationError(error);
               }
             }}
           />
@@ -570,8 +614,13 @@ export function ResearchWorkspaceApp() {
       )}
 
       {notice && !connectMode && (
-        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full border border-ink/20 bg-paper px-4 py-2 font-serif text-[11px] shadow-sm">
-          {notice}
+        <div
+          key={notice.id}
+          className="workspace-toast"
+          role="status"
+          aria-live="polite"
+        >
+          {notice.text}
         </div>
       )}
 
@@ -595,7 +644,7 @@ export function ResearchWorkspaceApp() {
             workspace.resetDemo();
             setLayoutMode(null);
             setLinkFilter(null);
-            setNotice("");
+            setNotice(null);
             setMenuOpen(false);
           }}
         />
@@ -611,7 +660,7 @@ export function ResearchWorkspaceApp() {
               JSON.stringify(nextPreferences),
             );
             setSettingsOpen(false);
-            setNotice("Settings saved");
+            showNotice(t("toast.settingsSaved"));
           }}
         />
       )}
@@ -630,10 +679,10 @@ export function ResearchWorkspaceApp() {
                 setFolderWorkspace(null);
                 setLayoutMode(null);
                 setLinkFilter(null);
-                setNotice(t("workspace.projectImported"));
+                showNotice(t("workspace.projectImported"));
               })
               .catch((error: unknown) => {
-                setNotice(error instanceof Error ? error.message : String(error));
+                showOperationError(error);
               });
           }}
         />
@@ -654,7 +703,7 @@ export function ResearchWorkspaceApp() {
           onApplyPatch={() => {
             if (!gitPatch) return;
             workspace.applyGraphPatch(gitPatch);
-            setNotice(t("workspace.patchApplied"));
+            showNotice(t("workspace.patchApplied"));
           }}
         />
       )}
@@ -678,7 +727,7 @@ export function ResearchWorkspaceApp() {
             workspace.createNode(draft, x, y);
             setComposer(null);
             setInspectorOpen(true);
-            setNotice("Node added");
+            showNotice(t("toast.nodeAdded"));
           }}
         />
       )}

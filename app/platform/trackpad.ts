@@ -1,5 +1,5 @@
 export type NativeTrackpadContact = {
-  phase: "down" | "move" | "up";
+  phase: "down" | "move" | "up" | "cancel";
   pointerId: number;
   contactCount: number;
   x: number;
@@ -7,7 +7,10 @@ export type NativeTrackpadContact = {
   timestampMs: number;
 };
 
-/** 仅在 Tauri/Windows 提供原始触控板事件；浏览器继续使用标准 PointerEvent。 / Uses native contacts only when Tauri exposes them; browsers retain PointerEvent fallbacks. */
+/**
+ * 仅在 Tauri/Windows 提供原始触控板事件；浏览器继续使用标准 PointerEvent。
+ * Uses native contacts only when Tauri exposes them; browsers retain PointerEvent fallbacks.
+ */
 export async function listenForNativeTrackpadContacts(
   handler: (contact: NativeTrackpadContact) => void,
 ): Promise<() => void> {

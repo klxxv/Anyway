@@ -111,6 +111,17 @@ const en = {
   "workspace.createObject": "Create research object",
   "workspace.chooseRelation": "Choose relation semantics",
   "workspace.arrangeResearch": "Arrange visible research",
+  "toast.layoutApplied": "{layout} layout applied.",
+  "toast.linksFiltered": "{relation} links filtered and re-laid out.",
+  "toast.linksRestored": "All links restored in {layout} layout.",
+  "toast.nodeDuplicated": "Node duplicated.",
+  "toast.nodeDeleted": "Node deleted. Undo is available.",
+  "toast.relationReversed": "Relation direction reversed.",
+  "toast.relationDeleted": "Relation deleted. Undo is available.",
+  "toast.settingsSaved": "Settings saved.",
+  "toast.nodeAdded": "Node added.",
+  "toast.pluginResult": "{plugin}: {result}",
+  "toast.operationFailed": "The operation failed. Please try again.",
   "node.question": "Question",
   "node.questionDesc": "Frame an answerable inquiry.",
   "node.group": "Group",
@@ -503,6 +514,17 @@ const zhCN: Record<MessageKey, string> = {
   "workspace.createObject": "创建研究对象",
   "workspace.chooseRelation": "选择关系语义",
   "workspace.arrangeResearch": "排列可见研究对象",
+  "toast.layoutApplied": "已应用“{layout}”布局。",
+  "toast.linksFiltered": "已筛选“{relation}”关系并重新布局。",
+  "toast.linksRestored": "已恢复全部关系并应用“{layout}”布局。",
+  "toast.nodeDuplicated": "节点已复制。",
+  "toast.nodeDeleted": "节点已删除，可使用撤销恢复。",
+  "toast.relationReversed": "关系方向已反转。",
+  "toast.relationDeleted": "关系已删除，可使用撤销恢复。",
+  "toast.settingsSaved": "设置已保存。",
+  "toast.nodeAdded": "节点已添加。",
+  "toast.pluginResult": "{plugin}：{result}",
+  "toast.operationFailed": "操作失败，请重试。",
   "node.question": "问题",
   "node.questionDesc": "建立一个可回答的研究问题。",
   "node.group": "分组",
@@ -814,7 +836,12 @@ export function translate(
   locale: Locale,
   key: MessageKey,
   extensions: Readonly<Record<string, Partial<Record<MessageKey, string>>>> = {},
+  parameters: Readonly<Record<string, string | number>> = {},
 ): string {
   const builtin = localeCatalog[locale as BuiltinLocale];
-  return extensions[locale]?.[key] ?? builtin?.[key] ?? localeCatalog.en[key];
+  const message = extensions[locale]?.[key] ?? builtin?.[key] ?? localeCatalog.en[key];
+  return Object.entries(parameters).reduce(
+    (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
+    message,
+  );
 }

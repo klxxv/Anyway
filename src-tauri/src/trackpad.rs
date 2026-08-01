@@ -1,4 +1,5 @@
-//! Windows 精确式触控板观察桥；不接管系统手势，只转发原始接触点。 / Observes Precision Touchpad contacts without taking over system gestures.
+//! Windows 精确式触控板观察桥；不接管系统手势，只转发原始接触点。
+//! Observes Precision Touchpad contacts without taking over system gestures.
 
 #![cfg(windows)]
 
@@ -18,10 +19,10 @@ use windows::Win32::{
     Graphics::Gdi::ScreenToClient,
     UI::{
         Accessibility::RegisterPointerInputTargetEx,
-        Input::Pointer::{GetPointerInfo, POINTER_INFO},
+        Input::Pointer::{GetPointerInfo, POINTER_FLAG_CANCELED, POINTER_INFO},
         WindowsAndMessaging::{
-            CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, PT_TOUCHPAD, WM_POINTERDOWN,
-            WM_POINTERUP, WM_POINTERUPDATE, WNDPROC,
+            CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, PT_TOUCHPAD,
+            WM_POINTERCAPTURECHANGED, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE, WNDPROC,
         },
     },
 };
@@ -56,16 +57,22 @@ unsafe extern "system" fn trackpad_wnd_proc(
         if unsafe { GetPointerInfo(pointer_id, &mut pointer_info) }.is_ok()
             && pointer_info.pointerType == PT_TOUCHPAD
         {
-            let phase = match message {
-                WM_POINTERDOWN => "down",
-                WM_POINTERUP => "up",
-                _ => "move",
+            let cancelled =
+                (pointer_info.pointerFlags & POINTER_FLAG_CANCELED) != Default::default();
+            let phase = if cancelled {
+                "cancel"
+            } else {
+                match message {
+                    WM_POINTERDOWN => "down",
+                    WM_POINTERUP => "up",
+                    _ => "move",
+                }
             };
             let mut point = pointer_info.ptPixelLocation;
             let _ = unsafe { ScreenToClient(hwnd, &mut point) };
             let contacts = ACTIVE_CONTACTS.get_or_init(|| Mutex::new(HashSet::new()));
             if let Ok(mut active) = contacts.lock() {
-                if message == WM_POINTERUP {
+                if message == WM_POINTERUP || cancelled {
                     active.remove(&pointer_id);
                 } else {
                     active.insert(pointer_id);
@@ -83,6 +90,23 @@ unsafe extern "system" fn trackpad_wnd_proc(
                 }
             }
         }
+    } else if message == WM_POINTERCAPTURECHANGED {
+        // 驱动或窗口焦点中断时清理全部接触点，避免下一次手势继承陈旧状态。
+        // Clear stale contacts after capture loss so the next gesture starts cleanly.
+        let contacts = ACTIVE_CONTACTS.get_or_init(|| Mutex::new(HashSet::new()));
+        if let Ok(mut active) = contacts.lock() {
+            active.clear();
+        }
+        if let Some(sender) = EVENT_SENDER.get() {
+            let _ = sender.send(TrackpadContactEvent {
+                phase: "cancel",
+                pointer_id: (wparam.0 as u32) & 0xffff,
+                contact_count: 0,
+                x: 0.0,
+                y: 0.0,
+                timestamp_ms: 0,
+            });
+        }
     }
 
     let original = ORIGINAL_WNDPROC.get().copied().unwrap_or_default();
@@ -93,7 +117,8 @@ unsafe extern "system" fn trackpad_wnd_proc(
     unsafe { CallWindowProcW(previous, hwnd, message, wparam, lparam) }
 }
 
-/// 注册观察型触控板输入；失败时 WebView 的标准缩放与触屏 PointerEvent 仍然可用。 / Registers observation-only touchpad input with safe web fallbacks on failure.
+/// 注册观察型触控板输入；失败时 WebView 的标准缩放与触屏 PointerEvent 仍然可用。
+/// Registers observation-only touchpad input with safe web fallbacks on failure.
 pub fn install(window: &WebviewWindow, app: AppHandle) -> Result<bool, String> {
     if ORIGINAL_WNDPROC.get().is_some() {
         return Ok(true);

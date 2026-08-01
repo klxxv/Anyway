@@ -27,7 +27,10 @@ import type {
 import type { ResolvedPluginContextMenuAction } from "../../../plugins/context-menu";
 import { listenForNativeTrackpadContacts } from "../../../platform/trackpad";
 import { useTwoFingerPie } from "../hooks/use-two-finger-pie";
-import { clampPieMenuPoint } from "../hooks/two-finger-gesture";
+import {
+  clampPieMenuPoint,
+  viewportForTrackpadPinch,
+} from "../hooks/two-finger-gesture";
 import type { PieMenuState, WorkspaceEdge, WorkspaceNode } from "../workspace-types";
 import {
   type ContextMenuActionId,
@@ -478,9 +481,24 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         event.preventDefault();
       }}
       onWheelCapture={(event) => {
-        if (!pieMenu?.gestureActive) return;
+        if (pieMenu?.gestureActive) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        // Chromium/WebView2 将触控板捏合编码为 ctrlKey=true 的 WheelEvent。
+        // Handle it explicitly so Windows driver differences cannot disable canvas zoom.
+        if (!event.ctrlKey || !flowRef.current || !wrapperRef.current) return;
+        const bounds = wrapperRef.current.getBoundingClientRect();
+        const nextViewport = viewportForTrackpadPinch(
+          flowRef.current.getViewport(),
+          { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+          event.deltaY,
+          event.deltaMode,
+        );
         event.preventDefault();
         event.stopPropagation();
+        void flowRef.current.setViewport(nextViewport);
       }}
     >
       <ReactFlow<WorkspaceNode, WorkspaceEdge>

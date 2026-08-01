@@ -28,7 +28,7 @@ const localeStorageKey = "research-canvas.locale.v1";
 type I18nValue = {
   locale: Locale;
   setLocale: (locale: Locale) => void;
-  t: (key: MessageKey) => string;
+  t: (key: MessageKey, parameters?: Readonly<Record<string, string | number>>) => string;
   availableLocales: Array<{ locale: Locale; name: string; source: "builtin" | "plugin" }>;
 };
 
@@ -119,7 +119,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       locale,
       setLocale,
       availableLocales,
-      t: (key) => translate(locale, key, pluginCatalog),
+      t: (key, parameters) => translate(locale, key, pluginCatalog, parameters),
     }),
     [availableLocales, locale, pluginCatalog, setLocale],
   );

@@ -34,6 +34,7 @@ import {
   measureTwoFingerFrame,
   selectPieNodeType,
   TWO_FINGER_HOLD_MS,
+  viewportForTrackpadPinch,
 } from "../app/features/research-workspace/hooks/two-finger-gesture";
 
 function edge(type: ResearchEdge["type"], override: Partial<ResearchEdge> = {}): ResearchEdge {
@@ -256,6 +257,23 @@ test("two-finger hold rejects pinch span changes without blocking stable contact
   assert.ok(origin && stable && pinch);
   assert.equal(isStableTwoFingerHold(origin, stable), true);
   assert.equal(isStableTwoFingerHold(origin, pinch), false);
+});
+
+test("trackpad pinch zoom keeps the gesture center anchored and clamps scale", () => {
+  const viewport = { x: 10, y: 20, zoom: 1 };
+  const cursor = { x: 210, y: 170 };
+  const zoomed = viewportForTrackpadPinch(viewport, cursor, -40);
+  assert.ok(zoomed.zoom > viewport.zoom);
+  assert.ok(Math.abs((cursor.x - zoomed.x) / zoomed.zoom - 200) < 1e-9);
+  assert.ok(Math.abs((cursor.y - zoomed.y) / zoomed.zoom - 150) < 1e-9);
+  assert.equal(
+    viewportForTrackpadPinch({ ...viewport, zoom: 1.7 }, cursor, -10_000).zoom,
+    1.7,
+  );
+  assert.equal(
+    viewportForTrackpadPinch({ ...viewport, zoom: 0.45 }, cursor, 10_000).zoom,
+    0.45,
+  );
 });
 
 test("pie selection covers all eight visible node directions", () => {
