@@ -36,7 +36,7 @@ and radial menu each document their responsibility in both languages.
 | `use-workspace-project.ts` | Medium | Owns persistence, history, and mutations but no rendering. | Split persistence adapter only if remote storage is added. |
 | Graph canvas and renderers | Medium | React Flow-specific state is isolated from domain records. | Keep React Flow types inside the canvas boundary. |
 | Inspector/dialog/top-bar components | Low | Presentational components receive typed data and callbacks. | Continue adding behavior through props or focused hooks. |
-| `use-two-finger-pie.ts` | Low | Gesture state is isolated and reports semantic menu choices. | Add device-specific tests when trackpad automation becomes available. |
+| `trackpad-pinch.ts` | Low | Native and browser pinch math is isolated from the canvas UI. | Add hardware-in-loop tests when Precision Touchpad automation becomes available. |
 | Tailwind tokens and component CSS | Medium | Global tokens are centralized; React Flow and pie geometry require named class contracts. | Keep complex third-party overrides in the dedicated component layer. |
 | Tauri client and Rust installer | Medium | IPC is isolated from graph semantics but spans a browser/Rust boundary. | Add end-to-end installer and error cleanup tests. |
 

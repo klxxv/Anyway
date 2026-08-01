@@ -39,7 +39,7 @@ pub fn run() {
                 .build()?;
             #[cfg(windows)]
             if let Err(error) = trackpad::install(&window, app.handle().clone()) {
-                eprintln!("Precision Touchpad observer unavailable: {error}");
+                eprintln!("Precision Touchpad pinch bridge unavailable: {error}");
             }
             Ok(())
         })

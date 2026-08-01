@@ -4,6 +4,9 @@ export type NativeTrackpadContact = {
   contactCount: number;
   x: number;
   y: number;
+  /** Device-relative HIMETRIC coordinates used to calculate physical pinch distance. */
+  physicalX: number;
+  physicalY: number;
   timestampMs: number;
 };
 

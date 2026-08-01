@@ -26,11 +26,13 @@ import type {
 } from "../../../lib/research-types";
 import type { ResolvedPluginContextMenuAction } from "../../../plugins/context-menu";
 import { listenForNativeTrackpadContacts } from "../../../platform/trackpad";
-import { useTwoFingerPie } from "../hooks/use-two-finger-pie";
 import {
-  clampPieMenuPoint,
-  viewportForTrackpadPinch,
-} from "../hooks/two-finger-gesture";
+  measurePhysicalPinchSpan,
+  viewportForNativeTrackpadPinch,
+  viewportForTrackpadWheel,
+  type GesturePoint,
+  type GestureViewport,
+} from "../hooks/trackpad-pinch";
 import type { PieMenuState, WorkspaceEdge, WorkspaceNode } from "../workspace-types";
 import {
   type ContextMenuActionId,
@@ -168,6 +170,12 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   } = props;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance<WorkspaceNode, WorkspaceEdge> | null>(null);
+  const nativePinchRef = useRef<{
+    contacts: Map<number, GesturePoint>;
+    originSpan: number | null;
+    originViewport: GestureViewport | null;
+    anchor: GesturePoint | null;
+  }>({ contacts: new Map(), originSpan: null, originViewport: null, anchor: null });
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
@@ -253,53 +261,6 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     });
   }, [addRequest]);
 
-  const toFlowPoint = useCallback(
-    (point: { x: number; y: number }) => {
-      const bounds = wrapperRef.current?.getBoundingClientRect();
-      if (!bounds) return point;
-      return (
-        flowRef.current?.screenToFlowPosition({
-          x: point.x + bounds.left,
-          y: point.y + bounds.top,
-        }) ?? point
-      );
-    },
-    [],
-  );
-
-  const chooseFromGesture = useCallback(
-    (type: ResearchNodeType, point: { x: number; y: number }) => {
-      setPieMenu(null);
-      onRequestCreate(type, point.x, point.y);
-    },
-    [onRequestCreate],
-  );
-
-  const openPieMenu = useCallback((menu: PieMenuState) => {
-    const width = wrapperRef.current?.clientWidth ?? 0;
-    const height = wrapperRef.current?.clientHeight ?? 0;
-    const screen = clampPieMenuPoint(
-      { x: menu.screenX, y: menu.screenY },
-      width,
-      height,
-    );
-    setPieMenu({ ...menu, screenX: screen.x, screenY: screen.y });
-  }, []);
-
-  const gesture = useTwoFingerPie({
-    toFlowPoint,
-    onOpen: openPieMenu,
-    onHighlight: (selectedType) =>
-      setPieMenu((current) => (current ? { ...current, selectedType } : current)),
-    onChoose: chooseFromGesture,
-    onDismiss: () => setPieMenu(null),
-  });
-  const {
-    onNativeTrackpadContact,
-    onContextMenuCapture: onGestureContextMenuCapture,
-    ...gestureHandlers
-  } = gesture;
-
   const contextPoint = useCallback((clientX: number, clientY: number) => {
     const bounds = wrapperRef.current?.getBoundingClientRect();
     const screen = {
@@ -373,19 +334,57 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   useEffect(() => {
     let cancelled = false;
     let stop: () => void = () => undefined;
+    const nativePinch = nativePinchRef.current;
     void listenForNativeTrackpadContacts((contact) => {
+      const gesture = nativePinch;
+      if (contact.phase === "cancel" || contact.phase === "up") {
+        gesture.contacts.clear();
+        gesture.originSpan = null;
+        gesture.originViewport = null;
+        gesture.anchor = null;
+        return;
+      }
       const bounds = wrapperRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      onNativeTrackpadContact(contact, { x: bounds.left, y: bounds.top });
+      const instance = flowRef.current;
+      if (!bounds || !instance) return;
+      if (contact.phase === "down" && contact.contactCount === 1) {
+        gesture.contacts.clear();
+      }
+      gesture.contacts.set(contact.pointerId, {
+        x: contact.physicalX,
+        y: contact.physicalY,
+      });
+      const span = measurePhysicalPinchSpan([...gesture.contacts.values()]);
+      if (span === null || span <= 0) return;
+      if (!gesture.originSpan || !gesture.originViewport || !gesture.anchor) {
+        gesture.originSpan = span;
+        gesture.originViewport = instance.getViewport();
+        gesture.anchor = {
+          x: contact.x - bounds.left,
+          y: contact.y - bounds.top,
+        };
+        return;
+      }
+      const ratio = span / gesture.originSpan;
+      if (Math.abs(ratio - 1) < 0.003) return;
+      void instance.setViewport(
+        viewportForNativeTrackpadPinch(
+          gesture.originViewport,
+          gesture.anchor,
+          gesture.originSpan,
+          span,
+        ),
+      );
     }).then((unlisten) => {
       if (cancelled) unlisten();
       else stop = unlisten;
     });
     return () => {
       cancelled = true;
+      nativePinch.contacts.clear();
       stop();
     };
-  }, [onNativeTrackpadContact]);
+  }, []);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<WorkspaceNode>[]) => {
@@ -475,22 +474,22 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     <div
       ref={wrapperRef}
       className="relative h-full min-h-0 overflow-hidden bg-canvas"
-      {...gestureHandlers}
       onContextMenuCapture={(event) => {
-        onGestureContextMenuCapture?.(event);
         event.preventDefault();
       }}
       onWheelCapture={(event) => {
-        if (pieMenu?.gestureActive) {
+        if (!event.ctrlKey || !flowRef.current || !wrapperRef.current) return;
+        // Tauri receives physical Precision Touchpad contacts through the native
+        // bridge. Ignore WebView's optional synthetic Ctrl+Wheel copy to prevent
+        // double zoom; browsers keep the wheel fallback below.
+        // Tauri 直接使用物理触点；忽略 WebView 可能重复生成的 Ctrl+Wheel。
+        if ("__TAURI_INTERNALS__" in window) {
           event.preventDefault();
           event.stopPropagation();
           return;
         }
-        // Chromium/WebView2 将触控板捏合编码为 ctrlKey=true 的 WheelEvent。
-        // Handle it explicitly so Windows driver differences cannot disable canvas zoom.
-        if (!event.ctrlKey || !flowRef.current || !wrapperRef.current) return;
         const bounds = wrapperRef.current.getBoundingClientRect();
-        const nextViewport = viewportForTrackpadPinch(
+        const nextViewport = viewportForTrackpadWheel(
           flowRef.current.getViewport(),
           { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
           event.deltaY,

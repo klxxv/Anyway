@@ -29,13 +29,10 @@ import {
   edgeTypeMessageKeys,
 } from "../app/features/research-workspace/workspace-edge-labels";
 import {
-  clampPieMenuPoint,
-  isStableTwoFingerHold,
-  measureTwoFingerFrame,
-  selectPieNodeType,
-  TWO_FINGER_HOLD_MS,
-  viewportForTrackpadPinch,
-} from "../app/features/research-workspace/hooks/two-finger-gesture";
+  measurePhysicalPinchSpan,
+  viewportForNativeTrackpadPinch,
+  viewportForTrackpadWheel,
+} from "../app/features/research-workspace/hooks/trackpad-pinch";
 
 function edge(type: ResearchEdge["type"], override: Partial<ResearchEdge> = {}): ResearchEdge {
   return {
@@ -240,62 +237,30 @@ test("shortcut capture is canonical and duplicate bindings are detected", () => 
   );
 });
 
-test("two-finger hold rejects pinch span changes without blocking stable contact", () => {
-  assert.equal(TWO_FINGER_HOLD_MS, 1000);
-  const origin = measureTwoFingerFrame([
-    { x: 100, y: 100 },
-    { x: 160, y: 100 },
-  ]);
-  const stable = measureTwoFingerFrame([
-    { x: 103, y: 102 },
-    { x: 163, y: 102 },
-  ]);
-  const pinch = measureTwoFingerFrame([
-    { x: 80, y: 100 },
-    { x: 180, y: 100 },
-  ]);
-  assert.ok(origin && stable && pinch);
-  assert.equal(isStableTwoFingerHold(origin, stable), true);
-  assert.equal(isStableTwoFingerHold(origin, pinch), false);
-});
-
-test("trackpad pinch zoom keeps the gesture center anchored and clamps scale", () => {
+test("browser and native trackpad pinch keep the cursor anchored and clamp scale", () => {
   const viewport = { x: 10, y: 20, zoom: 1 };
   const cursor = { x: 210, y: 170 };
-  const zoomed = viewportForTrackpadPinch(viewport, cursor, -40);
+  const zoomed = viewportForTrackpadWheel(viewport, cursor, -40);
   assert.ok(zoomed.zoom > viewport.zoom);
   assert.ok(Math.abs((cursor.x - zoomed.x) / zoomed.zoom - 200) < 1e-9);
   assert.ok(Math.abs((cursor.y - zoomed.y) / zoomed.zoom - 150) < 1e-9);
   assert.equal(
-    viewportForTrackpadPinch({ ...viewport, zoom: 1.7 }, cursor, -10_000).zoom,
+    viewportForTrackpadWheel({ ...viewport, zoom: 1.7 }, cursor, -10_000).zoom,
     1.7,
   );
   assert.equal(
-    viewportForTrackpadPinch({ ...viewport, zoom: 0.45 }, cursor, 10_000).zoom,
+    viewportForTrackpadWheel({ ...viewport, zoom: 0.45 }, cursor, 10_000).zoom,
     0.45,
   );
-});
-
-test("pie selection covers all eight visible node directions", () => {
-  const origin = { x: 100, y: 100 };
-  assert.equal(selectPieNodeType(origin, { x: 100, y: 40 }), "question");
-  assert.equal(selectPieNodeType(origin, { x: 145, y: 55 }), "concept");
-  assert.equal(selectPieNodeType(origin, { x: 160, y: 100 }), "variable");
-  assert.equal(selectPieNodeType(origin, { x: 145, y: 145 }), "method");
-  assert.equal(selectPieNodeType(origin, { x: 100, y: 160 }), "dataset");
-  assert.equal(selectPieNodeType(origin, { x: 55, y: 145 }), "evidence");
-  assert.equal(selectPieNodeType(origin, { x: 40, y: 100 }), "result");
-  assert.equal(selectPieNodeType(origin, { x: 55, y: 55 }), "note");
-  assert.equal(selectPieNodeType(origin, { x: 110, y: 110 }), null);
-});
-
-test("pie menu is clamped inside compact canvases", () => {
-  assert.deepEqual(clampPieMenuPoint({ x: 12, y: 780 }, 900, 820), {
-    x: 148,
-    y: 672,
-  });
-  assert.deepEqual(clampPieMenuPoint({ x: 20, y: 20 }, 240, 200), {
-    x: 120,
-    y: 100,
-  });
+  assert.equal(
+    measurePhysicalPinchSpan([
+      { x: 1000, y: 2000 },
+      { x: 4000, y: 6000 },
+    ]),
+    5000,
+  );
+  const nativeZoomed = viewportForNativeTrackpadPinch(viewport, cursor, 4000, 6000);
+  assert.equal(nativeZoomed.zoom, 1.5);
+  assert.ok(Math.abs((cursor.x - nativeZoomed.x) / nativeZoomed.zoom - 200) < 1e-9);
+  assert.ok(Math.abs((cursor.y - nativeZoomed.y) / nativeZoomed.zoom - 150) < 1e-9);
 });

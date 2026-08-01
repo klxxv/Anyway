@@ -315,19 +315,10 @@
   }
 
   .zen-pie-item:hover,
-  .zen-pie-item:focus-visible,
-  .zen-pie-item.is-active {
+  .zen-pie-item:focus-visible {
     color: var(--color-blue);
     outline: none;
     transform: scale(1.06);
-  }
-
-  .zen-pie-item.is-active {
-    font-weight: 700;
-  }
-
-  .zen-pie-item.is-active svg {
-    stroke-width: 2.25;
   }
 
   .zen-pie-item-0 {
