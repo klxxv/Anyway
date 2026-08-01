@@ -6,6 +6,10 @@ export type NativeTrackpadFrame = {
   centerY: number;
   span: number;
   scale: number;
+  panX: number;
+  panY: number;
+  deviceWidth: number;
+  deviceHeight: number;
   cursorX: number;
   cursorY: number;
 };

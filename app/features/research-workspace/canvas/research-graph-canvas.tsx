@@ -16,7 +16,14 @@ import {
   type NodeChange,
   type ReactFlowInstance,
 } from "@xyflow/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
 import type {
@@ -30,9 +37,7 @@ import {
   type NativeTrackpadFrame,
 } from "../../../platform/trackpad";
 import {
-  viewportForNativeTrackpadPinch,
-  viewportForTrackpadWheel,
-  shouldSuppressSyntheticPinchWheel,
+  viewportForCompleteTrackpadFrame,
   type GesturePoint,
   type GestureViewport,
 } from "../hooks/trackpad-pinch";
@@ -57,6 +62,9 @@ import { computeEdgeRoutes } from "./edge-routing";
 
 const nodeTypes = { researchNode: ResearchNodeCard };
 const edgeTypes = { researchEdge: ResearchEdgeLine };
+const subscribeRuntime = () => () => undefined;
+const readTauriRuntime = () =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 type ResearchGraphCanvasProps = {
   project: ProjectState;
@@ -177,22 +185,15 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     latestFrame: NativeTrackpadFrame | null;
     originViewport: GestureViewport | null;
     anchor: GesturePoint | null;
-    originScale: number;
     animationFrame: number | null;
     ending: boolean;
   }>({
     latestFrame: null,
     originViewport: null,
     anchor: null,
-    originScale: 1,
     animationFrame: null,
     ending: false,
   });
-  // Only suppress WebView2's Ctrl+Wheel copy while native frames are actually
-  // arriving. Registration alone is insufficient because WebView2 renders in
-  // a child HWND that can remain the pointer target.
-  // 仅在原生帧确实到达时屏蔽 WebView2 滚轮副本；不能只凭注册成功判断输入链路可用。
-  const nativePinchActiveRef = useRef(false);
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
@@ -206,6 +207,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [contextMenu, setContextMenu] = useState<WorkspaceContextMenuState | null>(null);
   const [pieMenu, setPieMenu] = useState<PieMenuState | null>(null);
+  const isTauriRuntime = useSyncExternalStore(
+    subscribeRuntime,
+    readTauriRuntime,
+    () => false,
+  );
   const placementKey = useMemo(
     () =>
       project.placements
@@ -356,10 +362,8 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       nativePinch.latestFrame = null;
       nativePinch.originViewport = null;
       nativePinch.anchor = null;
-      nativePinch.originScale = 1;
       nativePinch.animationFrame = null;
       nativePinch.ending = false;
-      nativePinchActiveRef.current = false;
     };
     const applyLatestFrame = () => {
       nativePinch.animationFrame = null;
@@ -367,14 +371,21 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       const originViewport = nativePinch.originViewport;
       const anchor = nativePinch.anchor;
       const instance = flowRef.current;
+      const bounds = wrapperRef.current?.getBoundingClientRect();
       nativePinch.latestFrame = null;
-      if (frame && originViewport && anchor && instance) {
-        const relativeScale = frame.scale / nativePinch.originScale;
-        if (Math.abs(relativeScale - 1) >= 0.003) {
-          void instance.setViewport(
-            viewportForNativeTrackpadPinch(originViewport, anchor, 1, relativeScale),
-          );
-        }
+      if (frame && originViewport && anchor && instance && bounds) {
+        // Pan and zoom are composed from the same complete native frame and
+        // committed once per animation frame.
+        // 平移与缩放来自同一个原生完整帧，每个动画帧只提交一次视口变换。
+        void instance.setViewport(
+          viewportForCompleteTrackpadFrame(
+            originViewport,
+            anchor,
+            { x: frame.panX, y: frame.panY },
+            { width: bounds.width, height: bounds.height },
+            frame.scale,
+          ),
+        );
       }
       if (nativePinch.ending) reset();
     };
@@ -388,13 +399,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       const instance = flowRef.current;
       if (!bounds || !instance) return;
       if (frame.phase === "start" || !nativePinch.originViewport || !nativePinch.anchor) {
-        nativePinchActiveRef.current = true;
         nativePinch.originViewport = instance.getViewport();
         nativePinch.anchor = {
           x: frame.cursorX - bounds.left,
           y: frame.cursorY - bounds.top,
         };
-        nativePinch.originScale = frame.scale > 0 ? frame.scale : 1;
         nativePinch.ending = false;
       }
       if (frame.phase === "end") {
@@ -511,31 +520,12 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         event.preventDefault();
       }}
       onWheelCapture={(event) => {
-        if (!event.ctrlKey || !flowRef.current || !wrapperRef.current) return;
-        // Suppress the synthetic wheel only after a native start frame reached
-        // this component. Otherwise WebView2's child HWND owns the pointer and
-        // Ctrl+Wheel is the functional fallback, not a duplicate.
-        // 只有收到原生起始帧后才屏蔽合成滚轮；子窗口持有输入时必须保留回退链路。
-        if (
-          shouldSuppressSyntheticPinchWheel(
-            "__TAURI_INTERNALS__" in window,
-            nativePinchActiveRef.current,
-          )
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        const bounds = wrapperRef.current.getBoundingClientRect();
-        const nextViewport = viewportForTrackpadWheel(
-          flowRef.current.getViewport(),
-          { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
-          event.deltaY,
-          event.deltaMode,
-        );
+        if (!isTauriRuntime) return;
+        // The desktop app has one gesture owner: the native complete-frame
+        // bridge. Consume WebView2's derived wheel copy without transforming.
+        // 桌面端只保留一个手势状态机：原生完整帧桥接。
         event.preventDefault();
         event.stopPropagation();
-        void flowRef.current.setViewport(nextViewport);
       }}
     >
       <ReactFlow<WorkspaceNode, WorkspaceEdge>
@@ -624,9 +614,9 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         fitViewOptions={{ padding: 0.12, maxZoom: 1 }}
         minZoom={0.45}
         maxZoom={1.7}
-        zoomOnPinch
+        zoomOnPinch={!isTauriRuntime}
         zoomOnScroll={false}
-        panOnScroll
+        panOnScroll={!isTauriRuntime}
         preventScrolling
         connectOnClick={connectMode}
         connectionMode={ConnectionMode.Loose}

@@ -29,10 +29,7 @@ import {
   edgeTypeMessageKeys,
 } from "../app/features/research-workspace/workspace-edge-labels";
 import {
-  measurePhysicalPinchSpan,
-  shouldSuppressSyntheticPinchWheel,
-  viewportForNativeTrackpadPinch,
-  viewportForTrackpadWheel,
+  viewportForCompleteTrackpadFrame,
 } from "../app/features/research-workspace/hooks/trackpad-pinch";
 
 function edge(type: ResearchEdge["type"], override: Partial<ResearchEdge> = {}): ResearchEdge {
@@ -238,36 +235,35 @@ test("shortcut capture is canonical and duplicate bindings are detected", () => 
   );
 });
 
-test("browser and native trackpad pinch keep the cursor anchored and clamp scale", () => {
+test("one complete trackpad frame composes two-axis pan and zoom", () => {
   const viewport = { x: 10, y: 20, zoom: 1 };
   const cursor = { x: 210, y: 170 };
-  const zoomed = viewportForTrackpadWheel(viewport, cursor, -40);
-  assert.ok(zoomed.zoom > viewport.zoom);
-  assert.ok(Math.abs((cursor.x - zoomed.x) / zoomed.zoom - 200) < 1e-9);
-  assert.ok(Math.abs((cursor.y - zoomed.y) / zoomed.zoom - 150) < 1e-9);
+  const composed = viewportForCompleteTrackpadFrame(
+    viewport,
+    cursor,
+    { x: 0.1, y: -0.05 },
+    { width: 1000, height: 800 },
+    1.5,
+  );
+  assert.deepEqual(composed, { x: 10, y: -95, zoom: 1.5 });
+
+  const panOnly = viewportForCompleteTrackpadFrame(
+    viewport,
+    cursor,
+    { x: 0.1, y: -0.05 },
+    { width: 1000, height: 800 },
+    1,
+  );
+  assert.deepEqual(panOnly, { x: 110, y: -20, zoom: 1 });
+
   assert.equal(
-    viewportForTrackpadWheel({ ...viewport, zoom: 1.7 }, cursor, -10_000).zoom,
+    viewportForCompleteTrackpadFrame(
+      { ...viewport, zoom: 1.7 },
+      cursor,
+      { x: 0, y: 0 },
+      { width: 1000, height: 800 },
+      100,
+    ).zoom,
     1.7,
   );
-  assert.equal(
-    viewportForTrackpadWheel({ ...viewport, zoom: 0.45 }, cursor, 10_000).zoom,
-    0.45,
-  );
-  assert.equal(
-    measurePhysicalPinchSpan([
-      { x: 1000, y: 2000 },
-      { x: 4000, y: 6000 },
-    ]),
-    5000,
-  );
-  const nativeZoomed = viewportForNativeTrackpadPinch(viewport, cursor, 4000, 6000);
-  assert.equal(nativeZoomed.zoom, 1.5);
-  assert.ok(Math.abs((cursor.x - nativeZoomed.x) / nativeZoomed.zoom - 200) < 1e-9);
-  assert.ok(Math.abs((cursor.y - nativeZoomed.y) / nativeZoomed.zoom - 150) < 1e-9);
-});
-
-test("Tauri keeps the WebView pinch fallback until native frames actually arrive", () => {
-  assert.equal(shouldSuppressSyntheticPinchWheel(true, false), false);
-  assert.equal(shouldSuppressSyntheticPinchWheel(false, true), false);
-  assert.equal(shouldSuppressSyntheticPinchWheel(true, true), true);
 });
