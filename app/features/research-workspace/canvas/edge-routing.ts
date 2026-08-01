@@ -30,6 +30,15 @@ function routedHandle(side: Side, secondaryDelta: number, secondarySize: number)
   return `${side}-${secondaryDelta < 0 ? "left" : "right"}`;
 }
 
+/** 同侧存在多条边时，把锚点均匀分配到边缘的左/中/右（或上/中/下）。 / Distributes sibling anchors across one node side. */
+function distributedHandle(side: Side, index: number, count: number) {
+  if (count <= 1) return null;
+  const slot = count === 2 ? (index === 0 ? -1 : 1) : index === 0 ? -1 : index === count - 1 ? 1 : 0;
+  if (slot === 0) return side;
+  if (side === "left" || side === "right") return `${side}-${slot < 0 ? "top" : "bottom"}`;
+  return `${side}-${slot < 0 ? "left" : "right"}`;
+}
+
 /**
  * 为每条边选择面向目标的节点边缘与分离标签通道，避免穿过卡片或叠在同一点。
  * Chooses facing node sides and separated label lanes so edges avoid cards and each other.
@@ -88,7 +97,20 @@ export function computeEdgeRoutes(project: ProjectState): Record<string, EdgeRou
   const lanes = new Map<string, string[]>();
   preliminary.forEach((route, edgeId) => {
     const key = `${route.edge.source}:${route.sourceSide}`;
-    lanes.set(key, [...(lanes.get(key) ?? []), edgeId].sort());
+    lanes.set(key, [...(lanes.get(key) ?? []), edgeId]);
+  });
+  lanes.forEach((edgeIds) => {
+    edgeIds.sort((leftId, rightId) => {
+      const left = preliminary.get(leftId)!;
+      const right = preliminary.get(rightId)!;
+      const leftTarget = boxes.get(left.edge.target);
+      const rightTarget = boxes.get(right.edge.target);
+      if (!leftTarget || !rightTarget) return leftId.localeCompare(rightId);
+      const leftCenter = center(leftTarget);
+      const rightCenter = center(rightTarget);
+      const verticalSide = left.sourceSide === "top" || left.sourceSide === "bottom";
+      return (verticalSide ? leftCenter.x - rightCenter.x : leftCenter.y - rightCenter.y) || leftId.localeCompare(rightId);
+    });
   });
 
   return Object.fromEntries(
@@ -97,10 +119,11 @@ export function computeEdgeRoutes(project: ProjectState): Record<string, EdgeRou
       const lane = siblings.indexOf(edgeId) - (siblings.length - 1) / 2;
       const offset = lane * 14;
       const horizontal = route.sourceSide === "left" || route.sourceSide === "right";
+      const distributedSource = distributedHandle(route.sourceSide, siblings.indexOf(edgeId), siblings.length);
       return [
         edgeId,
         {
-          sourceHandle: route.sourceHandle,
+          sourceHandle: distributedSource ?? route.sourceHandle,
           targetHandle: route.targetHandle,
           labelOffsetX: horizontal ? 0 : offset,
           labelOffsetY: horizontal ? offset : 0,

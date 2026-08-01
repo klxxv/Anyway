@@ -12,8 +12,9 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useState } from "react";
+import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
-import type { ResearchEdge, ResearchNode } from "../../../lib/research-types";
+import type { ResearchEdge, ResearchNode, ResearchNodeType } from "../../../lib/research-types";
 import {
   customEdgeNote,
   edgeTypeMessageKeys,
@@ -35,6 +36,23 @@ type InspectorPanelProps = {
   onDeleteEdge: (edgeId: string) => void;
   onReverseEdge: (edgeId: string) => void;
   onClose: () => void;
+};
+
+type VariableInstance = {
+  id: string;
+  label: string;
+  value: string;
+};
+
+const nodeTypeMessageKeys: Partial<Record<ResearchNodeType, MessageKey>> = {
+  question: "node.question",
+  concept: "node.group",
+  variable: "node.variable",
+  method: "node.method",
+  dataset: "node.data",
+  evidence: "node.evidence",
+  result: "node.result",
+  note: "node.note",
 };
 
 function valueTypeOf(node: ResearchNode): VariableValueType {
@@ -61,6 +79,44 @@ function InspectorCard({
   const enumValues = Array.isArray(node.data.enumValues)
     ? node.data.enumValues.filter((value): value is string => typeof value === "string")
     : ["low", "medium", "high"];
+  const instances = Array.isArray(node.data.instances)
+    ? node.data.instances.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const candidate = item as Partial<VariableInstance>;
+        return typeof candidate.id === "string" && typeof candidate.label === "string"
+          ? [{ id: candidate.id, label: candidate.label, value: String(candidate.value ?? "") }]
+          : [];
+      })
+    : [
+        {
+          id: `${node.id}-instance-a`,
+          label: `${node.title} · A`,
+          value:
+            node.id === "variable-temperature"
+              ? "34.2"
+              : node.id === "variable-density"
+                ? "0.72"
+                : valueType === "enum"
+                  ? enumValues[0] ?? ""
+                  : valueType === "bool"
+                    ? "true"
+                    : "",
+        },
+        {
+          id: `${node.id}-instance-b`,
+          label: `${node.title} · B`,
+          value:
+            node.id === "variable-temperature"
+              ? "31.6"
+              : node.id === "variable-density"
+                ? "0.48"
+                : valueType === "enum"
+                  ? enumValues[1] ?? enumValues[0] ?? ""
+                  : valueType === "bool"
+                    ? "false"
+                    : "",
+        },
+      ];
   const updateData = (data: Record<string, unknown>) =>
     onUpdate(node.id, { data: { ...node.data, ...data } });
 
@@ -83,7 +139,7 @@ function InspectorCard({
 
       <div className="mb-4 flex items-center justify-between">
         <span className="rounded-[5px] border border-ink/25 bg-paper px-2 py-1 font-serif text-[10px] text-olive">
-          {node.type} · {valueType}
+          {t(nodeTypeMessageKeys[node.type] ?? "node.note")} · {valueType}
         </span>
         <div className="relative">
           <button
@@ -137,13 +193,9 @@ function InspectorCard({
                 </button>
               )}
             </div>
+            {(valueType === "enum" || valueType === "bool") && (
             <div className="space-y-2">
-              {(valueType === "enum"
-                ? enumValues
-                : valueType === "bool"
-                  ? ["true", "false"]
-                  : [typeof node.data.unit === "string" ? node.data.unit : valueType]
-              ).map((value, index) => (
+              {(valueType === "enum" ? enumValues : ["true", "false"]).map((value, index) => (
                 <div
                   key={`${value}-${index}`}
                   className="flex h-9 items-center gap-2 rounded-[4px] border border-ink/25 bg-paper px-2"
@@ -175,6 +227,111 @@ function InspectorCard({
                 </div>
               ))}
             </div>
+            )}
+            {(valueType === "number" || valueType === "text") && (
+              <label className="inspector-row">
+                <span>{t("inspector.unit")}</span>
+                <input
+                  className="w-[142px] border-0 bg-transparent text-right font-serif text-[11px] outline-none focus:text-blue"
+                  value={typeof node.data.unit === "string" ? node.data.unit : ""}
+                  placeholder={valueType === "number" ? "%, °C, kg" : "—"}
+                  onChange={(event) => updateData({ unit: event.target.value })}
+                />
+              </label>
+            )}
+          </div>
+
+          <div className="mt-5 border-t border-ink/15 pt-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-serif text-[12px]">{t("inspector.instances")}</p>
+                <p className="mt-1 font-serif text-[9px] leading-[1.4] text-ink/45">
+                  {t("inspector.instancesHint")}
+                </p>
+              </div>
+              <button
+                className="inline-flex shrink-0 items-center gap-1 font-serif text-[10px] text-blue"
+                onClick={() =>
+                  updateData({
+                    instances: [
+                      ...instances,
+                      {
+                        id: `instance-${Date.now()}`,
+                        label: t("inspector.instanceLabel"),
+                        value: valueType === "enum" ? enumValues[0] ?? "" : valueType === "bool" ? "true" : "",
+                      },
+                    ],
+                  })
+                }
+              >
+                <IconPlus size={14} stroke={1.35} />
+                {t("inspector.addInstance")}
+              </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {instances.map((instance, index) => (
+                <div key={instance.id} className="rounded-[4px] border border-ink/20 bg-paper p-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="min-w-0 flex-1 border-0 bg-transparent font-serif text-[10px] outline-none focus:text-blue"
+                      value={instance.label}
+                      aria-label={t("inspector.instanceLabel")}
+                      onChange={(event) => {
+                        const next = [...instances];
+                        next[index] = { ...instance, label: event.target.value };
+                        updateData({ instances: next });
+                      }}
+                    />
+                    {valueType === "enum" ? (
+                      <select
+                        className="max-w-20 border-0 bg-transparent font-serif text-[10px] outline-none"
+                        value={instance.value}
+                        aria-label={t("inspector.instanceValue")}
+                        onChange={(event) => {
+                          const next = [...instances];
+                          next[index] = { ...instance, value: event.target.value };
+                          updateData({ instances: next });
+                        }}
+                      >
+                        {enumValues.map((value) => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                    ) : valueType === "bool" ? (
+                      <select
+                        className="border-0 bg-transparent font-serif text-[10px] outline-none"
+                        value={instance.value}
+                        aria-label={t("inspector.instanceValue")}
+                        onChange={(event) => {
+                          const next = [...instances];
+                          next[index] = { ...instance, value: event.target.value };
+                          updateData({ instances: next });
+                        }}
+                      >
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    ) : (
+                      <input
+                        className="w-20 border-0 bg-transparent text-right font-serif text-[10px] outline-none focus:text-blue"
+                        value={instance.value}
+                        aria-label={t("inspector.instanceValue")}
+                        onChange={(event) => {
+                          const next = [...instances];
+                          next[index] = { ...instance, value: event.target.value };
+                          updateData({ instances: next });
+                        }}
+                      />
+                    )}
+                    <button
+                      className="icon-quiet"
+                      aria-label={t("inspector.removeInstance")}
+                      onClick={() => updateData({ instances: instances.filter((_, itemIndex) => itemIndex !== index) })}
+                    >
+                      <IconX size={14} stroke={1.3} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </>
       )}
@@ -188,53 +345,14 @@ function InspectorCard({
         />
       </label>
 
-    </section>
-  );
-}
+      <button
+        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-[4px] border border-alert/25 px-3 py-2 font-serif text-[10px] text-alert transition hover:border-alert/50 hover:bg-alert/5"
+        onClick={() => onDelete(node.id)}
+      >
+        <IconTrash size={14} stroke={1.35} />
+        {t("inspector.deleteNode")}
+      </button>
 
-function ObservedFactCard() {
-  const { t } = useI18n();
-  return (
-    <section className="px-4 pb-5 pt-4">
-      <div className="mb-2 flex items-start gap-2">
-        <h3 className="flex-1 font-serif text-[16px] leading-tight">{t("inspector.observedRain")}</h3>
-        <button className="icon-quiet" aria-label={t("inspector.pinFact")}>
-          <IconPin size={17} stroke={1.35} />
-        </button>
-        <button className="icon-quiet" aria-label={t("inspector.hideFact")}>
-          <IconX size={18} stroke={1.35} />
-        </button>
-      </div>
-      <div className="mb-4 flex items-center justify-between">
-        <span className="rounded-[5px] border border-ink/25 px-2 py-1 font-serif text-[10px] text-olive">
-          bool · {t("inspector.observedFact")}
-        </span>
-        <IconDots size={18} stroke={1.4} />
-      </div>
-      <div className="inspector-row">
-        <span>{t("inspector.type")}</span>
-        <span className="font-serif text-[11px]">bool⌄</span>
-      </div>
-      <div className="mt-4 space-y-2">
-        {["true", "false"].map((value) => (
-          <div
-            key={value}
-            className="flex h-9 items-center gap-2 rounded-[4px] border border-ink/25 px-2"
-          >
-            <IconGripVertical size={14} stroke={1.2} className="text-ink/45" />
-            <span className="flex-1 font-serif text-[11px]">{value}</span>
-            <IconX size={14} stroke={1.3} />
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 border-t border-ink/15 pt-3">
-        <p className="mb-2 font-serif text-[12px]">{t("inspector.notes")}</p>
-        <p className="font-serif text-[11px] leading-[1.45]">
-          {t("inspector.observedRainNote")}
-          <br />
-          {t("inspector.weatherSource")}
-        </p>
-      </div>
     </section>
   );
 }
@@ -464,7 +582,6 @@ export function InspectorPanel({
             {t("inspector.selectObject")}
           </div>
         )}
-        {!edge && <ObservedFactCard />}
       </div>
     </aside>
   );

@@ -56,7 +56,7 @@ export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
       className="zen-pie-menu"
       style={{ left: menu.screenX, top: menu.screenY }}
       role="menu"
-      aria-label="Quick add node"
+      aria-label={t("gesture.quickAdd")}
     >
       <div className="zen-pie-spokes" aria-hidden>
         {Array.from({ length: 8 }, (_, index) => (
@@ -83,7 +83,7 @@ export function RadialAddMenu({ menu, onChoose, onClose }: RadialAddMenuProps) {
           </button>
         );
       })}
-      <button className="zen-pie-center" onClick={onClose} aria-label="Close quick add">
+      <button className="zen-pie-center" onClick={onClose} aria-label={t("gesture.close")}>
         <IconPlus size={24} stroke={1.35} />
         <span aria-live="polite">
           {menu.gestureActive

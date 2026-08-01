@@ -91,7 +91,14 @@ export const zenWorkspaceFixture: ProjectState = {
       "地表温度（°C）",
       "根据卫星热红外影像反演的白天地表温度。",
       ["因变量"],
-      { valueType: "number", unit: "°C" },
+      {
+        valueType: "number",
+        unit: "°C",
+        instances: [
+          { id: "temp-center-2023", label: "中心城区 · 2023 夏季均值", value: "34.2" },
+          { id: "temp-riverside-2023", label: "滨水区 · 2023 夏季均值", value: "31.6" },
+        ],
+      },
     ),
     node(
       "variable-canopy",
@@ -99,7 +106,15 @@ export const zenWorkspaceFixture: ProjectState = {
       "树冠覆盖率（%）",
       "基于 10 米分辨率 NDVI 阈值估算。",
       ["自变量"],
-      { valueType: "enum", enumValues: ["低", "中", "高"] },
+      {
+        valueType: "enum",
+        enumValues: ["低", "中", "高"],
+        instances: [
+          { id: "canopy-north", label: "北部样区", value: "高" },
+          { id: "canopy-center", label: "中心样区", value: "低" },
+          { id: "canopy-south", label: "南部样区", value: "中" },
+        ],
+      },
     ),
     node(
       "paper-landsat",
@@ -129,7 +144,15 @@ export const zenWorkspaceFixture: ProjectState = {
       "建筑密度",
       "作为控制变量使用的建成区密度。",
       ["控制变量"],
-      { valueType: "number", shape: "circle" },
+      {
+        valueType: "number",
+        unit: "建筑覆盖率",
+        shape: "circle",
+        instances: [
+          { id: "density-block-a", label: "街区 A", value: "0.72" },
+          { id: "density-block-b", label: "街区 B", value: "0.48" },
+        ],
+      },
     ),
     node(
       "paper-zhang",

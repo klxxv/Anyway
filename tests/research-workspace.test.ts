@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { EDGE_TYPES, LAYOUT_MODES, type ResearchEdge } from "../app/lib/research-types";
+import {
+  EDGE_TYPES,
+  LAYOUT_MODES,
+  type ProjectState,
+  type ResearchEdge,
+} from "../app/lib/research-types";
 import { translate } from "../app/i18n/catalog";
 import { zenWorkspaceFixture } from "../app/features/research-workspace/workspace-fixture";
 import {
@@ -31,7 +36,7 @@ import {
   TWO_FINGER_HOLD_MS,
 } from "../app/features/research-workspace/hooks/two-finger-gesture";
 
-function edge(type: ResearchEdge["type"]): ResearchEdge {
+function edge(type: ResearchEdge["type"], override: Partial<ResearchEdge> = {}): ResearchEdge {
   return {
     id: `edge-${type}`,
     source: "source",
@@ -42,6 +47,7 @@ function edge(type: ResearchEdge["type"]): ResearchEdge {
     conditions: [],
     evidenceIds: [],
     provenance: { origin: "human" },
+    ...override,
   };
 }
 
@@ -167,6 +173,42 @@ test("edge routing chooses facing sides and separates shared source lanes", () =
   );
   assert.equal(routes["edge-result-zhang"].sourceHandle, "bottom-left");
   assert.equal(routes["edge-result-nguyen"].sourceHandle, "bottom-right");
+});
+
+test("three downward sibling edges receive distinct border anchors", () => {
+  const project = structuredClone(zenWorkspaceFixture) as ProjectState;
+  project.nodes = project.nodes.filter((node) =>
+    ["variable-canopy", "variable-temperature", "method-ndvi", "result-canopy"].includes(node.id),
+  );
+  project.placements = [
+    { id: "p-source", viewId: "view-main", nodeId: "variable-canopy", x: 120, y: 0, width: 164, height: 116 },
+    { id: "p-left", viewId: "view-main", nodeId: "variable-temperature", x: 0, y: 240, width: 164, height: 116 },
+    { id: "p-center", viewId: "view-main", nodeId: "method-ndvi", x: 120, y: 240, width: 164, height: 116 },
+    { id: "p-right", viewId: "view-main", nodeId: "result-canopy", x: 240, y: 240, width: 164, height: 116 },
+  ];
+  project.edges = [
+    edge("causes", { id: "edge-left", source: "variable-canopy", target: "variable-temperature" }),
+    edge("causes", { id: "edge-center", source: "variable-canopy", target: "method-ndvi" }),
+    edge("causes", { id: "edge-right", source: "variable-canopy", target: "result-canopy" }),
+  ];
+  const routes = computeEdgeRoutes(project);
+  assert.deepEqual(
+    [routes["edge-left"].sourceHandle, routes["edge-center"].sourceHandle, routes["edge-right"].sourceHandle],
+    ["bottom-left", "bottom", "bottom-right"],
+  );
+});
+
+test("new editor, search, and settings surfaces have Chinese copy", () => {
+  for (const key of [
+    "composer.title",
+    "composer.noteKind",
+    "search.placeholder",
+    "settings.comfortableHint",
+    "settings.colorSystemSummary",
+    "inspector.instances",
+  ] as const) {
+    assert.notEqual(translate("zh-CN", key), translate("en", key));
+  }
 });
 
 test("shortcut capture is canonical and duplicate bindings are detected", () => {

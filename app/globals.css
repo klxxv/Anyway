@@ -176,7 +176,7 @@
 
   .zen-controls {
     left: 182px !important;
-    bottom: 31px !important;
+    bottom: 19px !important;
     margin: 0 !important;
     overflow: hidden;
     border: 1px solid rgb(36 39 43 / 30%) !important;
@@ -190,6 +190,53 @@
     border-bottom-color: rgb(36 39 43 / 18%) !important;
     background: var(--color-paper) !important;
     color: var(--color-ink) !important;
+  }
+
+  .project-menu-layer {
+    background: rgb(36 39 43 / 3%);
+    animation: project-menu-backdrop-in 180ms ease-out both;
+  }
+
+  .project-menu-panel {
+    animation: project-menu-panel-in 220ms cubic-bezier(.22, 1, .36, 1) both;
+  }
+
+  .project-menu-layer.is-closing {
+    pointer-events: none;
+    animation: project-menu-backdrop-out 180ms ease-in both;
+  }
+
+  .project-menu-layer.is-closing .project-menu-panel {
+    animation: project-menu-panel-out 180ms cubic-bezier(.4, 0, 1, 1) both;
+  }
+
+  @keyframes project-menu-panel-in {
+    from { transform: translateX(-24px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  @keyframes project-menu-panel-out {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(-24px); opacity: 0; }
+  }
+
+  @keyframes project-menu-backdrop-in {
+    from { background-color: transparent; }
+    to { background-color: rgb(36 39 43 / 3%); }
+  }
+
+  @keyframes project-menu-backdrop-out {
+    from { background-color: rgb(36 39 43 / 3%); }
+    to { background-color: transparent; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .project-menu-layer,
+    .project-menu-panel,
+    .project-menu-layer.is-closing,
+    .project-menu-layer.is-closing .project-menu-panel {
+      animation-duration: 1ms;
+    }
   }
 
   .shortcut-key {

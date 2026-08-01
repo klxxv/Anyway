@@ -12,8 +12,21 @@ import {
 } from "@tabler/icons-react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { CSSProperties } from "react";
+import type { MessageKey } from "../../../i18n/catalog";
+import { useI18n } from "../../../i18n/provider";
 import type { ResearchNodeType } from "../../../lib/research-types";
 import type { WorkspaceNode } from "../workspace-types";
+
+const nodeTypeMessageKeys: Partial<Record<ResearchNodeType, MessageKey>> = {
+  question: "node.question",
+  concept: "node.group",
+  variable: "node.variable",
+  method: "node.method",
+  dataset: "node.data",
+  evidence: "node.evidence",
+  result: "node.result",
+  note: "node.note",
+};
 
 function NodeIcon({ type, selected }: { type: ResearchNodeType; selected: boolean }) {
   const props = {
@@ -48,6 +61,7 @@ function NodeIcon({ type, selected }: { type: ResearchNodeType; selected: boolea
  * 图节点复刻参考图中的安静衬线卡片与圆形问题节点。
  */
 export function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
+  const { t } = useI18n();
   const { record, shape } = data;
   const valueType =
     record.type === "variable" && typeof record.data.valueType === "string"
@@ -66,13 +80,13 @@ export function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
             ? "border-alert"
             : "border-ink/70 hover:border-ink",
       ].join(" ")}
-      aria-label={`${record.type}: ${record.title}`}
+      aria-label={`${t(nodeTypeMessageKeys[record.type] ?? "node.note")}: ${record.title}`}
     >
       <NodeIcon type={record.type} selected={selected} />
       <h3 className="max-w-[13rem] font-serif text-[14px] leading-[1.18]">{record.title}</h3>
       {record.type !== "question" && (
         <p className="mt-2 font-serif text-[10px] leading-none text-ink/60">
-          {record.type} · {valueType}
+          {t(nodeTypeMessageKeys[record.type] ?? "node.note")} · {valueType}
         </p>
       )}
       {disputed && (

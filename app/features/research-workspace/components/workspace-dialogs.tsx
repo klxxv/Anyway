@@ -20,6 +20,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { Locale, MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
 import { layoutOptions } from "../workspace-layout";
@@ -40,13 +41,33 @@ import {
 } from "../workspace-context-menu";
 import type { NodeDraft } from "../workspace-types";
 
+const nodeTypeLabelKeys: Partial<Record<ResearchNodeType, MessageKey>> = {
+  question: "node.question",
+  concept: "node.group",
+  variable: "node.variable",
+  method: "node.method",
+  dataset: "node.data",
+  evidence: "node.evidence",
+  result: "node.result",
+  note: "node.note",
+};
+
+const layoutLabelKeys: Record<WorkspacePreferences["defaultLayout"], MessageKey> = {
+  "evidence-chain": "layout.evidenceChain",
+  "refutation-chain": "layout.refutationChain",
+  tree: "layout.tree",
+  huffman: "layout.huffman",
+  table: "layout.table",
+  "neural-network": "layout.neural",
+};
+
 export type ComposerState = {
   type: ResearchNodeType;
   x: number;
   y: number;
 };
 
-function defaultDataForType(type: ResearchNodeType): Record<string, unknown> {
+function defaultDataForType(type: ResearchNodeType, locale: Locale = "en"): Record<string, unknown> {
   switch (type) {
     case "question":
       return { questionKind: "causal", scope: "current study" };
@@ -55,9 +76,10 @@ function defaultDataForType(type: ResearchNodeType): Record<string, unknown> {
     case "variable":
       return {
         valueType: "enum",
-        enumValues: ["low", "medium", "high"],
+        enumValues: locale === "zh-CN" ? ["低", "中", "高"] : ["low", "medium", "high"],
         unit: "",
         observationRole: "measured",
+        instances: [],
       };
     case "method":
       return {
@@ -78,19 +100,19 @@ function defaultDataForType(type: ResearchNodeType): Record<string, unknown> {
     case "result":
       return { outcome: "supports", metric: "", confidence: 0.8, direction: "positive" };
     case "note":
-      return { noteKind: "observation", author: "local researcher" };
+      return { noteKind: "observation", author: locale === "zh-CN" ? "本地研究者" : "local researcher" };
     default:
       return {};
   }
 }
 
-function makeDraft(type: ResearchNodeType): NodeDraft {
+function makeDraft(type: ResearchNodeType, locale: Locale = "en"): NodeDraft {
   return {
     title: "",
     body: "",
     type,
     tags: [],
-    data: defaultDataForType(type),
+    data: defaultDataForType(type, locale),
   };
 }
 
@@ -101,6 +123,7 @@ function NodeTypeFields({
   draft: NodeDraft;
   onData: (key: string, value: unknown) => void;
 }) {
+  const { t } = useI18n();
   // Keep domain-specific metadata close to its node type without multiplying dialogs.
   // 将领域字段收敛在节点类型内部，避免为每种节点复制整套弹窗。
   const value = (key: string) => String(draft.data[key] ?? "");
@@ -138,45 +161,45 @@ function NodeTypeFields({
     case "question":
       return (
         <>
-          {select("Question kind", "questionKind", [
-            ["causal", "causal"],
-            ["descriptive", "descriptive"],
-            ["comparative", "comparative"],
-            ["exploratory", "exploratory"],
+          {select(t("composer.questionKind"), "questionKind", [
+            ["causal", t("option.causal")],
+            ["descriptive", t("option.descriptive")],
+            ["comparative", t("option.comparative")],
+            ["exploratory", t("option.exploratory")],
           ])}
-          {input("Research scope", "scope", "Population, place, or time range")}
+          {input(t("composer.researchScope"), "scope", t("composer.researchScopeHint"))}
         </>
       );
     case "concept":
       return (
         <>
-          {select("Group role", "groupRole", [
-            ["theme", "theme"],
-            ["population", "population"],
-            ["mechanism", "mechanism"],
-            ["context", "context"],
+          {select(t("composer.groupRole"), "groupRole", [
+            ["theme", t("option.theme")],
+            ["population", t("option.population")],
+            ["mechanism", t("option.mechanism")],
+            ["context", t("option.context")],
           ])}
-          {input("Discipline", "discipline", "e.g. urban climatology")}
+          {input(t("composer.discipline"), "discipline", t("composer.disciplineHint"))}
         </>
       );
     case "variable": {
       const valueType = value("valueType");
       return (
         <>
-          {select("Value schema", "valueType", [
+          {select(t("composer.valueSchema"), "valueType", [
             ["enum", "enum"],
             ["bool", "bool"],
             ["number", "number"],
             ["text", "text"],
           ])}
-          {input("Unit", "unit", valueType === "bool" ? "not applicable" : "%, °C, score…")}
+          {input(t("composer.unit"), "unit", valueType === "bool" ? t("composer.notApplicable") : t("composer.unitHint"))}
           {valueType === "enum" &&
-            input("Enum values", "enumValues", "low, medium, high")}
+            input(t("composer.enumValues"), "enumValues", t("composer.enumValuesHint"))}
           {valueType === "bool" &&
-            select("Fact role", "observationRole", [
-              ["measured", "measured fact"],
-              ["observed", "observed fact"],
-              ["assumed", "working assumption"],
+            select(t("composer.factRole"), "observationRole", [
+              ["measured", t("option.measuredFact")],
+              ["observed", t("option.observedFact")],
+              ["assumed", t("option.workingAssumption")],
             ])}
         </>
       );
@@ -184,15 +207,15 @@ function NodeTypeFields({
     case "method":
       return (
         <>
-          {select("Method family", "methodFamily", [
-            ["observational", "observational"],
-            ["experimental", "experimental"],
-            ["classification", "classification"],
-            ["simulation", "simulation"],
-            ["statistical", "statistical"],
+          {select(t("composer.methodFamily"), "methodFamily", [
+            ["observational", t("option.observational")],
+            ["experimental", t("option.experimental")],
+            ["classification", t("option.classification")],
+            ["simulation", t("option.simulation")],
+            ["statistical", t("option.statistical")],
           ])}
-          {input("Primary input", "input", "Dataset or measured variable")}
-          {input("Expected output", "output", "Classification, estimate, or model")}
+          {input(t("composer.primaryInput"), "input", t("composer.primaryInputHint"))}
+          {input(t("composer.expectedOutput"), "output", t("composer.expectedOutputHint"))}
           <label className="mb-4 flex h-10 items-center gap-3 rounded-[4px] border border-ink/20 px-3 font-serif text-[12px]">
             <input
               className="size-4 accent-blue"
@@ -200,73 +223,73 @@ function NodeTypeFields({
               checked={Boolean(draft.data.reproducible)}
               onChange={(event) => onData("reproducible", event.target.checked)}
             />
-            Reproducible protocol
+            {t("composer.reproducible")}
           </label>
         </>
       );
     case "dataset":
       return (
         <>
-          {select("Data format", "format", [
-            ["table", "table"],
-            ["raster", "raster"],
-            ["vector", "vector"],
-            ["time-series", "time series"],
-            ["text", "text corpus"],
+          {select(t("composer.dataFormat"), "format", [
+            ["table", t("option.table")],
+            ["raster", t("option.raster")],
+            ["vector", t("option.vector")],
+            ["time-series", t("option.timeSeries")],
+            ["text", t("option.textCorpus")],
           ])}
-          {input("Source", "source", "Repository, sensor, or provider")}
-          {input("Coverage", "coverage", "2020–2025 / study region")}
-          {input("Resolution", "resolution", "10 m / daily / one record")}
+          {input(t("composer.source"), "source", t("composer.sourceHint"))}
+          {input(t("composer.coverage"), "coverage", t("composer.coverageHint"))}
+          {input(t("composer.resolution"), "resolution", t("composer.resolutionHint"))}
         </>
       );
     case "evidence":
       return (
         <>
-          {select("Source kind", "sourceKind", [
-            ["article", "article"],
-            ["measurement", "measurement"],
-            ["report", "report"],
-            ["raster", "raster"],
-            ["code", "code artifact"],
+          {select(t("composer.sourceKind"), "sourceKind", [
+            ["article", t("option.article")],
+            ["measurement", t("option.measurement")],
+            ["report", t("option.report")],
+            ["raster", t("option.raster")],
+            ["code", t("option.codeArtifact")],
           ])}
-          {input("Citation", "citation", "Author, venue, or source")}
-          {input("Publication year", "year", "2026", "number")}
-          {select("Confidence", "confidence", [
-            ["low", "low"],
-            ["medium", "medium"],
-            ["high", "high"],
+          {input(t("composer.citation"), "citation", t("composer.citationHint"))}
+          {input(t("composer.publicationYear"), "year", "2026", "number")}
+          {select(t("composer.confidence"), "confidence", [
+            ["low", t("option.low")],
+            ["medium", t("option.medium")],
+            ["high", t("option.high")],
           ])}
         </>
       );
     case "result":
       return (
         <>
-          {select("Outcome", "outcome", [
-            ["supports", "supports"],
-            ["refutes", "refutes"],
-            ["mixed", "mixed"],
-            ["neutral", "neutral"],
+          {select(t("composer.outcome"), "outcome", [
+            ["supports", t("option.supports")],
+            ["refutes", t("option.refutes")],
+            ["mixed", t("option.mixed")],
+            ["neutral", t("option.neutral")],
           ])}
-          {input("Metric", "metric", "Primary measured outcome")}
-          {input("Confidence", "confidence", "0.80", "number")}
-          {select("Direction", "direction", [
-            ["positive", "positive"],
-            ["negative", "negative"],
-            ["mixed", "mixed"],
-            ["unknown", "unknown"],
+          {input(t("composer.metric"), "metric", t("composer.metricHint"))}
+          {input(t("composer.confidence"), "confidence", "0.80", "number")}
+          {select(t("composer.direction"), "direction", [
+            ["positive", t("option.positive")],
+            ["negative", t("option.negative")],
+            ["mixed", t("option.mixed")],
+            ["unknown", t("option.unknown")],
           ])}
         </>
       );
     case "note":
       return (
         <>
-          {select("Note kind", "noteKind", [
-            ["observation", "observation"],
-            ["assumption", "assumption"],
-            ["decision", "decision"],
-            ["todo", "to do"],
+          {select(t("composer.noteKind"), "noteKind", [
+            ["observation", t("option.observation")],
+            ["assumption", t("option.assumption")],
+            ["decision", t("option.decision")],
+            ["todo", t("option.todo")],
           ])}
-          {input("Author", "author", "Researcher or team")}
+          {input(t("composer.author"), "author", t("composer.authorHint"))}
         </>
       );
     default:
@@ -283,7 +306,8 @@ export function NodeComposer({
   onClose: () => void;
   onCreate: (draft: NodeDraft, x: number, y: number) => void;
 }) {
-  const [draft, setDraft] = useState<NodeDraft>(() => makeDraft(state.type));
+  const { locale, t } = useI18n();
+  const [draft, setDraft] = useState<NodeDraft>(() => makeDraft(state.type, locale));
   const updateData = (key: string, nextValue: unknown) => {
     setDraft((current) => {
       const value =
@@ -309,11 +333,11 @@ export function NodeComposer({
         <div className="flex shrink-0 items-start justify-between border-b border-ink/15 px-7 pb-5 pt-6">
           <div>
             <span className="font-sans text-[9px] uppercase tracking-[0.18em] text-blue">
-              New research node
+              {t("composer.eyebrow")}
             </span>
-            <h2 className="mt-1 font-serif text-[20px]">Add to the canvas</h2>
+            <h2 className="mt-1 font-serif text-[20px]">{t("composer.title")}</h2>
           </div>
-          <button className="icon-quiet" type="button" onClick={onClose} aria-label="Close">
+          <button className="icon-quiet" type="button" onClick={onClose} aria-label={t("composer.close")}>
             <IconX size={19} stroke={1.35} />
           </button>
         </div>
@@ -321,13 +345,13 @@ export function NodeComposer({
         <div className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
           <div className="grid grid-cols-2 gap-x-4">
             <label className="dialog-field col-span-2">
-              Type
+              {t("composer.type")}
               <select
                 value={draft.type}
                 onChange={(event) => {
                   const type = event.target.value as ResearchNodeType;
                   setDraft((current) => ({
-                    ...makeDraft(type),
+                    ...makeDraft(type, locale),
                     title: current.title,
                     body: current.body,
                     tags: current.tags,
@@ -343,37 +367,37 @@ export function NodeComposer({
                   ["evidence", "evidence"],
                   ["result", "result"],
                   ["note", "note"],
-                ].map(([type, label]) => (
+                ].map(([type]) => (
                   <option key={type} value={type}>
-                    {label}
+                    {t(nodeTypeLabelKeys[type as ResearchNodeType] ?? "node.note")}
                   </option>
                 ))}
               </select>
             </label>
             <label className="dialog-field col-span-2">
-              Title
+              {t("composer.nodeTitle")}
               <input
                 autoFocus
                 value={draft.title}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, title: event.target.value }))
                 }
-                placeholder="Name the research object"
+                placeholder={t("composer.nodeTitleHint")}
               />
             </label>
 
             <div className="col-span-2 mb-4 flex items-center gap-3">
               <span className="font-sans text-[9px] uppercase tracking-[0.16em] text-ink/45">
-                Node profile
+                {t("composer.profile")}
               </span>
               <span className="h-px flex-1 bg-ink/12" />
               <IconCheck size={15} stroke={1.35} className="text-blue" />
-              <span className="font-serif text-[10px] text-ink/55">type-specific data</span>
+              <span className="font-serif text-[10px] text-ink/55">{t("composer.typeSpecific")}</span>
             </div>
             <NodeTypeFields draft={draft} onData={updateData} />
 
             <label className="dialog-field col-span-2">
-              Tags
+              {t("composer.tags")}
               <input
                 value={draft.tags.join(", ")}
                 onChange={(event) =>
@@ -385,17 +409,17 @@ export function NodeComposer({
                       .filter(Boolean),
                   }))
                 }
-                placeholder="independent, verified, urban"
+                placeholder={t("composer.tagsHint")}
               />
             </label>
             <label className="dialog-field col-span-2">
-              Note
+              {t("composer.note")}
               <textarea
                 value={draft.body}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, body: event.target.value }))
                 }
-                placeholder="Add a precise definition or observation"
+                placeholder={t("composer.noteHint")}
               />
             </label>
           </div>
@@ -403,10 +427,10 @@ export function NodeComposer({
 
         <div className="flex shrink-0 justify-end gap-2 border-t border-ink/15 px-7 py-4">
           <button className="button-secondary" type="button" onClick={onClose}>
-            Cancel
+            {t("composer.cancel")}
           </button>
           <button className="button-primary" type="submit" disabled={!draft.title.trim()}>
-            Add node
+            {t("composer.addNode")}
             <IconArrowRight size={16} stroke={1.4} />
           </button>
         </div>
@@ -424,6 +448,7 @@ export function SearchPalette({
   onClose: () => void;
   onSelect: (nodeId: string) => void;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const results = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -448,13 +473,18 @@ export function SearchPalette({
             className="h-full flex-1 border-0 bg-transparent font-serif text-[15px] outline-none"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Find a node, tag, or note…"
+            placeholder={t("search.placeholder")}
           />
-          <button className="icon-quiet" onClick={onClose} aria-label="Close search">
+          <button className="icon-quiet" onClick={onClose} aria-label={t("search.close")}>
             <IconX size={18} stroke={1.35} />
           </button>
         </div>
         <div className="p-2">
+          {results.length === 0 && (
+            <p className="px-3 py-8 text-center font-serif text-[11px] text-ink/45">
+              {t("search.noResults")}
+            </p>
+          )}
           {results.map((node) => (
             <button
               key={node.id}
@@ -462,7 +492,7 @@ export function SearchPalette({
               onClick={() => onSelect(node.id)}
             >
               <span className="w-16 font-sans text-[8px] uppercase tracking-[0.12em] text-ink/45">
-                {node.type}
+                {t(nodeTypeLabelKeys[node.type] ?? "node.note")}
               </span>
               <span className="min-w-0 flex-1 truncate font-serif text-[13px]">
                 {node.title}
@@ -490,11 +520,24 @@ export function ProjectMenu({
   onPlugins: () => void;
 }) {
   const { t } = useI18n();
+  const [closing, setClosing] = useState(false);
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, 180);
+  };
   return (
-    <aside className="fixed bottom-0 left-0 top-12 z-[60] flex w-[290px] flex-col border-r border-ink/20 bg-paper shadow-[12px_0_40px_rgba(30,32,35,.08)]">
+    <div
+      className={`project-menu-layer fixed inset-x-0 bottom-0 top-12 z-[60] ${closing ? "is-closing" : ""}`}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) requestClose();
+      }}
+      aria-hidden={closing}
+    >
+    <aside className="project-menu-panel flex h-full w-[290px] flex-col border-r border-ink/20 bg-paper shadow-[12px_0_40px_rgba(30,32,35,.08)]">
       <div className="flex h-14 items-center justify-between border-b border-ink/15 px-5">
         <h2 className="font-serif text-[18px]">{t("workspace.projects")}</h2>
-        <button className="icon-quiet" onClick={onClose} aria-label="Close menu">
+        <button className="icon-quiet" onClick={requestClose} aria-label={t("menu.close")}>
           <IconX size={18} stroke={1.35} />
         </button>
       </div>
@@ -556,6 +599,7 @@ export function ProjectMenu({
         </button>
       </div>
     </aside>
+    </div>
   );
 }
 
@@ -718,7 +762,7 @@ export function SettingsDialog({
               {t("settings.title")}
             </h2>
           </div>
-          <nav className="space-y-1" aria-label="Settings sections">
+          <nav className="space-y-1" aria-label={t("settings.sections")}>
             {sections.map((item) => {
               const SectionIcon = item.icon;
               const selected = section === item.key;
@@ -747,11 +791,11 @@ export function SettingsDialog({
           <div className="flex h-14 items-center justify-between border-b border-ink/15 px-6">
             <div>
               <p className="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
-                Workspace preferences
+                {t("settings.eyebrow")}
               </p>
-              <p className="mt-0.5 font-serif text-[13px] capitalize">{section}</p>
+              <p className="mt-0.5 font-serif text-[13px]">{sections.find((item) => item.key === section)?.label}</p>
             </div>
-            <button className="icon-quiet" onClick={onClose} aria-label="Close settings">
+            <button className="icon-quiet" onClick={onClose} aria-label={t("settings.close")}>
               <IconX size={18} stroke={1.35} />
             </button>
           </div>
@@ -783,8 +827,8 @@ export function SettingsDialog({
                         </span>
                         <span className="mt-1 block font-serif text-[10px] leading-[1.4] text-ink/50">
                           {density === "comfortable"
-                            ? "More breathing room between commands."
-                            : "Tighter controls for smaller displays."}
+                            ? t("settings.comfortableHint")
+                            : t("settings.compactHint")}
                         </span>
                       </button>
                     );
@@ -808,11 +852,11 @@ export function SettingsDialog({
                 </div>
                 <div className="mt-7 rounded-[5px] border border-ink/15 bg-canvas p-4">
                   <p className="font-sans text-[8px] uppercase tracking-[0.15em] text-ink/45">
-                    Color system
+                    {t("settings.colorSystem")}
                   </p>
-                  <p className="mt-2 font-serif text-[12px]">White canvas · gray-black text · blue state</p>
+                  <p className="mt-2 font-serif text-[12px]">{t("settings.colorSystemSummary")}</p>
                   <p className="mt-1 font-serif text-[10px] text-ink/50">
-                    The focused visual language remains locked to the current product direction.
+                    {t("settings.colorSystemHint")}
                   </p>
                 </div>
               </div>
@@ -835,15 +879,15 @@ export function SettingsDialog({
                       }))
                     }
                   >
-                    <option value={80}>Fast · 80 ms</option>
-                    <option value={180}>Balanced · 180 ms</option>
-                    <option value={320}>Deliberate · 320 ms</option>
+                    <option value={80}>{t("settings.fast")} · 80 ms</option>
+                    <option value={180}>{t("settings.balanced")} · 180 ms</option>
+                    <option value={320}>{t("settings.deliberate")} · 320 ms</option>
                   </select>
                 </label>
                 <div className="mt-4 rounded-[5px] border border-blue/20 bg-blue-soft p-4">
-                  <p className="font-serif text-[12px] text-blue">Click behavior remains direct</p>
+                  <p className="font-serif text-[12px] text-blue">{t("settings.clickBehavior")}</p>
                   <p className="mt-1 font-serif text-[10px] leading-[1.45] text-ink/55">
-                    Clicking Add opens the radial chooser; clicking Connect toggles the selected relation mode.
+                    {t("settings.clickBehaviorHint")}
                   </p>
                 </div>
               </div>
@@ -1020,7 +1064,7 @@ export function SettingsDialog({
                   >
                     {layoutOptions.map((option) => (
                       <option key={option.mode} value={option.mode}>
-                        {option.label}
+                        {t(layoutLabelKeys[option.mode])}
                       </option>
                     ))}
                   </select>

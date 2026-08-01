@@ -308,6 +308,89 @@
 - Post-fix verification: TypeScript, ESLint, the 13 workspace tests, and the complete application,
   SDK, Rust, and rendered-HTML suite pass. No unresolved P0/P1/P2 finding remains.
 
+### Pass 10
+
+- Source visual truth:
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-dc829d2a-d7e1-45d3-ba98-10e200865a06.png`
+    (607 × 438 px, shared source-anchor offset).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-61198f18-e545-42ee-93a6-743ba70f0346.png`
+    (1128 × 879 px, untranslated layout names).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-af7df16e-b6fc-414c-9f64-104a7a66af17.png`
+    (1117 × 871 px, untranslated interface settings copy).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-cd76cca0-eaca-4348-b017-db3c4c6ba4f1.png`
+    (139 × 210 px, minimap/zoom-control misalignment).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-fbd5c165-d72d-4ce9-8b22-060b36377803.png`
+    (505 × 826 px, fixed rain fact instead of variable-specific records).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-156d05a9-c751-4b77-929b-fc34555205b3.png`
+    (948 × 1093 px, untranslated Note composer).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-25e15c20-be7b-4ff9-b0df-97c739bc39e1.png`
+    (598 × 1263 px, project menu dismissal behavior).
+  - `C:\Users\admin\AppData\Local\Temp\codex-clipboard-45cd1ab6-6d08-4b90-84f5-64605ee81c2c.png`
+    (829 × 538 px, untranslated search placeholder and type labels).
+- Rendered implementation captures:
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\canvas-variable-zh.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\settings-interface-zh.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\settings-canvas-zh.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\note-composer-zh.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\search-zh.png`
+  Each is a 2582 × 1550 physical-pixel capture of the maximized Tauri window; the effective
+  desktop viewport is approximately 2066 × 1240 CSS px at Windows density 1.25. Native window
+  chrome is retained consistently and does not affect the focused content comparison.
+- Same-input full-view evidence (1800 × 1050 px; source and implementation are aspect-fit,
+  never stretched):
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-edge-controls.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-settings-interface.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-variable-inspector.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-note-i18n.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-search-i18n.png`
+- Same-input focused evidence (1800 × 1050 px; the implementation crop is taken from the
+  physical capture and normalized by aspect-fit):
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-focus-edge.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-focus-settings.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-focus-variable.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-focus-note.png`
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\pass10-focus-search.png`
+- [P1][graph geometry] Several edges leaving the same side of a node converged on one source
+  point, creating a false offset and visual overlap.
+  - Fix: sibling edges are sorted by target position and assigned distributed border handles.
+    The selected canopy variable now exposes distinct right-side and bottom-side origins, and a
+    deterministic three-sibling routing test verifies `bottom-left`, `bottom`, `bottom-right`.
+- [P1][functionality] Variables exposed display-only values, had no node deletion action, and
+  showed the same rain observation regardless of the selected variable.
+  - Fix: enum values and variable-specific instances now support add, edit, and remove actions;
+    number/text units are editable; node deletion is explicit; and the Chinese climate fixture
+    carries canopy, temperature, and density records tied to the selected variable. The fixed
+    rain card was removed.
+- [P1][copy] Settings, Note creation, and Search leaked English labels and placeholders in the
+  Simplified Chinese locale.
+  - Fix: added typed catalog entries for composer profiles, options, settings descriptions,
+    layout names, search labels, node types, and accessibility names. Focused comparisons show
+    complete Chinese copy while retaining `English` as the intentional language-choice label.
+- [P2][layout] Zoom controls sat above the minimap baseline.
+  - Fix: the zoom stack bottom offset now matches the minimap's 19 px inset. The full canvas
+    capture shows their bottom borders aligned.
+- [P2][motion] Clicking the canvas did not dismiss the project menu through the intended
+  transition.
+  - Fix: the menu now uses a full-canvas dismissal layer and a 180 ms opacity/translate exit;
+    reduced-motion users receive the immediate state change. Computer Use opened the menu,
+    clicked the canvas center, and verified the menu was removed after the exit interval.
+- Fonts and typography: the established serif content hierarchy and sans-serif utility labels
+  remain unchanged; Chinese strings wrap without clipping or artificial truncation.
+- Spacing and layout rhythm: thin borders, compact field gaps, inspector width, modal padding,
+  and white-canvas density remain consistent with the existing zen design. The only positional
+  change is the corrected control baseline and distributed edge handles.
+- Colors and visual tokens: white, gray-black, blue focus/selection, and restrained red danger
+  tokens remain consistent; no new color system was introduced.
+- Image quality and asset fidelity: there are no raster product assets in these states; existing
+  Tabler icons remain vector-sharp. No handcrafted SVG, CSS illustration, emoji, or placeholder
+  asset was introduced.
+- Copy and content: the Chinese urban-canopy project remains coherent across canvas, inspector,
+  settings, Note creation, and Search. Variable instance records are contextual instead of a
+  repeated unrelated fact.
+- Post-fix verification: TypeScript, ESLint, 15 workspace tests, the production build, rendered
+  HTML tests, core/platform/plugin SDK checks, and all Rust native tests pass. No actionable
+  P0/P1/P2 finding remains.
+
 ## Final rubric
 
 | Surface | Result | Evidence |
@@ -316,7 +399,7 @@
 | Typography | Passed | Serif hierarchy and wrapping match the source's research-document character without clipping. |
 | Color and tokens | Passed | Intentional white/gray-black/blue mapping is consistent and accessible. |
 | Icons and shapes | Passed | Tabler icons, thin graph outlines, circular question nodes, straight semantic edges, and eight pie wedges are complete; the obsolete gesture hand is absent. |
-| Copy and content | Passed | The complete Chinese climate fixture, enum values, observed bool fact, methods, evidence, relation labels, and inspector copy form one coherent example. |
+| Copy and content | Passed | The complete Chinese climate fixture, editable enum values, variable-specific instances, methods, evidence, relation labels, composer, search, and inspector copy form one coherent example. |
 | States and interactions | Passed | Computer Use evidence covers navigation, search, hover-open Add/Connect/Layout, shortcut hints, editable bindings, conflict blocking, direct clicks, six layout modes, four legend filters, settings persistence, automatic re-layout, Escape dismissal, selected, active, and disabled states. Automated gesture tests cover the non-injectable physical multi-touch path. |
 | Accessibility | Passed | Semantic buttons/menus, labels, focus-visible styles, reduced-motion handling, and keyboard dismissal are present. |
 | Viewport resilience | Passed | Reference geometry is exact at desktop size; widths below 1050 px switch to fit-to-view, the compact MiniMap clips all markers, and the shortcut list keeps its footer fixed while content scrolls. |
