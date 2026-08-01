@@ -32,6 +32,7 @@ import {
 import {
   viewportForNativeTrackpadPinch,
   viewportForTrackpadWheel,
+  shouldSuppressSyntheticPinchWheel,
   type GesturePoint,
   type GestureViewport,
 } from "../hooks/trackpad-pinch";
@@ -187,6 +188,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     animationFrame: null,
     ending: false,
   });
+  // Only suppress WebView2's Ctrl+Wheel copy while native frames are actually
+  // arriving. Registration alone is insufficient because WebView2 renders in
+  // a child HWND that can remain the pointer target.
+  // 仅在原生帧确实到达时屏蔽 WebView2 滚轮副本；不能只凭注册成功判断输入链路可用。
+  const nativePinchActiveRef = useRef(false);
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
@@ -353,6 +359,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       nativePinch.originScale = 1;
       nativePinch.animationFrame = null;
       nativePinch.ending = false;
+      nativePinchActiveRef.current = false;
     };
     const applyLatestFrame = () => {
       nativePinch.animationFrame = null;
@@ -381,6 +388,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       const instance = flowRef.current;
       if (!bounds || !instance) return;
       if (frame.phase === "start" || !nativePinch.originViewport || !nativePinch.anchor) {
+        nativePinchActiveRef.current = true;
         nativePinch.originViewport = instance.getViewport();
         nativePinch.anchor = {
           x: frame.cursorX - bounds.left,
@@ -504,11 +512,16 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       }}
       onWheelCapture={(event) => {
         if (!event.ctrlKey || !flowRef.current || !wrapperRef.current) return;
-        // Tauri receives physical Precision Touchpad contacts through the native
-        // bridge. Ignore WebView's optional synthetic Ctrl+Wheel copy to prevent
-        // double zoom; browsers keep the wheel fallback below.
-        // Tauri 直接使用物理触点；忽略 WebView 可能重复生成的 Ctrl+Wheel。
-        if ("__TAURI_INTERNALS__" in window) {
+        // Suppress the synthetic wheel only after a native start frame reached
+        // this component. Otherwise WebView2's child HWND owns the pointer and
+        // Ctrl+Wheel is the functional fallback, not a duplicate.
+        // 只有收到原生起始帧后才屏蔽合成滚轮；子窗口持有输入时必须保留回退链路。
+        if (
+          shouldSuppressSyntheticPinchWheel(
+            "__TAURI_INTERNALS__" in window,
+            nativePinchActiveRef.current,
+          )
+        ) {
           event.preventDefault();
           event.stopPropagation();
           return;

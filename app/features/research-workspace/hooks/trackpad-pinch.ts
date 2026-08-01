@@ -5,6 +5,18 @@ export type GestureViewport = GesturePoint & { zoom: number };
 export const TRACKPAD_MIN_ZOOM = 0.45;
 export const TRACKPAD_MAX_ZOOM = 1.7;
 
+/**
+ * Prevents WebView2's synthetic pinch wheel only when the native bridge has
+ * already proved that it is delivering the same gesture.
+ * 仅当原生桥接已经传递同一手势时，才屏蔽 WebView2 的合成滚轮。
+ */
+export function shouldSuppressSyntheticPinchWheel(
+  isTauri: boolean,
+  nativePinchActive: boolean,
+): boolean {
+  return isTauri && nativePinchActive;
+}
+
 function anchoredViewport(
   viewport: GestureViewport,
   cursor: GesturePoint,

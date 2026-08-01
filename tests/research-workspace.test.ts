@@ -30,6 +30,7 @@ import {
 } from "../app/features/research-workspace/workspace-edge-labels";
 import {
   measurePhysicalPinchSpan,
+  shouldSuppressSyntheticPinchWheel,
   viewportForNativeTrackpadPinch,
   viewportForTrackpadWheel,
 } from "../app/features/research-workspace/hooks/trackpad-pinch";
@@ -263,4 +264,10 @@ test("browser and native trackpad pinch keep the cursor anchored and clamp scale
   assert.equal(nativeZoomed.zoom, 1.5);
   assert.ok(Math.abs((cursor.x - nativeZoomed.x) / nativeZoomed.zoom - 200) < 1e-9);
   assert.ok(Math.abs((cursor.y - nativeZoomed.y) / nativeZoomed.zoom - 150) < 1e-9);
+});
+
+test("Tauri keeps the WebView pinch fallback until native frames actually arrive", () => {
+  assert.equal(shouldSuppressSyntheticPinchWheel(true, false), false);
+  assert.equal(shouldSuppressSyntheticPinchWheel(false, true), false);
+  assert.equal(shouldSuppressSyntheticPinchWheel(true, true), true);
 });
