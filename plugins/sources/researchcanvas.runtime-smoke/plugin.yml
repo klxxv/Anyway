@@ -14,4 +14,11 @@ spec:
   language: rust
   capabilities:
     - analysis.run
+    - context-menu.contribute
   permissions: []
+  contributes:
+    contextMenus:
+      - id: inspect-context
+        scope: node
+        label: Analyze node context
+        icon: sparkles

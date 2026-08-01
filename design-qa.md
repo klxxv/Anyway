@@ -65,6 +65,20 @@
   menu open, enum variable editor and observed bool fact visible. Follow-up captures use the
   running Tauri window at 1442 × 930 px and device scale factor 1.
 
+- Context-menu bug source visual truth:
+  `C:\Users\admin\AppData\Local\Temp\codex-clipboard-b28e2e5f-7109-4030-89cb-e0a489176352.png`
+  (795 × 640 px, Chromium native menu covering a selected node).
+- Context-menu implementation captures:
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\context-menu-node.png`
+    (1444 × 932 px, running Tauri desktop window at device scale factor 1).
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\context-menu-settings.png`
+    (1444 × 932 px, configurable node/edge/canvas menu settings).
+  - `C:\Users\admin\Documents\Anyway\output\design-qa\context-menu-node-focus.png`
+    (795 × 640 px, implementation crop normalized to the bug source dimensions).
+- Context-menu same-input comparison:
+  `C:\Users\admin\Documents\Anyway\output\design-qa\context-menu-comparison.png`
+  (1590 × 640 px; bug source left, corrected focused implementation right).
+
 ## Intentional product differences
 
 - The supplied warm paper/wood tint is replaced with white and near-white surfaces, per the
@@ -217,6 +231,36 @@
   lines separating cleanly. The shortcut capture shows the existing white/gray-black/blue
   settings language, red duplicate state, visible scrollbar, and fixed footer. Computer Use
   verified `Ctrl+,`, `A`, conflict detection, Save disabling, and Escape behavior.
+
+### Pass 8
+
+- [P1][behavior] Right-clicking a selected node reached the Chromium/WebView native menu because
+  only blank-pane context events were suppressed.
+  - Fix: the graph wrapper now suppresses the native menu and React Flow routes node, edge, and
+    pane events into three scope-specific application menus.
+- [P1][functionality] Nodes, relations, and the empty canvas previously had no target-aware
+  right-click actions.
+  - Fix: nodes expose inspect/connect/duplicate/delete; relations expose semantic filter,
+    direction reversal, and delete; the canvas exposes quick add, note, default layout, and
+    fit-to-view. Delete hints are backed by an active Delete-key handler while the menu is open.
+- [P1][extensibility] The plugin contract could not contribute contextual workspace commands.
+  - Fix: added a validated `context-menu.contribute` manifest capability. Only enabled executable
+    plugins may contribute bounded node/edge/canvas actions, and selection invokes the existing
+    WASM sandbox with project id, target id, scope, and canvas position—never a UI callback or
+    workspace-store reference.
+- [P2][customization] Users could not hide or reorder contextual commands.
+  - Fix: added a dedicated Settings section with per-scope tabs, checkboxes, order controls,
+    restore defaults, and a global plugin-actions toggle. The fixed footer remains visible with
+    no overflow at the 760 × 580 dialog size.
+- [P2][transient state] The quick-add pie was initialized open, so it could compete with the new
+  context menu after launch or settings dismissal.
+  - Fix: initialize the pie closed; it now appears only after Add or the deliberate trackpad
+    gesture.
+- Post-fix evidence: Computer Use opened all three menus in the running Tauri window and opened
+  the Context Menus settings section. The same-input comparison intentionally contrasts the
+  oversized unrelated browser commands with the compact semantic replacement; exact visual
+  matching to the bug source is not desired. The implementation retains the established white,
+  gray-black, blue, serif, thin-border, and Tabler-icon language.
 
 ## Final rubric
 

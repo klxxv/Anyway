@@ -20,16 +20,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
 import type { ProjectState, ResearchNodeType } from "../../../lib/research-types";
+import type { ResolvedPluginContextMenuAction } from "../../../plugins/context-menu";
 import { listenForNativeTrackpadContacts } from "../../../platform/trackpad";
 import { useTwoFingerPie } from "../hooks/use-two-finger-pie";
 import { clampPieMenuPoint } from "../hooks/two-finger-gesture";
 import type { PieMenuState, WorkspaceEdge, WorkspaceNode } from "../workspace-types";
+import {
+  type ContextMenuActionId,
+  type ContextMenuPreferences,
+  type WorkspaceContextMenuState,
+} from "../workspace-context-menu";
+import type { WorkspaceShortcuts } from "../workspace-shortcuts";
 import {
   linkLegendFilterOf,
   projectForLegendFilter,
   type LinkLegendFilter,
 } from "../workspace-layout";
 import { RadialAddMenu } from "../components/radial-add-menu";
+import { WorkspaceContextMenu } from "../components/workspace-context-menu";
 import { ResearchEdgeLine } from "./research-edge-line";
 import { ResearchNodeCard } from "./research-node-card";
 import { computeEdgeRoutes } from "./edge-routing";
@@ -46,11 +54,24 @@ type ResearchGraphCanvasProps = {
   showMiniMap: boolean;
   showLinkCounts: boolean;
   referenceViewport: boolean;
+  contextMenus: ContextMenuPreferences;
+  shortcuts: WorkspaceShortcuts;
+  pluginContextMenuActions: ResolvedPluginContextMenuAction[];
   onLegendFilter: (filter: LinkLegendFilter | null) => void;
   onSelectNode: (nodeId: string) => void;
   onMoveNode: (nodeId: string, x: number, y: number) => void;
   onCreateEdge: (source: string, target: string) => void;
   onRequestCreate: (type: ResearchNodeType, x: number, y: number) => void;
+  onRequestConnect: (nodeId: string) => void;
+  onDuplicateNode: (nodeId: string) => void;
+  onDeleteNode: (nodeId: string) => void;
+  onReverseEdge: (edgeId: string) => void;
+  onDeleteEdge: (edgeId: string) => void;
+  onApplyDefaultLayout: () => void;
+  onPluginContextMenuAction: (
+    action: ResolvedPluginContextMenuAction,
+    context: WorkspaceContextMenuState,
+  ) => void;
 };
 
 function buildNodes(
@@ -107,11 +128,21 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     showMiniMap,
     showLinkCounts,
     referenceViewport,
+    contextMenus,
+    shortcuts,
+    pluginContextMenuActions,
     onLegendFilter,
     onSelectNode,
     onMoveNode,
     onCreateEdge,
     onRequestCreate,
+    onRequestConnect,
+    onDuplicateNode,
+    onDeleteNode,
+    onReverseEdge,
+    onDeleteEdge,
+    onApplyDefaultLayout,
+    onPluginContextMenuAction,
   } = props;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance<WorkspaceNode, WorkspaceEdge> | null>(null);
@@ -119,12 +150,9 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     buildNodes(project, selectedNodeId, linkFilter),
   );
   const [edges, setEdges] = useState(() => buildEdges(project, linkFilter));
-  const [pieMenu, setPieMenu] = useState<PieMenuState | null>({
-    screenX: 888,
-    screenY: 432,
-    flowX: 911,
-    flowY: 390,
-  });
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const [contextMenu, setContextMenu] = useState<WorkspaceContextMenuState | null>(null);
+  const [pieMenu, setPieMenu] = useState<PieMenuState | null>(null);
   const placementKey = useMemo(
     () =>
       project.placements
@@ -145,6 +173,16 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     },
     [referenceViewport],
   );
+
+  useEffect(() => {
+    const element = wrapperRef.current;
+    if (!element) return;
+    const update = () => setCanvasSize({ width: element.clientWidth, height: element.clientHeight });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -218,7 +256,81 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     onChoose: chooseFromGesture,
     onDismiss: () => setPieMenu(null),
   });
-  const { onNativeTrackpadContact, ...gestureHandlers } = gesture;
+  const {
+    onNativeTrackpadContact,
+    onContextMenuCapture: onGestureContextMenuCapture,
+    ...gestureHandlers
+  } = gesture;
+
+  const contextPoint = useCallback((clientX: number, clientY: number) => {
+    const bounds = wrapperRef.current?.getBoundingClientRect();
+    const screen = {
+      x: clientX - (bounds?.left ?? 0),
+      y: clientY - (bounds?.top ?? 0),
+    };
+    const flow = flowRef.current?.screenToFlowPosition({ x: clientX, y: clientY }) ?? screen;
+    return { screen, flow };
+  }, []);
+
+  const handleContextAction = useCallback(
+    (action: ContextMenuActionId, menu: WorkspaceContextMenuState) => {
+      setContextMenu(null);
+      switch (action) {
+        case "node.inspect":
+          if (menu.targetId) onSelectNode(menu.targetId);
+          break;
+        case "node.connect":
+          if (menu.targetId) onRequestConnect(menu.targetId);
+          break;
+        case "node.duplicate":
+          if (menu.targetId) onDuplicateNode(menu.targetId);
+          break;
+        case "node.delete":
+          if (menu.targetId) onDeleteNode(menu.targetId);
+          break;
+        case "edge.filter": {
+          const edge = project.edges.find((item) => item.id === menu.targetId);
+          if (edge) onLegendFilter(linkLegendFilterOf(edge));
+          break;
+        }
+        case "edge.reverse":
+          if (menu.targetId) onReverseEdge(menu.targetId);
+          break;
+        case "edge.delete":
+          if (menu.targetId) onDeleteEdge(menu.targetId);
+          break;
+        case "canvas.add":
+          setPieMenu({
+            screenX: menu.screenX,
+            screenY: menu.screenY,
+            flowX: menu.flowX,
+            flowY: menu.flowY,
+          });
+          break;
+        case "canvas.note":
+          onRequestCreate("note", menu.flowX, menu.flowY);
+          break;
+        case "canvas.layout":
+          onApplyDefaultLayout();
+          break;
+        case "canvas.fit":
+          void flowRef.current?.fitView({ padding: 0.12, maxZoom: 1, duration: 220 });
+          break;
+      }
+    },
+    [
+      onApplyDefaultLayout,
+      onDeleteEdge,
+      onDeleteNode,
+      onDuplicateNode,
+      onLegendFilter,
+      onRequestConnect,
+      onRequestCreate,
+      onReverseEdge,
+      onSelectNode,
+      project.edges,
+    ],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -326,6 +438,10 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       ref={wrapperRef}
       className="relative h-full min-h-0 overflow-hidden bg-canvas"
       {...gestureHandlers}
+      onContextMenuCapture={(event) => {
+        onGestureContextMenuCapture?.(event);
+        event.preventDefault();
+      }}
       onWheelCapture={(event) => {
         if (!pieMenu?.gestureActive) return;
         event.preventDefault();
@@ -358,10 +474,56 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         onNodeClick={(_, node) => {
           onSelectNode(node.id);
           setPieMenu(null);
+          setContextMenu(null);
+        }}
+        onNodeContextMenu={(event, node) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const point = contextPoint(event.clientX, event.clientY);
+          onSelectNode(node.id);
+          setPieMenu(null);
+          setContextMenu({
+            scope: "node",
+            targetId: node.id,
+            title: node.data.record.title,
+            screenX: point.screen.x,
+            screenY: point.screen.y,
+            flowX: point.flow.x,
+            flowY: point.flow.y,
+          });
+        }}
+        onEdgeContextMenu={(event, edge) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const point = contextPoint(event.clientX, event.clientY);
+          setPieMenu(null);
+          setContextMenu({
+            scope: "edge",
+            targetId: edge.id,
+            title: edge.data?.label,
+            screenX: point.screen.x,
+            screenY: point.screen.y,
+            flowX: point.flow.x,
+            flowY: point.flow.y,
+          });
         }}
         onNodeDragStop={(_, node) => onMoveNode(node.id, node.position.x, node.position.y)}
-        onPaneClick={() => setPieMenu(null)}
-        onPaneContextMenu={(event) => event.preventDefault()}
+        onPaneClick={() => {
+          setPieMenu(null);
+          setContextMenu(null);
+        }}
+        onPaneContextMenu={(event) => {
+          event.preventDefault();
+          const point = contextPoint(event.clientX, event.clientY);
+          setPieMenu(null);
+          setContextMenu({
+            scope: "canvas",
+            screenX: point.screen.x,
+            screenY: point.screen.y,
+            flowX: point.flow.x,
+            flowY: point.flow.y,
+          });
+        }}
         fitView
         fitViewOptions={{ padding: 0.12, maxZoom: 1 }}
         minZoom={0.45}
@@ -428,6 +590,25 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
             onRequestCreate(type, pieMenu.flowX, pieMenu.flowY);
             setPieMenu(null);
           }}
+        />
+      )}
+
+      {contextMenu && (
+        <WorkspaceContextMenu
+          menu={contextMenu}
+          width={canvasSize.width}
+          height={canvasSize.height}
+          actionOrder={contextMenus[contextMenu.scope]}
+          shortcuts={shortcuts}
+          pluginActions={pluginContextMenuActions.filter(
+            (action) => action.scope === contextMenu.scope,
+          )}
+          onBuiltInAction={handleContextAction}
+          onPluginAction={(action, menu) => {
+            setContextMenu(null);
+            onPluginContextMenuAction(action, menu);
+          }}
+          onClose={() => setContextMenu(null)}
         />
       )}
     </div>

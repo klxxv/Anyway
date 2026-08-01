@@ -40,3 +40,28 @@ JSON input/output limits. The stable ABI exports `memory`,
 Native machine code is never loaded. Both C++ and Rust plugins compile to the
 same portable WebAssembly boundary, so the installer can verify the artifact
 before the VM executes it.
+
+## Context menu contributions
+
+An executable plugin may add scoped node, edge, or canvas actions. It must
+declare both `analysis.run` and `context-menu.contribute`; the desktop
+installer rejects menu contributions on declarative plugins or unknown icons.
+
+```yaml
+spec:
+  capabilities:
+    - analysis.run
+    - context-menu.contribute
+  permissions: []
+  contributes:
+    contextMenus:
+      - id: inspect-context
+        scope: node
+        label: Analyze node context
+        icon: sparkles
+```
+
+When selected, the app invokes that same plugin with `operation:
+"context-menu"` plus a bounded context containing only the project id, target
+id, scope, and canvas position. Plugins never receive a React callback or a
+reference to the workspace store.

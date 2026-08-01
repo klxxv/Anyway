@@ -16,13 +16,16 @@ import { useI18n } from "../../../i18n/provider";
 import { builtInPluginCatalog } from "../../../plugins/catalog";
 import type { InstalledMycPlugin } from "../../../plugins/contracts";
 import {
+  enabledPluginsStorageKey,
+  pluginsChangedEvent,
+} from "../../../plugins/context-menu";
+import {
   executeMycPlugin,
   installMycPlugin,
   listenForMycDrops,
   listInstalledMycPlugins,
 } from "../../../plugins/tauri-client";
 
-const enabledStorageKey = "research-canvas.enabled-plugins.v1";
 type StoreFilter = "all" | "installed" | "runtime";
 
 function pluginKey(plugin: InstalledMycPlugin) {
@@ -57,11 +60,11 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
     const frame = window.requestAnimationFrame(() => {
       try {
         const values = JSON.parse(
-          window.localStorage.getItem(enabledStorageKey) ?? "[]",
+          window.localStorage.getItem(enabledPluginsStorageKey) ?? "[]",
         ) as string[];
         setEnabled(new Set(values));
       } catch {
-        window.localStorage.removeItem(enabledStorageKey);
+        window.localStorage.removeItem(enabledPluginsStorageKey);
       }
       void refresh();
     });
@@ -74,6 +77,7 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
         for (const path of paths) await installMycPlugin(path);
         setMessage(t("plugins.installedToast"));
         await refresh();
+        window.dispatchEvent(new CustomEvent(pluginsChangedEvent));
       } catch (error) {
         setMessage(error instanceof Error ? error.message : String(error));
       } finally {
@@ -103,7 +107,8 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      window.localStorage.setItem(enabledStorageKey, JSON.stringify([...next]));
+      window.localStorage.setItem(enabledPluginsStorageKey, JSON.stringify([...next]));
+      window.dispatchEvent(new CustomEvent(pluginsChangedEvent));
       return next;
     });
   };

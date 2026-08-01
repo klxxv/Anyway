@@ -2,12 +2,15 @@
 
 import {
   IconArrowRight,
+  IconArrowDown,
+  IconArrowUp,
   IconCheck,
   IconFileText,
   IconFolder,
   IconHistory,
   IconKeyboard,
   IconLayoutGrid,
+  IconMenu2,
   IconPalette,
   IconPointer,
   IconPlugConnected,
@@ -30,6 +33,11 @@ import {
   shortcutFromKeyboardEvent,
   type ShortcutAction,
 } from "../workspace-shortcuts";
+import {
+  CONTEXT_MENU_ACTIONS,
+  type ContextMenuActionId,
+  type ContextMenuScope,
+} from "../workspace-context-menu";
 import type { NodeDraft } from "../workspace-types";
 
 export type ComposerState = {
@@ -551,7 +559,7 @@ export function ProjectMenu({
   );
 }
 
-type SettingsSection = "interface" | "interaction" | "shortcuts" | "canvas";
+type SettingsSection = "interface" | "interaction" | "shortcuts" | "context-menus" | "canvas";
 
 function PreferenceToggle({
   checked,
@@ -606,6 +614,7 @@ export function SettingsDialog({
   const [section, setSection] = useState<SettingsSection>("interface");
   const [draft, setDraft] = useState(preferences);
   const [recordingShortcut, setRecordingShortcut] = useState<ShortcutAction | null>(null);
+  const [contextMenuScope, setContextMenuScope] = useState<ContextMenuScope>("node");
   const conflicts = shortcutConflicts(draft.shortcuts);
   const sections: Array<{
     key: SettingsSection;
@@ -616,6 +625,7 @@ export function SettingsDialog({
     { key: "interface", label: t("settings.interface"), description: t("settings.commandDensity"), icon: IconPalette },
     { key: "interaction", label: t("settings.interaction"), description: t("settings.hoverBehavior"), icon: IconPointer },
     { key: "shortcuts", label: t("settings.shortcuts"), description: t("settings.shortcutsHint"), icon: IconKeyboard },
+    { key: "context-menus", label: t("settings.contextMenus"), description: t("settings.contextMenusHint"), icon: IconMenu2 },
     { key: "canvas", label: t("settings.canvas"), description: t("settings.graphDefaults"), icon: IconLayoutGrid },
   ];
   const shortcutRows: Array<{ action: ShortcutAction; label: string }> = [
@@ -656,6 +666,39 @@ export function SettingsDialog({
       shortcuts: { ...current.shortcuts, [action]: binding },
     }));
     setRecordingShortcut(null);
+  };
+
+  const toggleContextAction = (scope: ContextMenuScope, action: ContextMenuActionId) => {
+    setDraft((current) => {
+      const enabled = current.contextMenus[scope].includes(action);
+      return {
+        ...current,
+        contextMenus: {
+          ...current.contextMenus,
+          [scope]: enabled
+            ? current.contextMenus[scope].filter((item) => item !== action)
+            : [...current.contextMenus[scope], action],
+        },
+      };
+    });
+  };
+
+  const moveContextAction = (
+    scope: ContextMenuScope,
+    action: ContextMenuActionId,
+    direction: -1 | 1,
+  ) => {
+    setDraft((current) => {
+      const actions = [...current.contextMenus[scope]];
+      const index = actions.indexOf(action);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= actions.length) return current;
+      [actions[index], actions[nextIndex]] = [actions[nextIndex], actions[index]];
+      return {
+        ...current,
+        contextMenus: { ...current.contextMenus, [scope]: actions },
+      };
+    });
   };
 
   return (
@@ -860,6 +903,101 @@ export function SettingsDialog({
                     ? t("settings.shortcutConflict")
                     : t("settings.shortcutCaptureHint")}
                 </p>
+              </div>
+            )}
+
+            {section === "context-menus" && (
+              <div>
+                <h3 className="font-serif text-[18px]">{t("settings.contextMenuTitle")}</h3>
+                <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
+                  {t("settings.contextMenuDescription")}
+                </p>
+                <div className="mt-5 grid grid-cols-3 rounded-[5px] border border-ink/15 bg-canvas p-1">
+                  {(["node", "edge", "canvas"] as const).map((scope) => (
+                    <button
+                      key={scope}
+                      className={`rounded-[4px] px-3 py-2 font-serif text-[11px] transition ${
+                        contextMenuScope === scope
+                          ? "bg-paper text-blue shadow-sm ring-1 ring-inset ring-blue/20"
+                          : "text-ink/55 hover:text-ink"
+                      }`}
+                      onClick={() => setContextMenuScope(scope)}
+                    >
+                      {t(
+                        scope === "node"
+                          ? "settings.contextNode"
+                          : scope === "edge"
+                            ? "settings.contextEdge"
+                            : "settings.contextCanvas",
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-4 overflow-hidden rounded-[5px] border border-ink/15">
+                  {[
+                    ...draft.contextMenus[contextMenuScope],
+                    ...CONTEXT_MENU_ACTIONS[contextMenuScope]
+                      .map((action) => action.id)
+                      .filter((action) => !draft.contextMenus[contextMenuScope].includes(action)),
+                  ].map((actionId) => {
+                    const definition = CONTEXT_MENU_ACTIONS[contextMenuScope].find(
+                      (action) => action.id === actionId,
+                    );
+                    if (!definition) return null;
+                    const enabled = draft.contextMenus[contextMenuScope].includes(actionId);
+                    const index = draft.contextMenus[contextMenuScope].indexOf(actionId);
+                    return (
+                      <div
+                        key={actionId}
+                        className={`flex min-h-11 items-center gap-3 border-b border-ink/10 px-3 last:border-b-0 ${
+                          enabled ? "bg-paper" : "bg-canvas text-ink/45"
+                        }`}
+                      >
+                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                          <input
+                            className="size-3.5 accent-blue"
+                            type="checkbox"
+                            checked={enabled}
+                            onChange={() => toggleContextAction(contextMenuScope, actionId)}
+                          />
+                          <span className="font-serif text-[11px]">{t(definition.labelKey)}</span>
+                        </label>
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            className="icon-quiet size-7 disabled:opacity-20"
+                            aria-label={t("settings.moveUp")}
+                            disabled={!enabled || index === 0}
+                            onClick={() => moveContextAction(contextMenuScope, actionId, -1)}
+                          >
+                            <IconArrowUp size={14} stroke={1.4} />
+                          </button>
+                          <button
+                            className="icon-quiet size-7 disabled:opacity-20"
+                            aria-label={t("settings.moveDown")}
+                            disabled={
+                              !enabled || index === draft.contextMenus[contextMenuScope].length - 1
+                            }
+                            onClick={() => moveContextAction(contextMenuScope, actionId, 1)}
+                          >
+                            <IconArrowDown size={14} stroke={1.4} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 rounded-[5px] border border-blue/20 bg-blue-soft px-4">
+                  <PreferenceToggle
+                    checked={draft.showPluginContextMenuActions}
+                    label={t("settings.pluginMenuActions")}
+                    description={t("settings.pluginMenuActionsHint")}
+                    onChange={(showPluginContextMenuActions) =>
+                      setDraft((current) => ({ ...current, showPluginContextMenuActions }))
+                    }
+                  />
+                </div>
               </div>
             )}
 

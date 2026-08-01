@@ -37,12 +37,28 @@ pub struct MycPluginMetadata {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginContextMenuContribution {
+    id: String,
+    scope: String,
+    label: String,
+    icon: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MycPluginContributions {
+    context_menus: Option<Vec<PluginContextMenuContribution>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MycPluginSpec {
     engine: String,
     entry: String,
     language: Option<String>,
     capabilities: Vec<String>,
     permissions: Vec<String>,
+    contributes: Option<MycPluginContributions>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -125,6 +141,42 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     }
     validate_slug(&manifest.metadata.id, "plugin id")?;
     validate_slug(&manifest.metadata.version, "plugin version")?;
+    if let Some(items) = manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.context_menus.as_ref())
+    {
+        if manifest.kind != "AnalysisPlugin"
+            || !manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|capability| capability == "context-menu.contribute")
+        {
+            return Err(
+                "Context menu contributions require an AnalysisPlugin with context-menu.contribute"
+                    .to_string(),
+            );
+        }
+        if items.len() > 24 {
+            return Err("A plugin can contribute at most 24 context menu actions".to_string());
+        }
+        for item in items {
+            validate_slug(&item.id, "context menu action id")?;
+            if !matches!(item.scope.as_str(), "node" | "edge" | "canvas") {
+                return Err(format!("Invalid context menu scope: {}", item.scope));
+            }
+            if item.label.trim().is_empty() || item.label.chars().count() > 64 {
+                return Err("Context menu labels must contain 1 to 64 characters".to_string());
+            }
+            if item.icon.as_ref().is_some_and(|icon| {
+                !matches!(icon.as_str(), "sparkles" | "search" | "wand" | "database" | "link")
+            }) {
+                return Err("Unsupported context menu icon".to_string());
+            }
+        }
+    }
     match manifest.kind.as_str() {
         "ThemePlugin" => {
             if manifest.spec.entry != "theme.json" {
@@ -508,5 +560,27 @@ spec:
         assert!(validate_manifest(&manifest)
             .expect_err("unknown language rejected")
             .contains("language"));
+    }
+
+    #[test]
+    fn context_menu_contributions_require_runtime_capability() {
+        let mut manifest: MycPluginManifest =
+            serde_yaml::from_str(&runtime_manifest("rust")).expect("parse manifest");
+        manifest.spec.contributes = Some(MycPluginContributions {
+            context_menus: Some(vec![PluginContextMenuContribution {
+                id: "inspect-context".to_string(),
+                scope: "node".to_string(),
+                label: "Analyze node context".to_string(),
+                icon: Some("sparkles".to_string()),
+            }]),
+        });
+        assert!(validate_manifest(&manifest)
+            .expect_err("missing contribution capability is rejected")
+            .contains("context-menu.contribute"));
+        manifest
+            .spec
+            .capabilities
+            .push("context-menu.contribute".to_string());
+        validate_manifest(&manifest).expect("bounded runtime contribution is accepted");
     }
 }

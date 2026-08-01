@@ -4,6 +4,11 @@ import {
   SHORTCUT_ACTIONS,
   type WorkspaceShortcuts,
 } from "./workspace-shortcuts";
+import {
+  defaultContextMenuPreferences,
+  normalizeContextMenuPreferences,
+  type ContextMenuPreferences,
+} from "./workspace-context-menu";
 
 export type CommandDensity = "comfortable" | "compact";
 export type HoverDelay = 80 | 180 | 320;
@@ -14,6 +19,8 @@ export type WorkspacePreferences = {
   defaultLayout: LayoutMode;
   showMiniMap: boolean;
   showLinkCounts: boolean;
+  contextMenus: ContextMenuPreferences;
+  showPluginContextMenuActions: boolean;
   shortcuts: WorkspaceShortcuts;
 };
 
@@ -23,6 +30,12 @@ export const defaultWorkspacePreferences: WorkspacePreferences = {
   defaultLayout: "tree",
   showMiniMap: true,
   showLinkCounts: true,
+  contextMenus: {
+    node: [...defaultContextMenuPreferences.node],
+    edge: [...defaultContextMenuPreferences.edge],
+    canvas: [...defaultContextMenuPreferences.canvas],
+  },
+  showPluginContextMenuActions: true,
   shortcuts: { ...defaultWorkspaceShortcuts },
 };
 
@@ -50,6 +63,8 @@ export function normalizeWorkspacePreferences(
         : "tree",
     showMiniMap: value.showMiniMap !== false,
     showLinkCounts: value.showLinkCounts !== false,
+    contextMenus: normalizeContextMenuPreferences(value.contextMenus),
+    showPluginContextMenuActions: value.showPluginContextMenuActions !== false,
     shortcuts: Object.fromEntries(
       SHORTCUT_ACTIONS.map((action) => [
         action,

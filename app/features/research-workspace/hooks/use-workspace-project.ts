@@ -175,6 +175,55 @@ export function useWorkspaceProject() {
     [commit],
   );
 
+  const duplicateNode = useCallback(
+    (nodeId: string) => {
+      const nextId = makeId("node");
+      commit("Duplicate node", (draft) => {
+        const source = draft.nodes.find((node) => node.id === nodeId);
+        const placement = draft.placements.find((item) => item.nodeId === nodeId);
+        if (!source || !placement) return;
+        const now = new Date().toISOString();
+        draft.nodes.push({
+          ...(JSON.parse(JSON.stringify(source)) as typeof source),
+          id: nextId,
+          title: `${source.title} copy`,
+          provenance: { origin: "human", actorId: "local-researcher" },
+          createdAt: now,
+          updatedAt: now,
+        });
+        draft.placements.push({
+          ...placement,
+          id: `placement-${nextId}`,
+          nodeId: nextId,
+          x: placement.x + 28,
+          y: placement.y + 28,
+        });
+      });
+      setSelectedNodeId(nextId);
+    },
+    [commit],
+  );
+
+  const removeEdge = useCallback(
+    (edgeId: string) => {
+      commit("Delete relation", (draft) => {
+        draft.edges = draft.edges.filter((edge) => edge.id !== edgeId);
+      });
+    },
+    [commit],
+  );
+
+  const reverseEdge = useCallback(
+    (edgeId: string) => {
+      commit("Reverse relation", (draft) => {
+        const edge = draft.edges.find((item) => item.id === edgeId);
+        if (!edge) return;
+        [edge.source, edge.target] = [edge.target, edge.source];
+      });
+    },
+    [commit],
+  );
+
   const applyLayout = useCallback(
     (mode: LayoutMode, filter: LinkLegendFilter | null = null) => {
       // Layout only the visible relation projection, then persist positions in one history step.
@@ -257,6 +306,9 @@ export function useWorkspaceProject() {
     createNode,
     createEdge,
     removeNode,
+    duplicateNode,
+    removeEdge,
+    reverseEdge,
     applyLayout,
     undo,
     redo,

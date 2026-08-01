@@ -93,6 +93,8 @@ test("workspace preferences restore only supported values", () => {
       defaultLayout: "table",
       showMiniMap: false,
       showLinkCounts: false,
+      contextMenus: defaultWorkspacePreferences.contextMenus,
+      showPluginContextMenuActions: true,
       shortcuts: defaultWorkspacePreferences.shortcuts,
     }),
     {
@@ -101,6 +103,8 @@ test("workspace preferences restore only supported values", () => {
       defaultLayout: "table",
       showMiniMap: false,
       showLinkCounts: false,
+      contextMenus: defaultWorkspacePreferences.contextMenus,
+      showPluginContextMenuActions: true,
       shortcuts: defaultWorkspacePreferences.shortcuts,
     },
   );
@@ -111,6 +115,19 @@ test("workspace preferences restore only supported values", () => {
     }),
     defaultWorkspacePreferences,
   );
+});
+
+test("context menu preferences preserve scope-specific order and disabled actions", () => {
+  const preferences = normalizeWorkspacePreferences({
+    contextMenus: {
+      node: ["node.delete", "node.inspect"],
+      edge: [],
+      canvas: ["canvas.fit", "unknown.action" as never],
+    },
+  });
+  assert.deepEqual(preferences.contextMenus.node, ["node.delete", "node.inspect"]);
+  assert.deepEqual(preferences.contextMenus.edge, []);
+  assert.deepEqual(preferences.contextMenus.canvas, ["canvas.fit"]);
 });
 
 test("edge routing chooses facing sides and separates shared source lanes", () => {

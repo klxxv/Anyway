@@ -32,6 +32,26 @@ export interface MycPluginSpec {
   language?: "rust" | "cpp" | "other";
   capabilities: string[];
   permissions: string[];
+  contributes?: MycPluginContributions;
+}
+
+export type PluginContextMenuIcon =
+  | "sparkles"
+  | "search"
+  | "wand"
+  | "database"
+  | "link";
+
+export interface PluginContextMenuContribution {
+  id: string;
+  scope: "node" | "edge" | "canvas";
+  label: string;
+  icon?: PluginContextMenuIcon;
+}
+
+/** 插件只能声明菜单与自己的沙箱命令，不能直接持有 UI 回调 / Plugins declare sandbox commands, never UI callbacks. */
+export interface MycPluginContributions {
+  contextMenus?: PluginContextMenuContribution[];
 }
 
 /**

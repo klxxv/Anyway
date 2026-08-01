@@ -1,13 +1,23 @@
 "use client";
 
 import { IconChevronRight, IconPlugConnected } from "@tabler/icons-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   LayoutMode,
   ResearchEdgeType,
   ResearchNodeType,
 } from "../../lib/research-types";
 import { useI18n } from "../../i18n/provider";
+import {
+  contextMenuContributionsFromPlugins,
+  pluginsChangedEvent,
+  readEnabledPluginKeys,
+} from "../../plugins/context-menu";
+import type { InstalledMycPlugin } from "../../plugins/contracts";
+import {
+  executeMycPlugin,
+  listInstalledMycPlugins,
+} from "../../plugins/tauri-client";
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
 import { InspectorPanel } from "./components/inspector-panel";
 import { PluginStoreDialog } from "./components/plugin-store-dialog";
@@ -31,6 +41,7 @@ import {
   SHORTCUT_ACTIONS,
   shortcutFromKeyboardEvent,
 } from "./workspace-shortcuts";
+import type { WorkspaceContextMenuState } from "./workspace-context-menu";
 
 const preferencesStorageKey = "research-canvas.workspace-preferences.v1";
 
@@ -65,6 +76,16 @@ export function ResearchWorkspaceApp() {
   const [notice, setNotice] = useState("");
   const [preferences, setPreferences] = useState<WorkspacePreferences>(
     defaultWorkspacePreferences,
+  );
+  const [installedPlugins, setInstalledPlugins] = useState<InstalledMycPlugin[]>([]);
+  const [enabledPluginKeys, setEnabledPluginKeys] = useState<Set<string>>(new Set());
+
+  const pluginContextMenuActions = useMemo(
+    () =>
+      preferences.showPluginContextMenuActions
+        ? contextMenuContributionsFromPlugins(installedPlugins, enabledPluginKeys)
+        : [],
+    [enabledPluginKeys, installedPlugins, preferences.showPluginContextMenuActions],
   );
 
   const requestCreate = useCallback(
@@ -112,6 +133,22 @@ export function ResearchWorkspaceApp() {
       }
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshPlugins = () => {
+      setEnabledPluginKeys(readEnabledPluginKeys());
+      void listInstalledMycPlugins().then((plugins) => {
+        if (!cancelled) setInstalledPlugins(plugins);
+      });
+    };
+    refreshPlugins();
+    window.addEventListener(pluginsChangedEvent, refreshPlugins);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(pluginsChangedEvent, refreshPlugins);
+    };
   }, []);
 
   useEffect(() => {
@@ -253,6 +290,9 @@ export function ResearchWorkspaceApp() {
             showMiniMap={preferences.showMiniMap}
             showLinkCounts={preferences.showLinkCounts}
             referenceViewport={layoutMode === null && linkFilter === null}
+            contextMenus={preferences.contextMenus}
+            shortcuts={preferences.shortcuts}
+            pluginContextMenuActions={pluginContextMenuActions}
             onLegendFilter={(nextFilter) => {
               const mode = layoutMode ?? preferences.defaultLayout;
               setLinkFilter(nextFilter);
@@ -269,12 +309,59 @@ export function ResearchWorkspaceApp() {
               setInspectorOpen(true);
             }}
             onMoveNode={workspace.moveNode}
+            onRequestConnect={(nodeId) => {
+              workspace.setSelectedNodeId(nodeId);
+              setConnectMode(true);
+              setNotice(`${connectType.replaceAll("_", " ")} · drag from the selected node`);
+            }}
+            onDuplicateNode={(nodeId) => {
+              workspace.duplicateNode(nodeId);
+              setInspectorOpen(true);
+              setNotice("Node duplicated");
+            }}
+            onDeleteNode={(nodeId) => {
+              workspace.removeNode(nodeId);
+              setNotice("Node deleted · Undo is available");
+            }}
+            onReverseEdge={(edgeId) => {
+              workspace.reverseEdge(edgeId);
+              setNotice("Relation direction reversed");
+            }}
+            onDeleteEdge={(edgeId) => {
+              workspace.removeEdge(edgeId);
+              setNotice("Relation deleted · Undo is available");
+            }}
+            onApplyDefaultLayout={applyDefaultLayout}
             onCreateEdge={(source, target) => {
               workspace.createEdge(source, target, connectType);
               setConnectMode(false);
               setNotice(`${connectType.replaceAll("_", " ")} relation created`);
             }}
             onRequestCreate={requestCreate}
+            onPluginContextMenuAction={async (action, context: WorkspaceContextMenuState) => {
+              try {
+                const result = await executeMycPlugin(
+                  action.pluginId,
+                  action.pluginVersion,
+                  {
+                    operation: "context-menu",
+                    actionId: action.id,
+                    context: {
+                      scope: context.scope,
+                      targetId: context.targetId,
+                      projectId: workspace.project.id,
+                      position: { x: context.flowX, y: context.flowY },
+                    },
+                  },
+                );
+                const output = JSON.stringify(result.output);
+                setNotice(
+                  `${action.pluginName} · ${output.slice(0, 160)}${output.length > 160 ? "…" : ""}`,
+                );
+              } catch (error) {
+                setNotice(error instanceof Error ? error.message : String(error));
+              }
+            }}
           />
         </section>
 

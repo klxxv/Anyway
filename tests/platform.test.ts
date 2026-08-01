@@ -10,8 +10,10 @@ import {
   isMycFileName,
   normalizeInstalledEdgeStyle,
   normalizeInstalledTheme,
+  type PluginContextMenuContribution,
   type InstalledMycPlugin,
 } from "../app/plugins/contracts";
+import { contextMenuContributionsFromPlugins } from "../app/plugins/context-menu";
 
 test("locale normalization and Simplified Chinese catalog are deterministic", () => {
   assert.equal(normalizeLocale("zh-CN"), "zh-CN");
@@ -159,4 +161,49 @@ test("runtime plugin metadata exposes only the verified wasm boundary", () => {
   assert.equal(plugin.runtime?.language, "cpp");
   assert.equal(plugin.runtime?.entrySha256.length, 64);
   assert.deepEqual(plugin.manifest.spec.permissions, []);
+});
+
+test("plugin context menus require runtime, enablement, and an explicit capability", () => {
+  const item: PluginContextMenuContribution = {
+    id: "inspect-context",
+    scope: "node",
+    label: "Analyze node context",
+    icon: "sparkles",
+  };
+  const plugin: InstalledMycPlugin = {
+    installPath: "plugins/installed/researchcanvas.context@1.0.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "AnalysisPlugin",
+      metadata: {
+        id: "researchcanvas.context",
+        name: "Context analyst",
+        version: "1.0.0",
+        publisher: "Research Canvas",
+        developer: "Runtime Team",
+        description: "Context menu smoke plugin",
+      },
+      spec: {
+        engine: "wasm32-myc",
+        entry: "plugin.wasm",
+        language: "rust",
+        capabilities: ["analysis.run", "context-menu.contribute"],
+        permissions: [],
+        contributes: { contextMenus: [item] },
+      },
+    },
+    runtime: {
+      engine: "wasm32-myc",
+      language: "rust",
+      entrySha256: "b".repeat(64),
+    },
+  };
+  assert.equal(contextMenuContributionsFromPlugins([plugin], new Set()).length, 0);
+  const actions = contextMenuContributionsFromPlugins(
+    [plugin],
+    new Set(["researchcanvas.context@1.0.0"]),
+  );
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0]?.scope, "node");
+  assert.equal(actions[0]?.pluginId, "researchcanvas.context");
 });
