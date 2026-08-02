@@ -3,6 +3,7 @@
 import {
   IconArrowsExchange,
   IconArrowsMaximize,
+  IconArrowsMinimize,
   IconCopy,
   IconDatabase,
   IconFilter,
@@ -37,6 +38,8 @@ const builtInIcon = {
   note: IconNote,
   layout: IconLayout,
   fit: IconArrowsMaximize,
+  expand: IconArrowsMaximize,
+  collapse: IconArrowsMinimize,
 } as const;
 
 const pluginIcon = {
@@ -186,7 +189,7 @@ export function WorkspaceContextMenu({
                 key={action.id}
                 className="group flex min-h-9 w-full items-center gap-3 rounded-[4px] px-2.5 text-left font-serif text-[11px] text-ink/85 transition hover:bg-blue-soft hover:text-blue focus-visible:outline-2 focus-visible:outline-blue"
                 role="menuitem"
-                title={`${action.pluginName} · ${t("contextMenu.pluginRun")}`}
+                title={`${action.plugin.name} · ${t("contextMenu.pluginRun")}`}
                 onClick={() => onPluginAction(action, menu)}
               >
                 <Icon size={16} stroke={1.35} />

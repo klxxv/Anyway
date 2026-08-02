@@ -6,6 +6,20 @@ import type {
 
 /** 桌面安装器与前端共享的 `.myc` 清单版本 / Shared `.myc` manifest version for desktop installer and frontend. */
 export const MYC_API_VERSION = "researchcanvas.dev/v1alpha1";
+export const PLUGIN_CALL_API_VERSION = "researchcanvas.dev/plugin-call/v1alpha1";
+
+export interface PluginReference {
+  id: string;
+  version: string;
+  name: string;
+}
+
+export interface PluginCallEnvelope<TContext = unknown, TPayload = unknown> {
+  apiVersion: typeof PLUGIN_CALL_API_VERSION;
+  operation: string;
+  context?: TContext;
+  payload?: TPayload;
+}
 
 export type MycPluginKind =
   | "ThemePlugin"
@@ -123,6 +137,14 @@ export interface PluginExecutionResult {
   output: unknown;
   fuelConsumed: number;
   durationMs: number;
+}
+
+export function pluginReference(plugin: InstalledMycPlugin): PluginReference {
+  return {
+    id: plugin.manifest.metadata.id,
+    version: plugin.manifest.metadata.version,
+    name: plugin.manifest.metadata.name,
+  };
 }
 
 export type GraphPatchOperation =

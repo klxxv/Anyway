@@ -10,13 +10,19 @@ import type {
 import { useI18n } from "../../i18n/provider";
 import {
   exportProjectWithPlugin,
+  generateGitHubSshKey,
   gitAutosaveProject,
+  initializeGitWorkspace,
   importProjectAtPath,
   importProjectNative,
+  loginGitHubAccount,
   openFolderWorkspace,
   openGitWorkspace,
+  readGitHubAccount,
   saveProjectNative,
+  uploadGitHubSshKey,
   type FolderProjectSummary,
+  type GitHubAccountStatus,
   type GitWorkspaceSnapshot,
 } from "../../platform/native-project";
 import {
@@ -26,14 +32,11 @@ import {
 } from "../../plugins/workspace";
 import {
   contextMenuContributionsFromPlugins,
-  pluginsChangedEvent,
-  readEnabledPluginKeys,
 } from "../../plugins/context-menu";
-import type { InstalledMycPlugin } from "../../plugins/contracts";
-import {
-  executeMycPlugin,
-  listInstalledMycPlugins,
-} from "../../plugins/tauri-client";
+import { resolveEdgeStyle } from "../../plugins/edge-style";
+import { usePluginHost } from "../../plugins/plugin-host";
+import { resolveTheme, themeCssVariables } from "../../plugins/theme";
+import { runAnalysisPlugin } from "../../plugins/tauri-client";
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
 import { InspectorPanel } from "./components/inspector-panel";
 import { PluginStoreDialog } from "./components/plugin-store-dialog";
@@ -64,7 +67,7 @@ import {
 import type { WorkspaceContextMenuState } from "./workspace-context-menu";
 import { edgeTypeMessageKeys } from "./workspace-edge-labels";
 
-const preferencesStorageKey = "research-canvas.workspace-preferences.v1";
+const preferencesStorageKey = "research-canvas.workspace-preferences.v2";
 const toastVisibleMs = 3_200;
 
 const layoutLabelKeys = {
@@ -101,6 +104,7 @@ function downloadProject(project: ReturnType<typeof useWorkspaceProject>["projec
  */
 export function ResearchWorkspaceApp() {
   const { t } = useI18n();
+  const { activePlugins } = usePluginHost();
   const workspace = useWorkspaceProject();
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -118,13 +122,12 @@ export function ResearchWorkspaceApp() {
   const [preferences, setPreferences] = useState<WorkspacePreferences>(
     defaultWorkspacePreferences,
   );
-  const [installedPlugins, setInstalledPlugins] = useState<InstalledMycPlugin[]>([]);
-  const [enabledPluginKeys, setEnabledPluginKeys] = useState<Set<string>>(new Set());
   const [folderWorkspace, setFolderWorkspace] = useState<{
     root: string;
     projects: FolderProjectSummary[];
   } | null>(null);
   const [gitSnapshot, setGitSnapshot] = useState<GitWorkspaceSnapshot | null>(null);
+  const [gitHubAccount, setGitHubAccount] = useState<GitHubAccountStatus | null>(null);
   const [gitCommand, setGitCommand] = useState<EnabledWorkspaceCommand | null>(null);
   const [gitAutoSave, setGitAutoSave] = useState(false);
   const [pluginBusy, setPluginBusy] = useState(false);
@@ -143,7 +146,7 @@ export function ResearchWorkspaceApp() {
   }, []);
   const showOperationError = useCallback(
     (error: unknown) => {
-      console.error(error);
+      console.warn("Research Canvas operation failed", error);
       showNotice(t("toast.operationFailed"));
     },
     [showNotice, t],
@@ -152,14 +155,20 @@ export function ResearchWorkspaceApp() {
   const pluginContextMenuActions = useMemo(
     () =>
       preferences.showPluginContextMenuActions
-        ? contextMenuContributionsFromPlugins(installedPlugins, enabledPluginKeys)
+        ? contextMenuContributionsFromPlugins(activePlugins)
         : [],
-    [enabledPluginKeys, installedPlugins, preferences.showPluginContextMenuActions],
+    [activePlugins, preferences.showPluginContextMenuActions],
   );
+  const edgeStyle = useMemo(
+    () => resolveEdgeStyle(activePlugins),
+    [activePlugins],
+  );
+  const theme = useMemo(() => resolveTheme(activePlugins), [activePlugins]);
+  const themeStyle = useMemo(() => themeCssVariables(theme), [theme]);
 
   const workspaceCommands = useMemo(
-    () => workspaceCommandsFromPlugins(installedPlugins, enabledPluginKeys),
-    [enabledPluginKeys, installedPlugins],
+    () => workspaceCommandsFromPlugins(activePlugins),
+    [activePlugins],
   );
   const exportCommand = workspaceCommands.find((command) => command.category === "export");
   const folderCommand = workspaceCommands.find((command) => command.category === "folder");
@@ -260,16 +269,18 @@ export function ResearchWorkspaceApp() {
     try {
       const snapshot = await openGitWorkspace(availableGitCommand);
       if (!snapshot) return;
+      const account = await readGitHubAccount(availableGitCommand);
       setMenuOpen(false);
       setGitCommand(availableGitCommand);
       setGitSnapshot(snapshot);
+      setGitHubAccount(account);
     } catch (error) {
       showOperationError(error);
     }
   }, [availableGitCommand, showOperationError]);
 
   const saveGitSnapshot = useCallback(async () => {
-    if (!gitCommand || !gitSnapshot || pluginBusy) return;
+    if (!gitCommand || !gitSnapshot?.isRepository || pluginBusy) return;
     setPluginBusy(true);
     try {
       const snapshot = await gitAutosaveProject(
@@ -285,6 +296,74 @@ export function ResearchWorkspaceApp() {
       setPluginBusy(false);
     }
   }, [gitCommand, gitSnapshot, pluginBusy, showNotice, showOperationError, t, workspace.project]);
+
+  const initializeGit = useCallback(async () => {
+    if (!gitCommand || !gitSnapshot || gitSnapshot.isRepository || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      const snapshot = await initializeGitWorkspace(gitCommand, gitSnapshot.repoPath);
+      setGitSnapshot(snapshot);
+      showNotice(t("workspace.gitInitialized"));
+    } catch (error) {
+      showOperationError(error);
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [gitCommand, gitSnapshot, pluginBusy, showNotice, showOperationError, t]);
+
+  const refreshGitHubAccount = useCallback(async () => {
+    if (!gitCommand || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      setGitHubAccount(await readGitHubAccount(gitCommand));
+    } catch (error) {
+      showOperationError(error);
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [gitCommand, pluginBusy, showOperationError]);
+
+  const loginGitHub = useCallback(async () => {
+    if (!gitCommand || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      setGitHubAccount(await loginGitHubAccount(gitCommand));
+      showNotice(t("workspace.githubLoginComplete"));
+    } catch (error) {
+      showOperationError(error);
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [gitCommand, pluginBusy, showNotice, showOperationError, t]);
+
+  const generateGitHubKey = useCallback(async () => {
+    if (!gitCommand || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      const login = gitHubAccount?.login ?? "research-canvas";
+      setGitHubAccount(
+        await generateGitHubSshKey(gitCommand, `${login}@github.com`),
+      );
+      showNotice(t("workspace.githubKeyGenerated"));
+    } catch (error) {
+      showOperationError(error);
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [gitCommand, gitHubAccount, pluginBusy, showNotice, showOperationError, t]);
+
+  const uploadGitHubKey = useCallback(async (path: string) => {
+    if (!gitCommand || pluginBusy) return;
+    setPluginBusy(true);
+    try {
+      setGitHubAccount(await uploadGitHubSshKey(gitCommand, path));
+      showNotice(t("workspace.githubKeyUploaded"));
+    } catch (error) {
+      showOperationError(error);
+    } finally {
+      setPluginBusy(false);
+    }
+  }, [gitCommand, pluginBusy, showNotice, showOperationError, t]);
 
   useEffect(() => {
     if (!notice) return;
@@ -312,27 +391,7 @@ export function ResearchWorkspaceApp() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const refreshPlugins = () => {
-      setEnabledPluginKeys(readEnabledPluginKeys());
-      void listInstalledMycPlugins()
-        .then((plugins) => {
-          if (!cancelled) setInstalledPlugins(plugins);
-        })
-        .catch(() => {
-          if (!cancelled) setInstalledPlugins([]);
-        });
-    };
-    refreshPlugins();
-    window.addEventListener(pluginsChangedEvent, refreshPlugins);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(pluginsChangedEvent, refreshPlugins);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!gitAutoSave || !gitCommand || !gitSnapshot) return;
+    if (!gitAutoSave || !gitCommand || !gitSnapshot?.isRepository) return;
     const timer = window.setInterval(() => {
       void saveGitSnapshot();
     }, 300_000);
@@ -421,7 +480,11 @@ export function ResearchWorkspaceApp() {
   }, []);
 
   return (
-    <main className="flex h-screen min-h-[680px] w-screen flex-col overflow-hidden bg-paper text-ink">
+    <main
+      className="flex h-screen min-h-[680px] w-screen flex-col overflow-hidden bg-paper text-ink"
+      style={themeStyle}
+      data-plugin-theme={theme?.id ?? "research-light"}
+    >
       <WorkspaceTopbar
         canUndo={workspace.canUndo}
         canRedo={workspace.canRedo}
@@ -487,9 +550,14 @@ export function ResearchWorkspaceApp() {
             inspectorOpen={inspectorOpen}
             linkFilter={linkFilter}
             showMiniMap={preferences.showMiniMap}
+            showMiniMapRelations={theme?.components?.miniMap?.showRelations ?? false}
             showLinkCounts={preferences.showLinkCounts}
+            trackpadSensitivity={preferences.trackpadSensitivity}
+            trackpadFilterStrength={preferences.trackpadFilterStrength}
+            edgeStyle={edgeStyle}
             referenceViewport={layoutMode === null && linkFilter === null}
             contextMenus={preferences.contextMenus}
+            radialMenu={preferences.radialMenu}
             shortcuts={preferences.shortcuts}
             pluginContextMenuActions={pluginContextMenuActions}
             onLegendFilter={(nextFilter) => {
@@ -546,24 +614,20 @@ export function ResearchWorkspaceApp() {
             onRequestCreate={requestCreate}
             onPluginContextMenuAction={async (action, context: WorkspaceContextMenuState) => {
               try {
-                const result = await executeMycPlugin(
-                  action.pluginId,
-                  action.pluginVersion,
-                  {
-                    operation: "context-menu",
-                    actionId: action.id,
-                    context: {
-                      scope: context.scope,
-                      targetId: context.targetId,
-                      projectId: workspace.project.id,
-                      position: { x: context.flowX, y: context.flowY },
-                    },
+                const result = await runAnalysisPlugin(action.plugin, {
+                  operation: "context-menu",
+                  context: {
+                    actionId: action.contributionId,
+                    scope: context.scope,
+                    targetId: context.targetId,
+                    projectId: workspace.project.id,
+                    position: { x: context.flowX, y: context.flowY },
                   },
-                );
+                });
                 const output = JSON.stringify(result.output);
                 showNotice(
                   t("toast.pluginResult", {
-                    plugin: action.pluginName,
+                    plugin: action.plugin.name,
                     result: `${output.slice(0, 160)}${output.length > 160 ? "…" : ""}`,
                   }),
                 );
@@ -690,15 +754,22 @@ export function ResearchWorkspaceApp() {
       {gitSnapshot && (
         <GitWorkspaceDialog
           snapshot={gitSnapshot}
+          account={gitHubAccount}
           autoSave={gitAutoSave}
           busy={pluginBusy}
           patch={gitPatch}
           onClose={() => {
             setGitSnapshot(null);
             setGitCommand(null);
+            setGitHubAccount(null);
             setGitAutoSave(false);
           }}
           onToggleAutoSave={setGitAutoSave}
+          onInitialize={() => void initializeGit()}
+          onRefreshAccount={() => void refreshGitHubAccount()}
+          onLogin={() => void loginGitHub()}
+          onGenerateSshKey={() => void generateGitHubKey()}
+          onUploadSshKey={(path) => void uploadGitHubKey(path)}
           onSaveNow={() => void saveGitSnapshot()}
           onApplyPatch={() => {
             if (!gitPatch) return;

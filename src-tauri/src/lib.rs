@@ -11,6 +11,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             plugins::install_myc_plugin,
+            plugins::uninstall_myc_plugin,
             plugins::list_installed_plugins,
             plugins::execute_myc_plugin,
             projects::save_project_file,
@@ -18,6 +19,11 @@ pub fn run() {
             workspace_host::save_plugin_artifact,
             workspace_host::scan_project_folder,
             workspace_host::read_git_workspace,
+            workspace_host::initialize_git_workspace,
+            workspace_host::read_github_account,
+            workspace_host::login_github_account,
+            workspace_host::generate_github_ssh_key,
+            workspace_host::upload_github_ssh_key,
             workspace_host::git_autosave_project
         ])
         .setup(|app| {
@@ -38,9 +44,15 @@ pub fn run() {
                 .resizable(true)
                 .build()?;
             #[cfg(windows)]
+            if let Err(error) = trackpad::enable_webview2_pinch_input(&window) {
+                eprintln!("WebView2 pinch input unavailable: {error}");
+            }
+            #[cfg(windows)]
             if let Err(error) = trackpad::install(&window, app.handle().clone()) {
                 eprintln!("Precision Touchpad pinch bridge unavailable: {error}");
             }
+            #[cfg(debug_assertions)]
+            window.open_devtools();
             Ok(())
         })
         .run(tauri::generate_context!())

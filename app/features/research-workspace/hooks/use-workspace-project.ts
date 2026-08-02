@@ -488,14 +488,3 @@ export function useWorkspaceProject() {
     applyGraphPatch,
   };
 }
-
-export const quickNodeTypes: Array<{ type: ResearchNodeType; label: string }> = [
-  { type: "question", label: "Question" },
-  { type: "concept", label: "Group" },
-  { type: "variable", label: "Variable" },
-  { type: "method", label: "Method" },
-  { type: "dataset", label: "Data" },
-  { type: "evidence", label: "Evidence" },
-  { type: "result", label: "Result" },
-  { type: "note", label: "Note" },
-];

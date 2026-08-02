@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    fs,
+    env, fs,
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -43,10 +43,222 @@ pub struct GitCommitRecord {
 #[serde(rename_all = "camelCase")]
 pub struct GitWorkspaceSnapshot {
     repo_path: String,
+    is_repository: bool,
     branch: String,
     dirty: bool,
     commits: Vec<GitCommitRecord>,
     graph_patch: Value,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitSshPublicKey {
+    path: String,
+    algorithm: String,
+    fingerprint: String,
+    public_key: String,
+    managed_by_app: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAccountStatus {
+    cli_available: bool,
+    authenticated: bool,
+    host: String,
+    login: Option<String>,
+    git_protocol: Option<String>,
+    ssh_keygen_available: bool,
+    ssh_keys: Vec<GitSshPublicKey>,
+}
+
+fn bounded_command_output(
+    program: &str,
+    arguments: &[&str],
+) -> Result<std::process::Output, String> {
+    let output = Command::new(program)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("Could not start {program}: {error}"))?;
+    if output.stdout.len() + output.stderr.len() > MAX_GIT_OUTPUT_BYTES {
+        return Err(format!("{program} output exceeds 4 MB"));
+    }
+    Ok(output)
+}
+
+fn command_available(program: &str, version_argument: &str) -> bool {
+    bounded_command_output(program, &[version_argument]).is_ok()
+}
+
+fn ssh_directory() -> Option<PathBuf> {
+    env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
+        .map(|path| path.join(".ssh"))
+}
+
+fn ssh_key_fingerprint(path: &Path) -> String {
+    let Some(path_text) = path.to_str() else {
+        return String::new();
+    };
+    bounded_command_output("ssh-keygen", &["-lf", path_text])
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|output| output.split_whitespace().nth(1).map(str::to_string))
+        .unwrap_or_default()
+}
+
+fn list_ssh_public_keys() -> Vec<GitSshPublicKey> {
+    let Some(directory) = ssh_directory() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&directory) else {
+        return Vec::new();
+    };
+    let mut keys = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            let path = entry.path();
+            if !file_type.is_file()
+                || path.extension().and_then(|value| value.to_str()) != Some("pub")
+            {
+                return None;
+            }
+            let metadata = entry.metadata().ok()?;
+            if metadata.len() > 16 * 1024 {
+                return None;
+            }
+            let public_key = fs::read_to_string(&path).ok()?.trim().to_string();
+            let algorithm = public_key.split_whitespace().next()?.to_string();
+            if !(algorithm.starts_with("ssh-") || algorithm.starts_with("sk-ssh-")) {
+                return None;
+            }
+            let managed_by_app = path.file_name().and_then(|value| value.to_str())
+                == Some("research_canvas_ed25519.pub");
+            Some(GitSshPublicKey {
+                path: path.to_string_lossy().into_owned(),
+                algorithm,
+                fingerprint: ssh_key_fingerprint(&path),
+                public_key,
+                managed_by_app,
+            })
+        })
+        .take(32)
+        .collect::<Vec<_>>();
+    keys.sort_by(|left, right| left.path.cmp(&right.path));
+    keys
+}
+
+fn github_account_status() -> GitHubAccountStatus {
+    let cli_available = command_available("gh", "--version");
+    let ssh_keygen_available = command_available("ssh-keygen", "-?");
+    let mut status = GitHubAccountStatus {
+        cli_available,
+        authenticated: false,
+        host: "github.com".to_string(),
+        login: None,
+        git_protocol: None,
+        ssh_keygen_available,
+        ssh_keys: list_ssh_public_keys(),
+    };
+    if !cli_available {
+        return status;
+    }
+    let Ok(output) = bounded_command_output(
+        "gh",
+        &[
+            "auth",
+            "status",
+            "--hostname",
+            "github.com",
+            "--active",
+            "--json",
+            "hosts",
+        ],
+    ) else {
+        return status;
+    };
+    if !output.status.success() {
+        return status;
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
+        return status;
+    };
+    let account = value["hosts"]["github.com"]
+        .as_array()
+        .and_then(|accounts| accounts.iter().find(|account| account["active"] == true));
+    if let Some(account) = account {
+        status.authenticated = account["state"] == "success";
+        status.login = account["login"].as_str().map(str::to_string);
+        status.git_protocol = account["gitProtocol"].as_str().map(str::to_string);
+    }
+    status
+}
+
+fn validate_ssh_comment(comment: &str) -> Result<&str, String> {
+    let comment = comment.trim();
+    if comment.is_empty() || comment.len() > 254 || comment.chars().any(char::is_control) {
+        return Err("SSH key comment must be 1-254 printable characters".to_string());
+    }
+    Ok(comment)
+}
+
+fn generate_ssh_key_at(directory: &Path, comment: &str) -> Result<(), String> {
+    let comment = validate_ssh_comment(comment)?;
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let private_key = directory.join("research_canvas_ed25519");
+    let public_key = directory.join("research_canvas_ed25519.pub");
+    if private_key.exists() || public_key.exists() {
+        return Err("Research Canvas SSH key already exists".to_string());
+    }
+    let private_key_text = private_key
+        .to_str()
+        .ok_or_else(|| "SSH key path is not valid UTF-8".to_string())?;
+    let output = bounded_command_output(
+        "ssh-keygen",
+        &[
+            "-q",
+            "-t",
+            "ed25519",
+            "-C",
+            comment,
+            "-f",
+            private_key_text,
+            "-N",
+            "",
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+fn generate_managed_ssh_key(comment: &str) -> Result<(), String> {
+    let directory =
+        ssh_directory().ok_or_else(|| "Could not resolve the user SSH folder".to_string())?;
+    generate_ssh_key_at(&directory, comment)
+}
+
+fn validated_public_key_path(path: &str) -> Result<PathBuf, String> {
+    let directory =
+        ssh_directory().ok_or_else(|| "Could not resolve the user SSH folder".to_string())?;
+    let directory = directory
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let key = PathBuf::from(path)
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !key.starts_with(&directory)
+        || key.extension().and_then(|value| value.to_str()) != Some("pub")
+    {
+        return Err(
+            "SSH public key must be a .pub file in the current user's .ssh folder".to_string(),
+        );
+    }
+    Ok(key)
 }
 
 fn validate_artifact_extension(path: &Path, format: &str) -> Result<(), String> {
@@ -202,6 +414,61 @@ fn resolve_repo(path: &Path) -> Result<PathBuf, String> {
     root.canonicalize().map_err(|error| error.to_string())
 }
 
+fn is_git_repository(path: &Path) -> Result<bool, String> {
+    if !path.is_dir() {
+        return Err("Git workspace folder does not exist".to_string());
+    }
+    let output = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(path)
+        .output()
+        .map_err(|error| format!("Could not start git: {error}"))?;
+    if output.stdout.len() + output.stderr.len() > MAX_GIT_OUTPUT_BYTES {
+        return Err("Git output exceeds 4 MB".to_string());
+    }
+    Ok(output.status.success() && String::from_utf8_lossy(&output.stdout).trim().eq("true"))
+}
+
+fn git_has_head(repo: &Path) -> Result<bool, String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .map_err(|error| format!("Could not start git: {error}"))?;
+    if output.stdout.len() + output.stderr.len() > MAX_GIT_OUTPUT_BYTES {
+        return Err("Git output exceeds 4 MB".to_string());
+    }
+    Ok(output.status.success())
+}
+
+fn non_repository_snapshot(path: &Path) -> Result<GitWorkspaceSnapshot, String> {
+    if !path.is_dir() {
+        return Err("Git workspace folder does not exist".to_string());
+    }
+    let root = path.canonicalize().map_err(|error| error.to_string())?;
+    Ok(GitWorkspaceSnapshot {
+        repo_path: root.to_string_lossy().into_owned(),
+        is_repository: false,
+        branch: String::new(),
+        dirty: false,
+        commits: Vec::new(),
+        graph_patch: Value::Null,
+    })
+}
+
+fn initialize_git_repository(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_dir() {
+        return Err("Git workspace folder does not exist".to_string());
+    }
+    if is_git_repository(path)? {
+        return resolve_repo(path);
+    }
+    if git_output(path, &["init", "--initial-branch=main"]).is_err() {
+        git_output(path, &["init"])?;
+    }
+    resolve_repo(path)
+}
+
 fn parse_git_log(output: &str) -> Vec<GitCommitRecord> {
     output
         .split('\u{1e}')
@@ -337,21 +604,30 @@ fn git_snapshot(plugin_id: &str, repo: &Path) -> Result<GitWorkspaceSnapshot, St
     let root = resolve_repo(repo)?;
     let branch = git_output(&root, &["branch", "--show-current"])?;
     let status = git_output(&root, &["status", "--porcelain"])?;
-    let log = git_output(
-        &root,
-        &[
-            "log",
-            "--all",
-            "-n",
-            "200",
-            "--date=iso-strict",
-            "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%aI%x1f%D%x1f%B%x1e",
-        ],
-    )?;
+    let log = if git_has_head(&root)? {
+        git_output(
+            &root,
+            &[
+                "log",
+                "--all",
+                "-n",
+                "200",
+                "--date=iso-strict",
+                "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%aI%x1f%D%x1f%B%x1e",
+            ],
+        )?
+    } else {
+        String::new()
+    };
     let commits = parse_git_log(&log);
-    let graph_patch = graph_patch_from_commits(plugin_id, &commits);
+    let graph_patch = if commits.is_empty() {
+        Value::Null
+    } else {
+        graph_patch_from_commits(plugin_id, &commits)
+    };
     Ok(GitWorkspaceSnapshot {
         repo_path: root.to_string_lossy().into_owned(),
+        is_repository: true,
         branch: branch.trim().to_string(),
         dirty: !status.trim().is_empty(),
         commits,
@@ -372,7 +648,146 @@ pub fn read_git_workspace(
         &plugin_version,
         &["git.repository.read", "graph.patch.propose"],
     )?;
-    git_snapshot(&plugin_id, Path::new(&path))
+    let path = Path::new(&path);
+    if is_git_repository(path)? {
+        git_snapshot(&plugin_id, path)
+    } else {
+        non_repository_snapshot(path)
+    }
+}
+
+#[tauri::command]
+pub fn initialize_git_workspace(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    path: String,
+) -> Result<GitWorkspaceSnapshot, String> {
+    crate::plugins::require_plugin_capabilities(
+        &app,
+        &plugin_id,
+        &plugin_version,
+        &[
+            "git.repository.init",
+            "git.repository.read",
+            "graph.patch.propose",
+        ],
+    )?;
+    let root = initialize_git_repository(Path::new(&path))?;
+    git_snapshot(&plugin_id, &root)
+}
+
+#[tauri::command]
+pub fn read_github_account(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+) -> Result<GitHubAccountStatus, String> {
+    crate::plugins::require_plugin_capability(
+        &app,
+        &plugin_id,
+        &plugin_version,
+        "git.account.read",
+    )?;
+    Ok(github_account_status())
+}
+
+#[tauri::command]
+pub async fn login_github_account(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+) -> Result<GitHubAccountStatus, String> {
+    crate::plugins::require_plugin_capabilities(
+        &app,
+        &plugin_id,
+        &plugin_version,
+        &["git.account.login", "git.account.read"],
+    )?;
+    tauri::async_runtime::spawn_blocking(|| {
+        let output = bounded_command_output(
+            "gh",
+            &[
+                "auth",
+                "login",
+                "--hostname",
+                "github.com",
+                "--web",
+                "--git-protocol",
+                "ssh",
+                "--skip-ssh-key",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        let setup =
+            bounded_command_output("gh", &["auth", "setup-git", "--hostname", "github.com"])?;
+        if !setup.status.success() {
+            return Err(String::from_utf8_lossy(&setup.stderr).trim().to_string());
+        }
+        Ok(github_account_status())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn generate_github_ssh_key(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    comment: String,
+) -> Result<GitHubAccountStatus, String> {
+    crate::plugins::require_plugin_capabilities(
+        &app,
+        &plugin_id,
+        &plugin_version,
+        &["git.ssh.generate", "git.account.read"],
+    )?;
+    generate_managed_ssh_key(&comment)?;
+    Ok(github_account_status())
+}
+
+#[tauri::command]
+pub async fn upload_github_ssh_key(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    path: String,
+) -> Result<GitHubAccountStatus, String> {
+    crate::plugins::require_plugin_capabilities(
+        &app,
+        &plugin_id,
+        &plugin_version,
+        &["git.ssh.upload", "git.account.read"],
+    )?;
+    let key = validated_public_key_path(&path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let key_text = key
+            .to_str()
+            .ok_or_else(|| "SSH public key path is not valid UTF-8".to_string())?;
+        let machine = env::var("COMPUTERNAME").unwrap_or_else(|_| "device".to_string());
+        let title = format!("Research Canvas on {machine}");
+        let output = bounded_command_output(
+            "gh",
+            &[
+                "ssh-key",
+                "add",
+                key_text,
+                "--title",
+                &title,
+                "--type",
+                "authentication",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(github_account_status())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
@@ -442,7 +857,17 @@ pub fn git_autosave_project(
         }
         git_output(
             &root,
-            &["commit", "-m", commit_message, "--", relative_text.as_ref()],
+            &[
+                "-c",
+                "user.name=Research Canvas",
+                "-c",
+                "user.email=research-canvas@localhost",
+                "commit",
+                "-m",
+                commit_message,
+                "--",
+                relative_text.as_ref(),
+            ],
         )?;
     }
     git_snapshot(&plugin_id, &root)
@@ -491,6 +916,7 @@ mod tests {
         git(root.path(), &["tag", "research/pinn-fourier-off"]);
         let snapshot = git_snapshot("researchcanvas.git-workspace", root.path())
             .expect("read git research snapshot");
+        assert!(snapshot.is_repository);
         assert_eq!(snapshot.commits.len(), 1);
         assert!(snapshot.commits[0]
             .refs
@@ -510,6 +936,22 @@ mod tests {
     }
 
     #[test]
+    fn non_repository_can_be_opened_and_initialized_without_an_error_overlay() {
+        let root = tempdir().expect("temporary workspace folder");
+        let placeholder = non_repository_snapshot(root.path()).expect("non-repository snapshot");
+        assert!(!placeholder.is_repository);
+        assert!(placeholder.commits.is_empty());
+        assert!(placeholder.graph_patch.is_null());
+
+        let repository = initialize_git_repository(root.path()).expect("initialize repository");
+        let snapshot = git_snapshot("researchcanvas.git-workspace", &repository)
+            .expect("empty repository snapshot");
+        assert!(snapshot.is_repository);
+        assert!(snapshot.commits.is_empty());
+        assert!(snapshot.graph_patch.is_null());
+    }
+
+    #[test]
     fn git_autosave_path_is_limited_to_one_research_canvas_snapshot() {
         assert_eq!(
             safe_relative_path(".research-canvas/pinn.mycproj")
@@ -525,6 +967,39 @@ mod tests {
         ] {
             assert!(safe_relative_path(path).is_err(), "must reject {path}");
         }
+    }
+
+    #[test]
+    fn github_account_status_is_token_free_and_ssh_comments_are_bounded() {
+        let status = github_account_status();
+        assert_eq!(status.host, "github.com");
+        let serialized = serde_json::to_value(status).expect("serialize bounded account status");
+        assert!(serialized.get("token").is_none());
+        assert!(serialized.get("scopes").is_none());
+        assert_eq!(
+            validate_ssh_comment("researcher@github.com").unwrap(),
+            "researcher@github.com"
+        );
+        assert!(validate_ssh_comment("line one\nline two").is_err());
+        assert!(validate_ssh_comment("").is_err());
+    }
+
+    #[test]
+    fn managed_ed25519_generation_is_bounded_and_never_overwrites() {
+        if !command_available("ssh-keygen", "-?") {
+            return;
+        }
+        let root = tempdir().expect("temporary SSH folder");
+        generate_ssh_key_at(root.path(), "canvas@example.invalid")
+            .expect("generate isolated Ed25519 fixture");
+        let private_key = root.path().join("research_canvas_ed25519");
+        let public_key = root.path().join("research_canvas_ed25519.pub");
+        assert!(private_key.is_file());
+        assert!(public_key.is_file());
+        assert!(fs::read_to_string(public_key)
+            .expect("public key text")
+            .starts_with("ssh-ed25519 "));
+        assert!(generate_ssh_key_at(root.path(), "canvas@example.invalid").is_err());
     }
 
     #[test]

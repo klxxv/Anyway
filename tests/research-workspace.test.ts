@@ -5,6 +5,7 @@ import {
   LAYOUT_MODES,
   type ProjectState,
   type ResearchEdge,
+  type ResearchNode,
 } from "../app/lib/research-types";
 import { translate } from "../app/i18n/catalog";
 import { zenWorkspaceFixture } from "../app/features/research-workspace/workspace-fixture";
@@ -25,12 +26,27 @@ import {
 } from "../app/features/research-workspace/workspace-shortcuts";
 import { computeEdgeRoutes } from "../app/features/research-workspace/canvas/edge-routing";
 import {
+  compileRadialMenu,
+  defaultRadialMenuPreferences,
+  normalizeRadialMenuPreferences,
+  radialSelectionForNormalizedDisplacement,
+} from "../app/features/research-workspace/workspace-radial-menu";
+import {
   customEdgeNote,
   edgeTypeMessageKeys,
 } from "../app/features/research-workspace/workspace-edge-labels";
 import {
+  chromiumTrackpadPinchScale,
+  emptyTrackpadLowPassState,
+  lowPassCompleteTrackpadFrame,
+  viewportForCoalescedWheelFrame,
   viewportForCompleteTrackpadFrame,
+  wheelPanDelta,
 } from "../app/features/research-workspace/hooks/trackpad-pinch";
+import {
+  isExpandableVariable,
+  variableBranchValues,
+} from "../app/features/research-workspace/canvas/variable-branches";
 
 function edge(type: ResearchEdge["type"], override: Partial<ResearchEdge> = {}): ResearchEdge {
   return {
@@ -115,22 +131,28 @@ test("workspace preferences restore only supported values", () => {
     normalizeWorkspacePreferences({
       commandDensity: "compact",
       hoverDelay: 80,
+      trackpadSensitivity: 1,
+      trackpadFilterStrength: 0.55,
       defaultLayout: "table",
       showMiniMap: false,
       showLinkCounts: false,
       contextMenus: defaultWorkspacePreferences.contextMenus,
       showPluginContextMenuActions: true,
       shortcuts: defaultWorkspacePreferences.shortcuts,
+      radialMenu: defaultWorkspacePreferences.radialMenu,
     }),
     {
       commandDensity: "compact",
       hoverDelay: 80,
+      trackpadSensitivity: 1,
+      trackpadFilterStrength: 0.55,
       defaultLayout: "table",
       showMiniMap: false,
       showLinkCounts: false,
       contextMenus: defaultWorkspacePreferences.contextMenus,
       showPluginContextMenuActions: true,
       shortcuts: defaultWorkspacePreferences.shortcuts,
+      radialMenu: defaultWorkspacePreferences.radialMenu,
     },
   );
   assert.deepEqual(
@@ -266,4 +288,127 @@ test("one complete trackpad frame composes two-axis pan and zoom", () => {
     ).zoom,
     1.7,
   );
+});
+
+test("touchpad flick directions select configured radial actions", () => {
+  const width = 4000;
+  const height = 2400;
+  const cache = compileRadialMenu(defaultRadialMenuPreferences);
+  const select = (x: number, y: number) =>
+    radialSelectionForNormalizedDisplacement(cache, x / width, y / height)?.item.action;
+  assert.equal(select(0, -240), "create:question");
+  assert.equal(select(400, -240), "create:concept");
+  assert.equal(select(400, 0), "create:variable");
+  assert.equal(select(400, 240), "create:method");
+  assert.equal(select(0, 240), "create:dataset");
+  assert.equal(select(-400, 240), "create:evidence");
+  assert.equal(select(-400, 0), "create:result");
+  assert.equal(select(-400, -240), "create:note");
+  assert.equal(select(20, 10), undefined);
+});
+
+test("radial settings preserve unique positions, item count, and canvas functions", () => {
+  const normalized = normalizeRadialMenuPreferences({
+    items: [
+      { id: "fit", position: "north", action: "canvas:fit" },
+      { id: "layout", position: "east", action: "canvas:default-layout" },
+      { id: "duplicate", position: "north", action: "create:note" },
+    ],
+  });
+  assert.deepEqual(normalized.items, [
+    { id: "fit", position: "north", action: "canvas:fit" },
+    { id: "layout", position: "east", action: "canvas:default-layout" },
+  ]);
+  const cache = compileRadialMenu(normalized);
+  assert.equal(cache.items.length, 2);
+  assert.equal(cache.items[0].sectorIndex, 0);
+  assert.equal(cache.items[1].sectorIndex, 2);
+  assert.equal(radialSelectionForNormalizedDisplacement(cache, 0, -0.1)?.item.id, "fit");
+  assert.equal(radialSelectionForNormalizedDisplacement(cache, 0.1, 0)?.item.id, "layout");
+  assert.equal(radialSelectionForNormalizedDisplacement(cache, 0, 0.1), null);
+});
+
+test("Chromium trackpad pinch deltas invert to Chrome-compatible scale", () => {
+  assert.ok(Math.abs(chromiumTrackpadPinchScale(-100 * Math.log(1.1)) - 1.1) < 1e-12);
+  assert.ok(Math.abs(chromiumTrackpadPinchScale(-100 * Math.log(0.9)) - 0.9) < 1e-12);
+  assert.equal(chromiumTrackpadPinchScale(-1000), 1.25);
+  assert.equal(chromiumTrackpadPinchScale(1000), 0.75);
+});
+
+test("WebView wheel frames preserve and compose both pan axes", () => {
+  assert.deepEqual(wheelPanDelta(3.5, -2.25, 0), { x: 3.5, y: -2.25 });
+  assert.deepEqual(wheelPanDelta(1, -2, 1), { x: 20, y: -40 });
+  assert.deepEqual(
+    viewportForCoalescedWheelFrame(
+      { x: 10, y: 20, zoom: 1 },
+      { x: 200, y: 100 },
+      { x: 12, y: -8 },
+      1,
+    ),
+    { x: -2, y: 28, zoom: 1 },
+  );
+});
+
+test("WebView wheel frames apply diagonal pan and anchored zoom atomically", () => {
+  assert.deepEqual(
+    viewportForCoalescedWheelFrame(
+      { x: 0, y: 0, zoom: 1 },
+      { x: 100, y: 80 },
+      { x: 10, y: 20 },
+      1.25,
+    ),
+    { x: -35, y: -40, zoom: 1.25 },
+  );
+});
+
+test("enum and bool variables expose deterministic expandable branches", () => {
+  const enumVariable = zenWorkspaceFixture.nodes.find(
+    (node) => node.type === "variable" && node.data.valueType === "enum",
+  );
+  assert.ok(enumVariable);
+  assert.deepEqual(variableBranchValues(enumVariable), ["低", "中", "高"]);
+  const boolVariable: ResearchNode = {
+    ...enumVariable,
+    id: "bool-variable",
+    data: { valueType: "bool" },
+  };
+  assert.deepEqual(variableBranchValues(boolVariable), ["true", "false"]);
+  assert.equal(isExpandableVariable(boolVariable), true);
+});
+
+test("trackpad low-pass holds micro-motion still and preserves diagonal intent", () => {
+  const still = lowPassCompleteTrackpadFrame(
+    emptyTrackpadLowPassState(),
+    { x: 0.0005, y: -0.0005 },
+    1.001,
+    1,
+    0.7,
+  );
+  assert.deepEqual(still.pan, { x: 0, y: 0 });
+  assert.equal(still.scale, 1);
+
+  const moving = lowPassCompleteTrackpadFrame(
+    still.state,
+    { x: 0.04, y: -0.03 },
+    1.08,
+    1.25,
+    0.55,
+  );
+  assert.ok(moving.pan.x > 0);
+  assert.ok(moving.pan.y < 0);
+  assert.ok(moving.scale > 1);
+});
+
+test("preferences supply trackpad defaults while preserving disabled canvas actions", () => {
+  const preferences = normalizeWorkspacePreferences({
+    commandDensity: "compact",
+    contextMenus: {
+      node: [],
+      edge: [],
+      canvas: ["canvas.fit"],
+    },
+  });
+  assert.equal(preferences.trackpadSensitivity, 1);
+  assert.equal(preferences.trackpadFilterStrength, 0.55);
+  assert.deepEqual(preferences.contextMenus.canvas, ["canvas.fit"]);
 });

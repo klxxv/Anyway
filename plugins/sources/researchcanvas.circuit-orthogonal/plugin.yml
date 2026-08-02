@@ -3,14 +3,14 @@ kind: EdgeStylePlugin
 metadata:
   id: researchcanvas.circuit-orthogonal
   name: Circuit Orthogonal
-  version: 1.0.0
+  version: 1.1.0
   publisher: Research Canvas Community
   developer: Research Canvas Visual Systems
   description: Crisp 90-degree experiment connectors with semantic support and refutation strokes.
   homepage: https://github.com/research-canvas/plugins
   license: MIT
 spec:
-  engine: ">=0.1.0"
+  engine: declarative
   entry: edge-style.json
   capabilities:
     - edge.style.register

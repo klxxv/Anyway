@@ -2,35 +2,33 @@ import type { ContextMenuScope } from "../features/research-workspace/workspace-
 import type {
   InstalledMycPlugin,
   PluginContextMenuIcon,
+  PluginReference,
 } from "./contracts";
+import { pluginReference } from "./contracts";
 
 export const enabledPluginsStorageKey = "research-canvas.enabled-plugins.v1";
 export const pluginsChangedEvent = "research-canvas.plugins-changed";
 
 export type ResolvedPluginContextMenuAction = {
   id: string;
+  contributionId: string;
   scope: ContextMenuScope;
   label: string;
   icon: PluginContextMenuIcon;
-  pluginId: string;
-  pluginVersion: string;
-  pluginName: string;
+  plugin: PluginReference;
 };
 
 /**
- * Resolve only executable, explicitly enabled contributions with the matching capability.
+ * Resolves executable contributions from the host-arbitrated active snapshot.
  * 仅解析可执行、已启用且显式声明对应能力的菜单贡献。
  */
 export function contextMenuContributionsFromPlugins(
   plugins: InstalledMycPlugin[],
-  enabledKeys: ReadonlySet<string>,
 ): ResolvedPluginContextMenuAction[] {
   return plugins.flatMap((plugin) => {
     const { manifest } = plugin;
-    const key = `${manifest.metadata.id}@${manifest.metadata.version}`;
     if (
       !plugin.runtime ||
-      !enabledKeys.has(key) ||
       !manifest.spec.capabilities.includes("context-menu.contribute")
     ) {
       return [];
@@ -45,12 +43,11 @@ export function contextMenuContributionsFromPlugins(
       )
       .map((item) => ({
         id: `${manifest.metadata.id}:${item.id}`,
+        contributionId: item.id,
         scope: item.scope,
         label: item.label.trim(),
         icon: item.icon ?? "sparkles",
-        pluginId: manifest.metadata.id,
-        pluginVersion: manifest.metadata.version,
-        pluginName: manifest.metadata.name,
+        plugin: pluginReference(plugin),
       }));
   });
 }

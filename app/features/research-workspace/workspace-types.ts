@@ -1,5 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type {
+  EdgeStyleManifest,
   ProjectState,
   ResearchEdge,
   ResearchNode,
@@ -15,12 +16,17 @@ export type VariableValueType = "enum" | "bool" | "number" | "text";
 export type WorkspaceNodeData = {
   record: ResearchNode;
   shape: "card" | "circle";
+  expanded: boolean;
+  onToggleExpanded: (nodeId: string) => void;
 };
 export type WorkspaceEdgeData = {
   record: ResearchEdge;
   label: string;
+  edgeStyle: EdgeStyleManifest;
   labelOffsetX?: number;
   labelOffsetY?: number;
+  /** Uses a cheap path and suppresses labels while an incident node is moving. */
+  dragPreview?: boolean;
 };
 
 export type WorkspaceNode = Node<WorkspaceNodeData, "researchNode">;
@@ -31,6 +37,7 @@ export type PieMenuState = {
   screenY: number;
   flowX: number;
   flowY: number;
+  gestureActive?: boolean;
 };
 
 export type NodeDraft = {

@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     fs,
     fs::File,
     io::{self, Read},
@@ -18,9 +19,11 @@ use tauri::Manager;
 use zip::ZipArchive;
 
 const MYC_API_VERSION: &str = "researchcanvas.dev/v1alpha1";
+const PLUGIN_CALL_API_VERSION: &str = "researchcanvas.dev/plugin-call/v1alpha1";
 const MAX_ARCHIVE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 128;
+const REMOVED_PLUGINS_FILE: &str = "removed-plugins.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,6 +105,7 @@ pub struct ThemeManifest {
     developer: Option<String>,
     source: Option<String>,
     colors: serde_json::Value,
+    components: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -149,6 +153,54 @@ fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
             .map(|path| path.join("plugins"))
             .map_err(|error| error.to_string())
     }
+}
+
+fn plugin_version_key(plugin_id: &str, plugin_version: &str) -> String {
+    format!("{plugin_id}@{plugin_version}")
+}
+
+fn read_removed_plugins(base: &Path) -> Result<HashSet<String>, String> {
+    let path = base.join(REMOVED_PLUGINS_FILE);
+    if !path.is_file() {
+        return Ok(HashSet::new());
+    }
+    let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+    let values: Vec<String> = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Invalid removal registry: {error}"))?;
+    Ok(values.into_iter().collect())
+}
+
+fn write_removed_plugins(base: &Path, removed: &HashSet<String>) -> Result<(), String> {
+    fs::create_dir_all(base).map_err(|error| error.to_string())?;
+    let mut values = removed.iter().cloned().collect::<Vec<_>>();
+    values.sort();
+    let bytes = serde_json::to_vec_pretty(&values).map_err(|error| error.to_string())?;
+    fs::write(base.join(REMOVED_PLUGINS_FILE), bytes).map_err(|error| error.to_string())
+}
+
+fn clear_removed_plugin(base: &Path, plugin_id: &str, plugin_version: &str) -> Result<(), String> {
+    let mut removed = read_removed_plugins(base)?;
+    if removed.remove(&plugin_version_key(plugin_id, plugin_version)) {
+        write_removed_plugins(base, &removed)?;
+    }
+    Ok(())
+}
+
+fn uninstall_plugin_from(base: &Path, plugin_id: &str, plugin_version: &str) -> Result<(), String> {
+    validate_slug(plugin_id, "plugin id")?;
+    validate_slug(plugin_version, "plugin version")?;
+    let key = plugin_version_key(plugin_id, plugin_version);
+    let directory = base.join("installed").join(&key);
+    let installed = read_installed_plugin(&directory)?;
+    if installed.manifest.metadata.id != plugin_id
+        || installed.manifest.metadata.version != plugin_version
+    {
+        return Err("Installed plugin identity does not match its directory".to_string());
+    }
+    fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+    let mut removed = read_removed_plugins(base)?;
+    removed.insert(key);
+    write_removed_plugins(base, &removed)
 }
 
 fn validate_slug(value: &str, label: &str) -> Result<(), String> {
@@ -638,6 +690,7 @@ fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycP
 
 fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     let base = plugin_base(app)?;
+    let removed = read_removed_plugins(&base)?;
     #[cfg(debug_assertions)]
     let package_roots = vec![base.join("packages")];
     #[cfg(not(debug_assertions))]
@@ -665,7 +718,11 @@ fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
                 .file_stem()
                 .and_then(|value| value.to_str())
                 .is_some_and(|package| base.join("installed").join(package).is_dir());
-            if !already_installed {
+            let explicitly_removed = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .is_some_and(|package| removed.contains(package));
+            if !already_installed && !explicitly_removed {
                 install_archive(app, &path)?;
             }
         }
@@ -675,7 +732,24 @@ fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPlugin, String> {
-    install_archive(&app, Path::new(&path))
+    let installed = install_archive(&app, Path::new(&path))?;
+    let base = plugin_base(&app)?;
+    clear_removed_plugin(
+        &base,
+        &installed.manifest.metadata.id,
+        &installed.manifest.metadata.version,
+    )?;
+    Ok(installed)
+}
+
+#[tauri::command]
+pub fn uninstall_myc_plugin(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+) -> Result<(), String> {
+    let base = plugin_base(&app)?;
+    uninstall_plugin_from(&base, &plugin_id, &plugin_version)
 }
 
 #[tauri::command]
@@ -774,6 +848,67 @@ pub fn require_plugin_export_format(
     Ok(directory)
 }
 
+fn validate_analysis_call(
+    installed: &InstalledMycPlugin,
+    input: &serde_json::Value,
+) -> Result<(), String> {
+    let object = input
+        .as_object()
+        .ok_or_else(|| "Plugin call must be a JSON object".to_string())?;
+    if object.get("apiVersion").and_then(serde_json::Value::as_str) != Some(PLUGIN_CALL_API_VERSION)
+    {
+        return Err(format!(
+            "Plugin call apiVersion must be {PLUGIN_CALL_API_VERSION}"
+        ));
+    }
+    let operation = object
+        .get("operation")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Plugin call operation is required".to_string())?;
+    validate_slug(operation, "plugin operation")?;
+    if operation != "context-menu" {
+        return Ok(());
+    }
+    if !installed
+        .manifest
+        .spec
+        .capabilities
+        .iter()
+        .any(|capability| capability == "context-menu.contribute")
+    {
+        return Err("Context-menu calls require context-menu.contribute".to_string());
+    }
+    let context = object
+        .get("context")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "Context-menu call context is required".to_string())?;
+    let action_id = context
+        .get("actionId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Context-menu actionId is required".to_string())?;
+    let scope = context
+        .get("scope")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Context-menu scope is required".to_string())?;
+    let declared = installed
+        .manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.context_menus.as_ref())
+        .is_some_and(|actions| {
+            actions
+                .iter()
+                .any(|action| action.id == action_id && action.scope == scope)
+        });
+    if !declared {
+        return Err(format!(
+            "Plugin does not contribute context-menu action {action_id} for {scope}"
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn execute_myc_plugin(
     app: AppHandle,
@@ -790,6 +925,16 @@ pub fn execute_myc_plugin(
     if installed.manifest.kind != "AnalysisPlugin" || installed.runtime.is_none() {
         return Err("Only installed AnalysisPlugin packages can execute".to_string());
     }
+    if !installed
+        .manifest
+        .spec
+        .capabilities
+        .iter()
+        .any(|capability| capability == "analysis.run")
+    {
+        return Err("AnalysisPlugin must declare analysis.run".to_string());
+    }
+    validate_analysis_call(&installed, &input)?;
     let entry = directory.join(&installed.manifest.spec.entry);
     crate::plugin_vm::execute_plugin(&entry, &plugin_id, &plugin_version, &input)
 }
@@ -842,6 +987,94 @@ spec:
         .expect("valid smoke module")
     }
 
+    fn runtime_plugin_with_context_menu() -> InstalledMycPlugin {
+        let mut manifest: MycPluginManifest =
+            serde_yaml::from_str(&runtime_manifest("rust")).expect("parse runtime manifest");
+        manifest.metadata.version = "1.1.0".to_string();
+        manifest
+            .spec
+            .capabilities
+            .push("context-menu.contribute".to_string());
+        manifest.spec.contributes = Some(MycPluginContributions {
+            context_menus: Some(vec![PluginContextMenuContribution {
+                id: "inspect-context".to_string(),
+                scope: "node".to_string(),
+                label: "Analyze node context".to_string(),
+                icon: Some("sparkles".to_string()),
+            }]),
+            locales: None,
+            commands: None,
+        });
+        InstalledMycPlugin {
+            manifest,
+            install_path: "test".to_string(),
+            theme: None,
+            edge_style: None,
+            runtime: Some(MycPluginRuntime {
+                engine: "wasm32-myc".to_string(),
+                language: "rust".to_string(),
+                entry_sha256: "0".repeat(64),
+            }),
+            locales: None,
+            workspace: None,
+        }
+    }
+
+    #[test]
+    fn validates_versioned_analysis_call_envelopes_and_declared_actions() {
+        let installed = runtime_plugin_with_context_menu();
+        validate_analysis_call(
+            &installed,
+            &json!({
+                "apiVersion": PLUGIN_CALL_API_VERSION,
+                "operation": "self-test",
+                "payload": {}
+            }),
+        )
+        .expect("versioned self-test is accepted");
+        validate_analysis_call(
+            &installed,
+            &json!({
+                "apiVersion": PLUGIN_CALL_API_VERSION,
+                "operation": "context-menu",
+                "context": {
+                    "actionId": "inspect-context",
+                    "scope": "node",
+                    "targetId": "node-1",
+                    "projectId": "project-1"
+                }
+            }),
+        )
+        .expect("declared action and scope are accepted");
+
+        assert!(validate_analysis_call(
+            &installed,
+            &json!({"apiVersion": "legacy", "operation": "self-test"}),
+        )
+        .expect_err("legacy envelopes are rejected")
+        .contains("apiVersion"));
+        assert!(validate_analysis_call(
+            &installed,
+            &json!({
+                "apiVersion": PLUGIN_CALL_API_VERSION,
+                "operation": "context-menu",
+                "context": {"actionId": "undeclared", "scope": "node"}
+            }),
+        )
+        .expect_err("undeclared host actions are rejected")
+        .contains("does not contribute"));
+        assert!(validate_analysis_call(
+            &installed,
+            &json!({
+                "apiVersion": PLUGIN_CALL_API_VERSION,
+                "operation": "context-menu",
+                "context": {"actionId": "inspect-context", "scope": "canvas"}
+            }),
+        )
+        .expect_err("scope escalation is rejected")
+        .contains("does not contribute"));
+    }
+
     #[test]
     fn installs_and_executes_a_runtime_myc_package() {
         let root = tempdir().expect("temp root");
@@ -877,6 +1110,16 @@ spec:
         )
         .expect("execute installed package");
         assert_eq!(output.output, json!({"runtime": "ok"}));
+
+        uninstall_plugin_from(root.path(), "researchcanvas.runtime-smoke", "1.0.0")
+            .expect("uninstall exact plugin version");
+        assert!(!root
+            .path()
+            .join("installed/researchcanvas.runtime-smoke@1.0.0")
+            .exists());
+        assert!(read_removed_plugins(root.path())
+            .expect("removal tombstones")
+            .contains("researchcanvas.runtime-smoke@1.0.0"));
     }
 
     #[test]

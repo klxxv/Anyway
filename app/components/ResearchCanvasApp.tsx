@@ -2,6 +2,7 @@
 
 import { ResearchWorkspaceApp } from "../features/research-workspace/ResearchWorkspaceApp";
 import { I18nProvider } from "../i18n/provider";
+import { PluginHostProvider } from "../plugins/plugin-host";
 
 /**
  * Stable public entrypoint; the actual workspace is decomposed under features.
@@ -9,8 +10,10 @@ import { I18nProvider } from "../i18n/provider";
  */
 export function ResearchCanvasApp() {
   return (
-    <I18nProvider>
-      <ResearchWorkspaceApp />
-    </I18nProvider>
+    <PluginHostProvider>
+      <I18nProvider>
+        <ResearchWorkspaceApp />
+      </I18nProvider>
+    </PluginHostProvider>
   );
 }

@@ -28,7 +28,7 @@ Build a package:
 ```bash
 python scripts/build_myc_plugin.py \
   plugins/sources/researchcanvas.onedarkpro \
-  plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+  plugins/packages/researchcanvas.onedarkpro@1.3.0.myc
 ```
 
 In development, the Tauri client scans `plugins/packages`, extracts verified
@@ -36,6 +36,9 @@ packages into `plugins/installed/<id>@<version>`, and loads their manifests.
 Release bundles embed the same packages under the Tauri resource directory and
 install each immutable `id@version` once into application data. Dropping a
 `.myc` file onto the Plugin Store invokes the same installer.
+Removing incompatible packages records an exact `id@version` tombstone, so an
+embedded package is not silently reinstalled on the next discovery pass.
+Explicitly installing that package again clears its tombstone.
 
 Theme and edge-style plugins remain declarative. `AnalysisPlugin` packages may
 contain `plugin.wasm` produced by Rust or C++; they execute in the native Rust
@@ -59,7 +62,12 @@ The current bounded capabilities are:
 | `project.export` | Save a PDF, SVG, or PNG to a path selected by the user |
 | `project.folder` | Read compatible project metadata below a selected folder |
 | `git.repository.read` | Read a selected repository with fixed Git arguments |
+| `git.repository.init` | Explicitly initialize the selected normal folder as a local repository |
 | `git.autosave` | Save and commit only `.research-canvas/*.mycproj` |
+| `git.account.read` | Read bounded GitHub CLI account status without exposing tokens |
+| `git.account.login` | Start the official GitHub CLI browser login flow |
+| `git.ssh.generate` | Generate one app-named Ed25519 key without returning private material |
+| `git.ssh.upload` | Upload an explicitly selected `.pub` key through GitHub CLI |
 | `graph.patch.propose` | Describe a review-required graph proposal |
 
 The reference packages are `researchcanvas.export-suite`,
@@ -106,3 +114,11 @@ When selected, the app invokes that same plugin with `operation:
 "context-menu"` plus a bounded context containing only the project id, target
 id, scope, and canvas position. Plugins never receive a React callback or a
 reference to the workspace store.
+
+## Theme component surfaces
+
+`ThemePlugin` may optionally style host-owned toast, minimap, and radial-menu
+surfaces through `theme.json.components.toast`, `components.miniMap`, and
+`components.radialMenu`. These bounded tokens cover background, border,
+text/shadow, node/relation colors, radial dividers and active states, and the
+minimap `showRelations` switch. The host still owns layout and interaction.

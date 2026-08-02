@@ -33,10 +33,29 @@ export interface GitCommitRecord {
 
 export interface GitWorkspaceSnapshot {
   repoPath: string;
+  isRepository: boolean;
   branch: string;
   dirty: boolean;
   commits: GitCommitRecord[];
   graphPatch: unknown;
+}
+
+export interface GitSshPublicKey {
+  path: string;
+  algorithm: string;
+  fingerprint: string;
+  publicKey: string;
+  managedByApp: boolean;
+}
+
+export interface GitHubAccountStatus {
+  cliAvailable: boolean;
+  authenticated: boolean;
+  host: string;
+  login: string | null;
+  gitProtocol: string | null;
+  sshKeygenAvailable: boolean;
+  sshKeys: GitSshPublicKey[];
 }
 
 function hasTauriRuntime() {
@@ -100,8 +119,8 @@ export async function exportProjectWithPlugin(
   if (!path) return null;
   const data = await renderProjectExport(project, format);
   return invoke<string>("save_plugin_artifact", {
-    pluginId: command.pluginId,
-    pluginVersion: command.pluginVersion,
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
     format,
     path,
     data: Array.from(data),
@@ -119,8 +138,8 @@ export async function openFolderWorkspace(command: EnabledWorkspaceCommand) {
   if (!path) return null;
   const { invoke } = await desktopModules();
   const projects = await invoke<FolderProjectSummary[]>("scan_project_folder", {
-    pluginId: command.pluginId,
-    pluginVersion: command.pluginVersion,
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
     path,
   });
   return { path, projects };
@@ -131,8 +150,60 @@ export async function openGitWorkspace(command: EnabledWorkspaceCommand) {
   if (!path) return null;
   const { invoke } = await desktopModules();
   return invoke<GitWorkspaceSnapshot>("read_git_workspace", {
-    pluginId: command.pluginId,
-    pluginVersion: command.pluginVersion,
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
+    path,
+  });
+}
+
+export async function initializeGitWorkspace(
+  command: EnabledWorkspaceCommand,
+  path: string,
+) {
+  const { invoke } = await desktopModules();
+  return invoke<GitWorkspaceSnapshot>("initialize_git_workspace", {
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
+    path,
+  });
+}
+
+export async function readGitHubAccount(command: EnabledWorkspaceCommand) {
+  const { invoke } = await desktopModules();
+  return invoke<GitHubAccountStatus>("read_github_account", {
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
+  });
+}
+
+export async function loginGitHubAccount(command: EnabledWorkspaceCommand) {
+  const { invoke } = await desktopModules();
+  return invoke<GitHubAccountStatus>("login_github_account", {
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
+  });
+}
+
+export async function generateGitHubSshKey(
+  command: EnabledWorkspaceCommand,
+  comment: string,
+) {
+  const { invoke } = await desktopModules();
+  return invoke<GitHubAccountStatus>("generate_github_ssh_key", {
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
+    comment,
+  });
+}
+
+export async function uploadGitHubSshKey(
+  command: EnabledWorkspaceCommand,
+  path: string,
+) {
+  const { invoke } = await desktopModules();
+  return invoke<GitHubAccountStatus>("upload_github_ssh_key", {
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
     path,
   });
 }
@@ -145,8 +216,8 @@ export async function gitAutosaveProject(
 ) {
   const { invoke } = await desktopModules();
   return invoke<GitWorkspaceSnapshot>("git_autosave_project", {
-    pluginId: command.pluginId,
-    pluginVersion: command.pluginVersion,
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
     repoPath,
     projectPath: `.research-canvas/${projectFileStem(project)}.mycproj`,
     project,

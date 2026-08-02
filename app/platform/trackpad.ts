@@ -12,6 +12,8 @@ export type NativeTrackpadFrame = {
   deviceHeight: number;
   cursorX: number;
   cursorY: number;
+  heldMs: number;
+  held: boolean;
 };
 
 /**

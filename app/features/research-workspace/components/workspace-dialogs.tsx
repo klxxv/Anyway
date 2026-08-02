@@ -43,6 +43,14 @@ import {
   type ContextMenuActionId,
   type ContextMenuScope,
 } from "../workspace-context-menu";
+import {
+  RADIAL_MENU_ACTIONS,
+  RADIAL_MENU_POSITIONS,
+  RADIAL_NODE_ACTIONS,
+  nodeTypeForRadialAction,
+  type RadialMenuAction,
+  type RadialMenuPosition,
+} from "../workspace-radial-menu";
 import type { NodeDraft } from "../workspace-types";
 
 const nodeTypeLabelKeys: Partial<Record<ResearchNodeType, MessageKey>> = {
@@ -63,6 +71,31 @@ const layoutLabelKeys: Record<WorkspacePreferences["defaultLayout"], MessageKey>
   huffman: "layout.huffman",
   table: "layout.table",
   "neural-network": "layout.neural",
+};
+
+const radialPositionLabelKeys: Record<RadialMenuPosition, MessageKey> = {
+  north: "settings.radialNorth",
+  "north-east": "settings.radialNorthEast",
+  east: "settings.radialEast",
+  "south-east": "settings.radialSouthEast",
+  south: "settings.radialSouth",
+  "south-west": "settings.radialSouthWest",
+  west: "settings.radialWest",
+  "north-west": "settings.radialNorthWest",
+};
+
+const radialPreviewPositions: Record<
+  RadialMenuPosition,
+  { left: string; top: string }
+> = {
+  north: { left: "50%", top: "8%" },
+  "north-east": { left: "79%", top: "21%" },
+  east: { left: "92%", top: "50%" },
+  "south-east": { left: "79%", top: "79%" },
+  south: { left: "50%", top: "92%" },
+  "south-west": { left: "21%", top: "79%" },
+  west: { left: "8%", top: "50%" },
+  "north-west": { left: "21%", top: "21%" },
 };
 
 export type ComposerState = {
@@ -649,7 +682,13 @@ export function ProjectMenu({
   );
 }
 
-type SettingsSection = "interface" | "interaction" | "shortcuts" | "context-menus" | "canvas";
+type SettingsSection =
+  | "interface"
+  | "interaction"
+  | "radial-menu"
+  | "shortcuts"
+  | "context-menus"
+  | "canvas";
 
 function PreferenceToggle({
   checked,
@@ -714,6 +753,7 @@ export function SettingsDialog({
   }> = [
     { key: "interface", label: t("settings.interface"), description: t("settings.commandDensity"), icon: IconPalette },
     { key: "interaction", label: t("settings.interaction"), description: t("settings.hoverBehavior"), icon: IconPointer },
+    { key: "radial-menu", label: t("settings.radialMenu"), description: t("settings.radialMenuHint"), icon: IconMenu2 },
     { key: "shortcuts", label: t("settings.shortcuts"), description: t("settings.shortcutsHint"), icon: IconKeyboard },
     { key: "context-menus", label: t("settings.contextMenus"), description: t("settings.contextMenusHint"), icon: IconMenu2 },
     { key: "canvas", label: t("settings.canvas"), description: t("settings.graphDefaults"), icon: IconLayoutGrid },
@@ -791,16 +831,55 @@ export function SettingsDialog({
     });
   };
 
+  const radialActionLabel = (action: RadialMenuAction) => {
+    const nodeType = nodeTypeForRadialAction(action);
+    if (nodeType) return t(nodeTypeLabelKeys[nodeType] ?? "node.note");
+    return t(action === "canvas:fit" ? "contextMenu.fitView" : "contextMenu.applyLayout");
+  };
+
+  const setRadialItemCount = (count: number) => {
+    setDraft((current) => {
+      const items = current.radialMenu.items.slice(0, count).map((item) => ({ ...item }));
+      const occupied = new Set(items.map((item) => item.position));
+      while (items.length < count) {
+        const position = RADIAL_MENU_POSITIONS.find((candidate) => !occupied.has(candidate));
+        if (!position) break;
+        const index = items.length;
+        occupied.add(position);
+        items.push({
+          id: `radial-custom-${position}`,
+          position,
+          action: RADIAL_NODE_ACTIONS[index % RADIAL_NODE_ACTIONS.length],
+        });
+      }
+      return { ...current, radialMenu: { items } };
+    });
+  };
+
+  const updateRadialItem = (
+    id: string,
+    update: Partial<{ position: RadialMenuPosition; action: RadialMenuAction }>,
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      radialMenu: {
+        items: current.radialMenu.items.map((item) =>
+          item.id === id ? { ...item, ...update } : item,
+        ),
+      },
+    }));
+  };
+
   return (
     <div className="fixed inset-0 z-[95] grid place-items-center bg-ink/10 backdrop-blur-[2px]">
       <section
-        className="grid h-[580px] w-[760px] grid-cols-[190px_minmax(0,1fr)] overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)]"
+        className="grid h-[min(720px,calc(100dvh-24px))] w-[min(900px,calc(100vw-24px))] grid-cols-[200px_minmax(0,1fr)] overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)] max-sm:grid-cols-1 max-sm:grid-rows-[auto_minmax(0,1fr)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
       >
-        <aside className="border-r border-ink/15 bg-canvas p-3">
-          <div className="px-3 pb-5 pt-3">
+        <aside className="border-r border-ink/15 bg-canvas p-3 max-sm:border-b max-sm:border-r-0 max-sm:p-2">
+          <div className="px-3 pb-5 pt-3 max-sm:hidden">
             <span className="font-sans text-[8px] uppercase tracking-[0.18em] text-blue">
               Research Canvas
             </span>
@@ -808,14 +887,14 @@ export function SettingsDialog({
               {t("settings.title")}
             </h2>
           </div>
-          <nav className="space-y-1" aria-label={t("settings.sections")}>
+          <nav className="space-y-1 max-sm:flex max-sm:space-y-0 max-sm:overflow-x-auto" aria-label={t("settings.sections")}>
             {sections.map((item) => {
               const SectionIcon = item.icon;
               const selected = section === item.key;
               return (
                 <button
                   key={item.key}
-                  className={`flex w-full items-start gap-3 rounded-[4px] px-3 py-2.5 text-left transition ${
+                  className={`flex w-full items-start gap-3 rounded-[4px] px-3 py-2.5 text-left transition max-sm:min-w-[108px] ${
                     selected ? "bg-blue-soft text-blue" : "hover:bg-ink/5"
                   }`}
                   onClick={() => setSection(item.key)}
@@ -931,11 +1010,161 @@ export function SettingsDialog({
                     <option value={320}>{t("settings.deliberate")} · 320 ms</option>
                   </select>
                 </label>
+                <div className="mt-6 rounded-[5px] border border-ink/15 bg-canvas p-4">
+                  <h4 className="font-serif text-[13px]">{t("settings.trackpadTuning")}</h4>
+                  <p className="mt-1 font-serif text-[10px] leading-[1.45] text-ink/50">
+                    {t("settings.trackpadTuningHint")}
+                  </p>
+                  <label className="mt-4 block font-sans text-[9px] uppercase tracking-[0.12em] text-ink/55">
+                    <span className="flex items-center justify-between">
+                      <span>{t("settings.trackpadSensitivity")}</span>
+                      <output className="font-medium text-blue">
+                        {Math.round(draft.trackpadSensitivity * 100)}%
+                      </output>
+                    </span>
+                    <input
+                      className="mt-2 w-full accent-blue"
+                      type="range"
+                      min="0.5"
+                      max="2"
+                      step="0.1"
+                      value={draft.trackpadSensitivity}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          trackpadSensitivity: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="mt-4 block font-sans text-[9px] uppercase tracking-[0.12em] text-ink/55">
+                    <span className="flex items-center justify-between">
+                      <span>{t("settings.trackpadLowPass")}</span>
+                      <output className="font-medium text-blue">
+                        {Math.round(draft.trackpadFilterStrength * 100)}%
+                      </output>
+                    </span>
+                    <input
+                      className="mt-2 w-full accent-blue"
+                      type="range"
+                      min="0"
+                      max="0.9"
+                      step="0.05"
+                      value={draft.trackpadFilterStrength}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          trackpadFilterStrength: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <p className="mt-2 font-serif text-[9px] leading-[1.45] text-ink/45">
+                    {t("settings.trackpadLowPassHint")}
+                  </p>
+                </div>
                 <div className="mt-4 rounded-[5px] border border-blue/20 bg-blue-soft p-4">
                   <p className="font-serif text-[12px] text-blue">{t("settings.clickBehavior")}</p>
                   <p className="mt-1 font-serif text-[10px] leading-[1.45] text-ink/55">
                     {t("settings.clickBehaviorHint")}
                   </p>
+                </div>
+              </div>
+            )}
+
+            {section === "radial-menu" && (
+              <div>
+                <h3 className="font-serif text-[18px]">{t("settings.radialMenuTitle")}</h3>
+                <p className="mt-1 font-serif text-[11px] leading-[1.5] text-ink/50">
+                  {t("settings.radialMenuDescription")}
+                </p>
+
+                <div className="mt-5 grid grid-cols-[132px_minmax(0,1fr)] gap-5 rounded-[6px] border border-ink/15 bg-canvas p-4 max-sm:grid-cols-1">
+                  <div className="relative mx-auto size-[124px] rounded-full border border-ink/20 bg-paper">
+                    <span className="absolute left-1/2 top-1/2 size-8 -translate-x-1/2 -translate-y-1/2 rounded-full border border-ink/15 bg-canvas" />
+                    {draft.radialMenu.items.map((item, index) => (
+                      <span
+                        key={item.id}
+                        className="absolute grid size-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-blue/30 bg-blue-soft font-sans text-[9px] font-bold text-blue"
+                        style={radialPreviewPositions[item.position]}
+                        title={radialActionLabel(item.action)}
+                      >
+                        {index + 1}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="min-w-0">
+                    <label className="dialog-field">
+                      {t("settings.radialItemCount")}
+                      <select
+                        value={draft.radialMenu.items.length}
+                        onChange={(event) => setRadialItemCount(Number(event.target.value))}
+                      >
+                        {Array.from({ length: 8 }, (_, index) => index + 1).map((count) => (
+                          <option key={count} value={count}>
+                            {count}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="mt-3 font-serif text-[10px] leading-[1.5] text-ink/50">
+                      {t("settings.radialGestureHint")}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {draft.radialMenu.items.map((item, index) => (
+                    <div
+                      key={item.id}
+                      className="grid grid-cols-[26px_minmax(120px,.8fr)_minmax(150px,1.2fr)] items-end gap-2 rounded-[5px] border border-ink/15 bg-paper p-3 max-md:grid-cols-[26px_minmax(0,1fr)]"
+                    >
+                      <span className="mb-2 grid size-6 place-items-center rounded-full bg-blue-soft font-sans text-[9px] font-bold text-blue">
+                        {index + 1}
+                      </span>
+                      <label className="dialog-field">
+                        {t("settings.radialPosition")}
+                        <select
+                          value={item.position}
+                          onChange={(event) =>
+                            updateRadialItem(item.id, {
+                              position: event.target.value as RadialMenuPosition,
+                            })
+                          }
+                        >
+                          {RADIAL_MENU_POSITIONS.map((position) => (
+                            <option
+                              key={position}
+                              value={position}
+                              disabled={draft.radialMenu.items.some(
+                                (candidate) =>
+                                  candidate.id !== item.id && candidate.position === position,
+                              )}
+                            >
+                              {t(radialPositionLabelKeys[position])}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="dialog-field max-md:col-start-2">
+                        {t("settings.radialAction")}
+                        <select
+                          value={item.action}
+                          onChange={(event) =>
+                            updateRadialItem(item.id, {
+                              action: event.target.value as RadialMenuAction,
+                            })
+                          }
+                        >
+                          {RADIAL_MENU_ACTIONS.map((action) => (
+                            <option key={action} value={action}>
+                              {radialActionLabel(action)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

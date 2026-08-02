@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let manifest = fs::read(source.join("plugin.yml"))?;
     let wasm = wat::parse_file(source.join("plugin.wat"))?;
-    let output = packages.join("researchcanvas.runtime-smoke@1.0.0.myc");
+    let output = packages.join("researchcanvas.runtime-smoke@1.1.0.myc");
     let file = File::create(&output)?;
     let mut archive = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);

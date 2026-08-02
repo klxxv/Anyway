@@ -5,33 +5,25 @@ import type {
   InstalledPluginLocale,
   PluginCommandContribution,
   PluginGraphPatch,
+  PluginReference,
 } from "./contracts";
+import { pluginReference } from "./contracts";
 
 export type EnabledWorkspaceCommand = PluginCommandContribution & {
-  pluginId: string;
-  pluginVersion: string;
-  pluginName: string;
+  plugin: PluginReference;
 };
-
-function pluginKey(plugin: InstalledMycPlugin) {
-  return `${plugin.manifest.metadata.id}@${plugin.manifest.metadata.version}`;
-}
 
 /** 仅返回已启用且同包声明了对应能力的命令 / Returns enabled commands backed by a same-package capability. */
 export function workspaceCommandsFromPlugins(
   plugins: InstalledMycPlugin[],
-  enabled: ReadonlySet<string>,
 ): EnabledWorkspaceCommand[] {
   return plugins.flatMap((plugin) => {
-    if (!enabled.has(pluginKey(plugin))) return [];
     const capabilities = new Set(plugin.manifest.spec.capabilities);
     return (plugin.manifest.spec.contributes?.commands ?? [])
       .filter((command) => capabilities.has(command.capability))
       .map((command) => ({
         ...command,
-        pluginId: plugin.manifest.metadata.id,
-        pluginVersion: plugin.manifest.metadata.version,
-        pluginName: plugin.manifest.metadata.name,
+        plugin: pluginReference(plugin),
       }));
   });
 }
@@ -39,11 +31,8 @@ export function workspaceCommandsFromPlugins(
 /** 社区语言包仅含数据而非代码，且只有启用的包会生效 / Community locales are data-only and opt-in. */
 export function localeBundlesFromPlugins(
   plugins: InstalledMycPlugin[],
-  enabled: ReadonlySet<string>,
 ): InstalledPluginLocale[] {
-  return plugins.flatMap((plugin) =>
-    enabled.has(pluginKey(plugin)) ? (plugin.locales ?? []) : [],
-  );
+  return plugins.flatMap((plugin) => plugin.locales ?? []);
 }
 
 function escapeXml(value: string) {

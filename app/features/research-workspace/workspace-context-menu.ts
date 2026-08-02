@@ -18,6 +18,8 @@ export const CONTEXT_MENU_ACTIONS = {
   canvas: [
     { id: "canvas.add", labelKey: "contextMenu.quickAdd", icon: "add" },
     { id: "canvas.note", labelKey: "contextMenu.addNote", icon: "note" },
+    { id: "canvas.expandAll", labelKey: "contextMenu.expandAll", icon: "expand" },
+    { id: "canvas.collapseAll", labelKey: "contextMenu.collapseAll", icon: "collapse" },
     { id: "canvas.layout", labelKey: "contextMenu.applyLayout", icon: "layout" },
     { id: "canvas.fit", labelKey: "contextMenu.fitView", icon: "fit" },
   ],

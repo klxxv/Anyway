@@ -15,13 +15,8 @@ import {
   type Locale,
   type MessageKey,
 } from "./catalog";
-import {
-  pluginsChangedEvent,
-  readEnabledPluginKeys,
-} from "../plugins/context-menu";
-import { listInstalledMycPlugins } from "../plugins/tauri-client";
-import type { InstalledMycPlugin } from "../plugins/contracts";
 import { localeBundlesFromPlugins } from "../plugins/workspace";
+import { usePluginHost } from "../plugins/plugin-host";
 
 const localeStorageKey = "research-canvas.locale.v1";
 
@@ -39,11 +34,8 @@ const I18nContext = createContext<I18nValue | null>(null);
  * 管理设备本地界面语言，不隐式翻译研究内容。
  */
 export function I18nProvider({ children }: { children: ReactNode }) {
+  const { activePlugins } = usePluginHost();
   const [locale, setLocaleState] = useState<Locale>("en");
-  const [pluginCatalog, setPluginCatalog] = useState<
-    Record<string, Partial<Record<MessageKey, string>>>
-  >({});
-  const [pluginLocaleNames, setPluginLocaleNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -53,40 +45,22 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = async () => {
-      let plugins: InstalledMycPlugin[];
-      try {
-        plugins = await listInstalledMycPlugins();
-      } catch {
-        plugins = [];
-      }
-      if (cancelled) return;
-      const bundles = localeBundlesFromPlugins(plugins, readEnabledPluginKeys());
-      const catalog: Record<string, Partial<Record<MessageKey, string>>> = {};
-      const names: Record<string, string> = {};
-      for (const bundle of bundles) {
-        catalog[bundle.locale] = {
-          ...(catalog[bundle.locale] ?? {}),
-          ...(bundle.messages as Partial<Record<MessageKey, string>>),
-        };
-        names[bundle.locale] = bundle.name;
-      }
-      setPluginCatalog(catalog);
-      setPluginLocaleNames(names);
-      const saved = window.localStorage.getItem(localeStorageKey);
-      if (saved && (saved === "en" || saved === "zh-CN" || catalog[saved])) {
-        setLocaleState(saved);
-      }
-    };
-    void refresh();
-    window.addEventListener(pluginsChangedEvent, refresh);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(pluginsChangedEvent, refresh);
-    };
-  }, []);
+  const { pluginCatalog, pluginLocaleNames } = useMemo(() => {
+    const bundles = localeBundlesFromPlugins(activePlugins);
+    const catalog: Record<string, Partial<Record<MessageKey, string>>> = {};
+    const names: Record<string, string> = {};
+    for (const bundle of bundles) {
+      catalog[bundle.locale] = {
+        ...(catalog[bundle.locale] ?? {}),
+        ...(bundle.messages as Partial<Record<MessageKey, string>>),
+      };
+      names[bundle.locale] = bundle.name;
+    }
+    return { pluginCatalog: catalog, pluginLocaleNames: names };
+  }, [activePlugins]);
+
+  const resolvedLocale =
+    locale === "en" || locale === "zh-CN" || pluginCatalog[locale] ? locale : "en";
 
   const setLocale = useCallback((nextLocale: Locale) => {
     setLocaleState(nextLocale);
@@ -95,8 +69,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    document.documentElement.lang = locale;
-  }, [locale]);
+    document.documentElement.lang = resolvedLocale;
+  }, [resolvedLocale]);
 
   const availableLocales = useMemo<I18nValue["availableLocales"]>(
     () => [
@@ -116,12 +90,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<I18nValue>(
     () => ({
-      locale,
+      locale: resolvedLocale,
       setLocale,
       availableLocales,
-      t: (key, parameters) => translate(locale, key, pluginCatalog, parameters),
+      t: (key, parameters) => translate(resolvedLocale, key, pluginCatalog, parameters),
     }),
-    [availableLocales, locale, pluginCatalog, setLocale],
+    [availableLocales, pluginCatalog, resolvedLocale, setLocale],
   );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

@@ -3,7 +3,7 @@ kind: WorkspacePlugin
 metadata:
   id: researchcanvas.git-workspace
   name: Git Workspace
-  version: 1.0.0
+  version: 1.2.0
   publisher: Research Canvas
   developer: Provenance Platform Team
   description: Saves project snapshots to Git, displays the commit tree, and proposes graph patches from commit directives and tags.
@@ -13,7 +13,12 @@ spec:
   entry: workspace-plugin.json
   capabilities:
     - git.repository.read
+    - git.repository.init
     - git.autosave
+    - git.account.read
+    - git.account.login
+    - git.ssh.generate
+    - git.ssh.upload
     - graph.patch.propose
   permissions: []
   contributes:

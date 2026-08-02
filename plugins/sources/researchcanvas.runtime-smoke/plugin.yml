@@ -3,7 +3,7 @@ kind: AnalysisPlugin
 metadata:
   id: researchcanvas.runtime-smoke
   name: Runtime Smoke
-  version: 1.0.0
+  version: 1.1.0
   publisher: Research Canvas
   developer: Runtime Team
   description: Verifies the capability-free Rust/C++ WebAssembly plugin boundary.

@@ -2477,6 +2477,7 @@ dependencies = [
  "tempfile",
  "wasmi",
  "wat",
+ "webview2-com",
  "windows",
  "zip",
 ]

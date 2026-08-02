@@ -9,6 +9,11 @@ import {
   normalizeContextMenuPreferences,
   type ContextMenuPreferences,
 } from "./workspace-context-menu";
+import {
+  defaultRadialMenuPreferences,
+  normalizeRadialMenuPreferences,
+  type RadialMenuPreferences,
+} from "./workspace-radial-menu";
 
 export type CommandDensity = "comfortable" | "compact";
 export type HoverDelay = 80 | 180 | 320;
@@ -16,17 +21,22 @@ export type HoverDelay = 80 | 180 | 320;
 export type WorkspacePreferences = {
   commandDensity: CommandDensity;
   hoverDelay: HoverDelay;
+  trackpadSensitivity: number;
+  trackpadFilterStrength: number;
   defaultLayout: LayoutMode;
   showMiniMap: boolean;
   showLinkCounts: boolean;
   contextMenus: ContextMenuPreferences;
   showPluginContextMenuActions: boolean;
   shortcuts: WorkspaceShortcuts;
+  radialMenu: RadialMenuPreferences;
 };
 
 export const defaultWorkspacePreferences: WorkspacePreferences = {
   commandDensity: "comfortable",
   hoverDelay: 180,
+  trackpadSensitivity: 1,
+  trackpadFilterStrength: 0.55,
   defaultLayout: "tree",
   showMiniMap: true,
   showLinkCounts: true,
@@ -37,6 +47,9 @@ export const defaultWorkspacePreferences: WorkspacePreferences = {
   },
   showPluginContextMenuActions: true,
   shortcuts: { ...defaultWorkspaceShortcuts },
+  radialMenu: {
+    items: defaultRadialMenuPreferences.items.map((item) => ({ ...item })),
+  },
 };
 
 /**
@@ -52,6 +65,12 @@ export function normalizeWorkspacePreferences(
       value.commandDensity === "compact" ? "compact" : "comfortable",
     hoverDelay:
       value.hoverDelay === 80 || value.hoverDelay === 320 ? value.hoverDelay : 180,
+    trackpadSensitivity: Number.isFinite(value.trackpadSensitivity)
+      ? Math.min(2, Math.max(0.5, value.trackpadSensitivity as number))
+      : 1,
+    trackpadFilterStrength: Number.isFinite(value.trackpadFilterStrength)
+      ? Math.min(0.9, Math.max(0, value.trackpadFilterStrength as number))
+      : 0.55,
     defaultLayout:
       value.defaultLayout === "evidence-chain" ||
       value.defaultLayout === "refutation-chain" ||
@@ -65,6 +84,7 @@ export function normalizeWorkspacePreferences(
     showLinkCounts: value.showLinkCounts !== false,
     contextMenus: normalizeContextMenuPreferences(value.contextMenus),
     showPluginContextMenuActions: value.showPluginContextMenuActions !== false,
+    radialMenu: normalizeRadialMenuPreferences(value.radialMenu),
     shortcuts: Object.fromEntries(
       SHORTCUT_ACTIONS.map((action) => [
         action,

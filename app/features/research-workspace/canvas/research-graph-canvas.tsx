@@ -13,7 +13,9 @@ import {
   applyNodeChanges,
   type Connection,
   type EdgeChange,
+  type MiniMapNodeProps,
   type NodeChange,
+  type ReactFlowProps,
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
@@ -27,6 +29,7 @@ import {
 import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
 import type {
+  EdgeStyleManifest,
   ProjectState,
   ResearchEdgeType,
   ResearchNodeType,
@@ -37,9 +40,15 @@ import {
   type NativeTrackpadFrame,
 } from "../../../platform/trackpad";
 import {
+  chromiumTrackpadPinchScale,
+  emptyTrackpadLowPassState,
+  lowPassCompleteTrackpadFrame,
+  viewportForCoalescedWheelFrame,
   viewportForCompleteTrackpadFrame,
+  wheelPanDelta,
   type GesturePoint,
   type GestureViewport,
+  type TrackpadLowPassState,
 } from "../hooks/trackpad-pinch";
 import type { PieMenuState, WorkspaceEdge, WorkspaceNode } from "../workspace-types";
 import {
@@ -54,14 +63,29 @@ import {
   projectForLegendFilter,
   type LinkLegendFilter,
 } from "../workspace-layout";
-import { RadialAddMenu } from "../components/radial-add-menu";
+import {
+  RadialAddMenu,
+  type RadialAddMenuHandle,
+} from "../components/radial-add-menu";
 import { WorkspaceContextMenu } from "../components/workspace-context-menu";
+import {
+  compileRadialMenu,
+  nodeTypeForRadialAction,
+  radialSelectionForNormalizedDisplacement,
+  type RadialMenuCache,
+  type RadialMenuItem,
+  type RadialMenuPreferences,
+} from "../workspace-radial-menu";
 import { ResearchEdgeLine } from "./research-edge-line";
 import { ResearchNodeCard } from "./research-node-card";
 import { computeEdgeRoutes } from "./edge-routing";
+import { isExpandableVariable, variableBranchValues } from "./variable-branches";
 
 const nodeTypes = { researchNode: ResearchNodeCard };
 const edgeTypes = { researchEdge: ResearchEdgeLine };
+const fitViewOptions = { padding: 0.12, maxZoom: 1 } as const;
+const proOptions = { hideAttribution: true } as const;
+type WorkspaceReactFlowProps = ReactFlowProps<WorkspaceNode, WorkspaceEdge>;
 const subscribeRuntime = () => () => undefined;
 const readTauriRuntime = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -76,9 +100,14 @@ type ResearchGraphCanvasProps = {
   inspectorOpen: boolean;
   linkFilter: LinkLegendFilter | null;
   showMiniMap: boolean;
+  showMiniMapRelations: boolean;
   showLinkCounts: boolean;
+  trackpadSensitivity: number;
+  trackpadFilterStrength: number;
+  edgeStyle: EdgeStyleManifest;
   referenceViewport: boolean;
   contextMenus: ContextMenuPreferences;
+  radialMenu: RadialMenuPreferences;
   shortcuts: WorkspaceShortcuts;
   pluginContextMenuActions: ResolvedPluginContextMenuAction[];
   onLegendFilter: (filter: LinkLegendFilter | null) => void;
@@ -103,19 +132,30 @@ function buildNodes(
   project: ProjectState,
   selectedNodeId: string,
   filter: LinkLegendFilter | null,
+  expandedNodeIds: ReadonlySet<string>,
+  onToggleExpanded: (nodeId: string) => void,
 ): WorkspaceNode[] {
   const projected = projectForLegendFilter(project, filter);
   return projected.nodes.map((record) => {
     const placement = projected.placements.find((item) => item.nodeId === record.id);
     const circle = record.data.shape === "circle" || record.type === "question";
+    const expanded = !circle && expandedNodeIds.has(record.id) && isExpandableVariable(record);
+    const branchCount = expanded ? variableBranchValues(record).length : 0;
     return {
       id: record.id,
       type: "researchNode",
       position: { x: placement?.x ?? 0, y: placement?.y ?? 0 },
-      width: placement?.width ?? (circle ? 136 : 164),
-      height: placement?.height ?? (circle ? 136 : 116),
+      width: expanded ? Math.max(placement?.width ?? 0, 188) : placement?.width ?? (circle ? 136 : 164),
+      height: expanded
+        ? Math.max(placement?.height ?? 0, 132 + Math.max(branchCount, 2) * 25)
+        : placement?.height ?? (circle ? 136 : 116),
       selected: record.id === selectedNodeId,
-      data: { record, shape: circle ? "circle" : "card" },
+      data: {
+        record,
+        shape: circle ? "circle" : "card",
+        expanded,
+        onToggleExpanded,
+      },
     };
   });
 }
@@ -125,6 +165,7 @@ function buildEdges(
   filter: LinkLegendFilter | null,
   selectedEdgeId: string,
   edgeTypeLabel: (type: ResearchEdgeType) => string,
+  edgeStyle: EdgeStyleManifest,
 ): WorkspaceEdge[] {
   const projected = projectForLegendFilter(project, filter);
   const routes = computeEdgeRoutes(projected);
@@ -141,6 +182,7 @@ function buildEdges(
       data: {
         record,
         label: customEdgeNote(record) || edgeTypeLabel(record.type),
+        edgeStyle,
         labelOffsetX: route?.labelOffsetX,
         labelOffsetY: route?.labelOffsetY,
       },
@@ -160,9 +202,14 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     inspectorOpen,
     linkFilter,
     showMiniMap,
+    showMiniMapRelations,
     showLinkCounts,
+    trackpadSensitivity,
+    trackpadFilterStrength,
+    edgeStyle,
     referenceViewport,
     contextMenus,
+    radialMenu,
     shortcuts,
     pluginContextMenuActions,
     onLegendFilter,
@@ -179,46 +226,97 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     onApplyDefaultLayout,
     onPluginContextMenuAction,
   } = props;
+  const radialMenuCache = useMemo(() => compileRadialMenu(radialMenu), [radialMenu]);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const canvasBoundsRef = useRef<DOMRect | null>(null);
   const flowRef = useRef<ReactFlowInstance<WorkspaceNode, WorkspaceEdge> | null>(null);
+  const radialMenuRef = useRef<RadialAddMenuHandle | null>(null);
+  const manualMoveRef = useRef<{ nodeId: string; x: number; y: number } | null>(null);
   const nativePinchRef = useRef<{
     latestFrame: NativeTrackpadFrame | null;
     originViewport: GestureViewport | null;
     anchor: GesturePoint | null;
     animationFrame: number | null;
     ending: boolean;
+    filterState: TrackpadLowPassState;
+    radial: {
+      originCenterX: number;
+      originCenterY: number;
+      inverseDeviceWidth: number;
+      inverseDeviceHeight: number;
+      selectedSector: number | null;
+      selectedItem: RadialMenuItem | null;
+      flowX: number;
+      flowY: number;
+    } | null;
   }>({
     latestFrame: null,
     originViewport: null,
     anchor: null,
     animationFrame: null,
     ending: false,
+    filterState: emptyTrackpadLowPassState(),
+    radial: null,
+  });
+  const trackpadTuningRef = useRef({
+    sensitivity: trackpadSensitivity,
+    filterStrength: trackpadFilterStrength,
+  });
+  const radialMenuCacheRef = useRef<RadialMenuCache>(radialMenuCache);
+  const runRadialActionRef = useRef<
+    (item: RadialMenuItem, flowX: number, flowY: number) => void
+  >(() => undefined);
+  const nativeGestureActiveRef = useRef(false);
+  const chromiumWheelRef = useRef<{
+    panX: number;
+    panY: number;
+    scale: number;
+    cursor: GesturePoint | null;
+    animationFrame: number | null;
+  }>({
+    panX: 0,
+    panY: 0,
+    scale: 1,
+    cursor: null,
+    animationFrame: null,
   });
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
   );
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(() => new Set());
+  const toggleNodeExpanded = useCallback((nodeId: string) => {
+    setExpandedNodeIds((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }, []);
   const [nodes, setNodes] = useState(() =>
-    buildNodes(project, selectedNodeId, linkFilter),
+    buildNodes(project, selectedNodeId, linkFilter, expandedNodeIds, toggleNodeExpanded),
   );
   const [edges, setEdges] = useState(() =>
-    buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel),
+    buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle),
   );
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [contextMenu, setContextMenu] = useState<WorkspaceContextMenuState | null>(null);
   const [pieMenu, setPieMenu] = useState<PieMenuState | null>(null);
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const isTauriRuntime = useSyncExternalStore(
     subscribeRuntime,
     readTauriRuntime,
     () => false,
   );
-  const placementKey = useMemo(
-    () =>
-      project.placements
-        .map((placement) => `${placement.nodeId}:${placement.x}:${placement.y}`)
-        .join("|"),
-    [project.placements],
-  );
+  useEffect(() => {
+    radialMenuCacheRef.current = radialMenuCache;
+  }, [radialMenuCache]);
+  useEffect(() => {
+    trackpadTuningRef.current = {
+      sensitivity: trackpadSensitivity,
+      filterStrength: trackpadFilterStrength,
+    };
+  }, [trackpadFilterStrength, trackpadSensitivity]);
 
   const applyWorkspaceViewport = useCallback(
     async (instance: ReactFlowInstance<WorkspaceNode, WorkspaceEdge>) => {
@@ -233,10 +331,40 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     [referenceViewport],
   );
 
+  const runRadialAction = useCallback(
+    (item: RadialMenuItem, flowX: number, flowY: number) => {
+      const nodeType = nodeTypeForRadialAction(item.action);
+      if (nodeType) {
+        onRequestCreate(nodeType, flowX, flowY);
+        return;
+      }
+      if (item.action === "canvas:fit") {
+        const instance = flowRef.current;
+        if (instance) void instance.fitView({ padding: 0.12, maxZoom: 1, duration: 220 });
+        return;
+      }
+      onApplyDefaultLayout();
+    },
+    [onApplyDefaultLayout, onRequestCreate],
+  );
+
+  useEffect(() => {
+    runRadialActionRef.current = runRadialAction;
+  }, [runRadialAction]);
+
   useEffect(() => {
     const element = wrapperRef.current;
     if (!element) return;
-    const update = () => setCanvasSize({ width: element.clientWidth, height: element.clientHeight });
+    const update = () => {
+      canvasBoundsRef.current = element.getBoundingClientRect();
+      const width = element.clientWidth;
+      const height = element.clientHeight;
+      setCanvasSize((current) =>
+        current.width === width && current.height === height
+          ? current
+          : { width, height },
+      );
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -245,11 +373,28 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      setNodes(buildNodes(project, selectedNodeId, linkFilter));
-      setEdges(buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel));
+      setNodes(
+        buildNodes(
+          project,
+          selectedNodeId,
+          linkFilter,
+          expandedNodeIds,
+          toggleNodeExpanded,
+        ),
+      );
+      setEdges(buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [edgeTypeLabel, linkFilter, project, selectedEdgeId, selectedNodeId]);
+  }, [
+    edgeStyle,
+    edgeTypeLabel,
+    expandedNodeIds,
+    linkFilter,
+    project,
+    selectedEdgeId,
+    selectedNodeId,
+    toggleNodeExpanded,
+  ]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -262,13 +407,27 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   }, [applyWorkspaceViewport, inspectorOpen]);
 
   useEffect(() => {
+    const manualMove = manualMoveRef.current;
+    if (manualMove) {
+      manualMoveRef.current = null;
+      const placement = project.placements.find(
+        (candidate) => candidate.nodeId === manualMove.nodeId,
+      );
+      if (
+        placement &&
+        Math.abs(placement.x - manualMove.x) < 0.5 &&
+        Math.abs(placement.y - manualMove.y) < 0.5
+      ) {
+        return;
+      }
+    }
     const timer = window.setTimeout(() => {
       const instance = flowRef.current;
       if (!instance) return;
       void applyWorkspaceViewport(instance);
     }, 40);
     return () => window.clearTimeout(timer);
-  }, [applyWorkspaceViewport, linkFilter, placementKey]);
+  }, [applyWorkspaceViewport, linkFilter, project.placements]);
 
   useEffect(() => {
     if (addRequest === 0) return;
@@ -285,7 +444,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
   }, [addRequest]);
 
   const contextPoint = useCallback((clientX: number, clientY: number) => {
-    const bounds = wrapperRef.current?.getBoundingClientRect();
+    const bounds = canvasBoundsRef.current ?? wrapperRef.current?.getBoundingClientRect();
     const screen = {
       x: clientX - (bounds?.left ?? 0),
       y: clientY - (bounds?.top ?? 0),
@@ -332,6 +491,14 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         case "canvas.note":
           onRequestCreate("note", menu.flowX, menu.flowY);
           break;
+        case "canvas.expandAll":
+          setExpandedNodeIds(
+            new Set(project.nodes.filter(isExpandableVariable).map((node) => node.id)),
+          );
+          break;
+        case "canvas.collapseAll":
+          setExpandedNodeIds(new Set());
+          break;
         case "canvas.layout":
           onApplyDefaultLayout();
           break;
@@ -351,6 +518,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       onReverseEdge,
       onSelectNode,
       project.edges,
+      project.nodes,
     ],
   );
 
@@ -364,6 +532,29 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       nativePinch.anchor = null;
       nativePinch.animationFrame = null;
       nativePinch.ending = false;
+      nativePinch.filterState = emptyTrackpadLowPassState();
+      nativePinch.radial = null;
+      nativeGestureActiveRef.current = false;
+    };
+    const applyRadialFrame = (frame: NativeTrackpadFrame) => {
+      const radial = nativePinch.radial;
+      if (!radial) return;
+      const selection = radialSelectionForNormalizedDisplacement(
+        radialMenuCacheRef.current,
+        (frame.centerX - radial.originCenterX) * radial.inverseDeviceWidth,
+        (frame.centerY - radial.originCenterY) * radial.inverseDeviceHeight,
+      );
+      const selectedSector = selection?.sectorIndex ?? null;
+      const selectedItem = selection?.item ?? null;
+      if (
+        radial.selectedSector === selectedSector &&
+        radial.selectedItem?.id === selectedItem?.id
+      ) {
+        return;
+      }
+      radial.selectedSector = selectedSector;
+      radial.selectedItem = selectedItem;
+      radialMenuRef.current?.updateGesture(selectedSector, true);
     };
     const applyLatestFrame = () => {
       nativePinch.animationFrame = null;
@@ -371,19 +562,31 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       const originViewport = nativePinch.originViewport;
       const anchor = nativePinch.anchor;
       const instance = flowRef.current;
-      const bounds = wrapperRef.current?.getBoundingClientRect();
+      const bounds = canvasBoundsRef.current;
       nativePinch.latestFrame = null;
+      if (frame && nativePinch.radial) {
+        applyRadialFrame(frame);
+        return;
+      }
       if (frame && originViewport && anchor && instance && bounds) {
         // Pan and zoom are composed from the same complete native frame and
         // committed once per animation frame.
         // 平移与缩放来自同一个原生完整帧，每个动画帧只提交一次视口变换。
+        const filtered = lowPassCompleteTrackpadFrame(
+          nativePinch.filterState,
+          { x: frame.panX, y: frame.panY },
+          frame.scale,
+          trackpadTuningRef.current.sensitivity,
+          trackpadTuningRef.current.filterStrength,
+        );
+        nativePinch.filterState = filtered.state;
         void instance.setViewport(
           viewportForCompleteTrackpadFrame(
             originViewport,
             anchor,
-            { x: frame.panX, y: frame.panY },
+            filtered.pan,
             { width: bounds.width, height: bounds.height },
-            frame.scale,
+            filtered.scale,
           ),
         );
       }
@@ -395,21 +598,114 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     };
 
     void listenForNativeTrackpadFrames((frame) => {
-      const bounds = wrapperRef.current?.getBoundingClientRect();
+      if (frame.phase === "start" && wrapperRef.current) {
+        canvasBoundsRef.current = wrapperRef.current.getBoundingClientRect();
+      }
+      const bounds = canvasBoundsRef.current;
       const instance = flowRef.current;
       if (!bounds || !instance) return;
+      const insideCanvas =
+        frame.cursorX >= bounds.left &&
+        frame.cursorX <= bounds.right &&
+        frame.cursorY >= bounds.top &&
+        frame.cursorY <= bounds.bottom;
+      const pointerTarget = frame.phase === "start"
+        ? document.elementFromPoint(frame.cursorX, frame.cursorY)
+        : null;
+      const canvasSurfaceOwnsPointer = frame.phase === "start"
+        ? Boolean(
+            pointerTarget &&
+              wrapperRef.current?.contains(pointerTarget) &&
+              pointerTarget.closest(".react-flow"),
+          )
+        : insideCanvas;
+      if (frame.phase === "start" && !canvasSurfaceOwnsPointer) return;
+      if (frame.phase !== "start" && !nativePinch.originViewport) return;
       if (frame.phase === "start" || !nativePinch.originViewport || !nativePinch.anchor) {
+        nativeGestureActiveRef.current = true;
         nativePinch.originViewport = instance.getViewport();
         nativePinch.anchor = {
           x: frame.cursorX - bounds.left,
           y: frame.cursorY - bounds.top,
         };
         nativePinch.ending = false;
+        nativePinch.filterState = emptyTrackpadLowPassState();
+        nativePinch.radial = null;
       }
       if (frame.phase === "end") {
+        if (nativePinch.radial) {
+          if (nativePinch.animationFrame !== null) {
+            window.cancelAnimationFrame(nativePinch.animationFrame);
+            nativePinch.animationFrame = null;
+          }
+          if (nativePinch.latestFrame) applyRadialFrame(nativePinch.latestFrame);
+          const radial = nativePinch.radial;
+          if (radial.selectedItem) {
+            runRadialActionRef.current(radial.selectedItem, radial.flowX, radial.flowY);
+          }
+          radialMenuRef.current?.updateGesture(null, false);
+          setPieMenu(null);
+          reset();
+          return;
+        }
         nativePinch.ending = true;
         if (nativePinch.latestFrame) scheduleLatestFrame();
         else reset();
+        return;
+      }
+      if (nativePinch.radial) {
+        if (!insideCanvas) {
+          if (nativePinch.animationFrame !== null) {
+            window.cancelAnimationFrame(nativePinch.animationFrame);
+          }
+          radialMenuRef.current?.updateGesture(null, false);
+          setPieMenu(null);
+          reset();
+          return;
+        }
+        nativePinch.latestFrame = frame;
+        scheduleLatestFrame();
+        return;
+      }
+      if (!canvasSurfaceOwnsPointer) {
+        if (nativePinch.animationFrame !== null) {
+          window.cancelAnimationFrame(nativePinch.animationFrame);
+        }
+        reset();
+        return;
+      }
+      if (frame.held) {
+        if (nativePinch.animationFrame !== null) {
+          window.cancelAnimationFrame(nativePinch.animationFrame);
+          nativePinch.animationFrame = null;
+        }
+        nativePinch.latestFrame = null;
+        const screen = {
+          x: frame.cursorX - bounds.left,
+          y: frame.cursorY - bounds.top,
+        };
+        const flow = instance.screenToFlowPosition({
+          x: frame.cursorX,
+          y: frame.cursorY,
+        });
+        nativePinch.radial = {
+          originCenterX: frame.centerX,
+          originCenterY: frame.centerY,
+          inverseDeviceWidth: 1 / Math.max(frame.deviceWidth, 1),
+          inverseDeviceHeight: 1 / Math.max(frame.deviceHeight, 1),
+          selectedSector: null,
+          selectedItem: null,
+          flowX: flow.x,
+          flowY: flow.y,
+        };
+        setContextMenu(null);
+        setPieMenu({
+          screenX: screen.x,
+          screenY: screen.y,
+          flowX: flow.x,
+          flowY: flow.y,
+          gestureActive: true,
+        });
         return;
       }
       nativePinch.latestFrame = frame;
@@ -427,6 +723,93 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       stop();
     };
   }, []);
+
+  useEffect(() => {
+    const element = wrapperRef.current;
+    if (!isTauriRuntime || !element) return;
+    const chromiumWheel = chromiumWheelRef.current;
+    const applyChromiumWheel = () => {
+      chromiumWheel.animationFrame = null;
+      const instance = flowRef.current;
+      const cursor = chromiumWheel.cursor;
+      const tuning = trackpadTuningRef.current;
+      const wheelDeadZone = 0.25 + tuning.filterStrength * 1.75;
+      const tuneAxis = (value: number) =>
+        Math.abs(value) <= wheelDeadZone
+          ? 0
+          : Math.sign(value) * (Math.abs(value) - wheelDeadZone) * tuning.sensitivity;
+      const panDelta = {
+        x: tuneAxis(chromiumWheel.panX),
+        y: tuneAxis(chromiumWheel.panY),
+      };
+      const rawScaleLog = Math.log(Math.max(chromiumWheel.scale, 0.01));
+      const scaleDeadZone = 0.0015 + tuning.filterStrength * 0.008;
+      const scale =
+        Math.abs(rawScaleLog) <= scaleDeadZone
+          ? 1
+          : Math.exp(
+              Math.sign(rawScaleLog) *
+                (Math.abs(rawScaleLog) - scaleDeadZone) *
+                tuning.sensitivity,
+            );
+      chromiumWheel.panX = 0;
+      chromiumWheel.panY = 0;
+      chromiumWheel.scale = 1;
+      chromiumWheel.cursor = null;
+      if (!instance || !cursor) return;
+      if (panDelta.x === 0 && panDelta.y === 0 && scale === 1) return;
+      void instance.setViewport(
+        viewportForCoalescedWheelFrame(
+          instance.getViewport(),
+          cursor,
+          panDelta,
+          scale,
+        ),
+      );
+    };
+    const observeWheel = (event: WheelEvent) => {
+      if (nativeGestureActiveRef.current) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const bounds = canvasBoundsRef.current ?? element.getBoundingClientRect();
+      chromiumWheel.cursor = {
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      };
+      if (event.ctrlKey) {
+        // Chromium encodes pinch in deltaY; do not reinterpret it as vertical
+        // pan. Any ordinary pan events arriving in this frame remain composed.
+        // Chromium 使用 deltaY 表示捏合，不能再把它当作垂直平移。
+        chromiumWheel.scale *= chromiumTrackpadPinchScale(event.deltaY);
+      } else {
+        const pan = wheelPanDelta(event.deltaX, event.deltaY, event.deltaMode);
+        chromiumWheel.panX += pan.x;
+        chromiumWheel.panY += pan.y;
+      }
+      if (chromiumWheel.animationFrame === null) {
+        chromiumWheel.animationFrame = window.requestAnimationFrame(applyChromiumWheel);
+      }
+    };
+    element.addEventListener("wheel", observeWheel, {
+      capture: true,
+      passive: false,
+    });
+    return () => {
+      element.removeEventListener("wheel", observeWheel, { capture: true });
+      if (chromiumWheel.animationFrame !== null) {
+        window.cancelAnimationFrame(chromiumWheel.animationFrame);
+      }
+      chromiumWheel.panX = 0;
+      chromiumWheel.panY = 0;
+      chromiumWheel.scale = 1;
+      chromiumWheel.cursor = null;
+      chromiumWheel.animationFrame = null;
+    };
+  }, [isTauriRuntime]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<WorkspaceNode>[]) => {
@@ -452,6 +835,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
             type: "researchEdge",
             data: {
               label: edgeTypeLabel(connectType),
+              edgeStyle,
               record: {
                 id: "edge-preview",
                 source: connection.source,
@@ -470,13 +854,82 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       );
       onCreateEdge(connection.source, connection.target);
     },
-    [connectType, edgeTypeLabel, onCreateEdge],
+    [connectType, edgeStyle, edgeTypeLabel, onCreateEdge],
   );
+
+  const setIncidentEdgePreview = useCallback((nodeId: string, enabled: boolean) => {
+    setEdges((current) =>
+      current.map((edge) => {
+        if (edge.source !== nodeId && edge.target !== nodeId) return edge;
+        if (Boolean(edge.data?.dragPreview) === enabled) return edge;
+        return {
+          ...edge,
+          data: edge.data ? { ...edge.data, dragPreview: enabled } : edge.data,
+        };
+      }),
+    );
+  }, []);
 
   const minimapColor = useCallback(
     (node: WorkspaceNode) =>
-      node.id === selectedNodeId ? "#2457d6" : node.data.record.type === "evidence" ? "#6c737b" : "#a8adb3",
+      node.id === selectedNodeId
+        ? "var(--minimap-selected-node)"
+        : node.data.record.type === "evidence"
+          ? "var(--minimap-evidence-node)"
+          : "var(--minimap-node)",
     [selectedNodeId],
+  );
+  const minimapNodeLookupRef = useRef(new Map<string, WorkspaceNode>());
+  useEffect(() => {
+    minimapNodeLookupRef.current = new Map(nodes.map((node) => [node.id, node]));
+  }, [nodes]);
+  const minimapTargetsBySource = useMemo(() => {
+    const lookup = new Map<string, Array<{ edgeId: string; targetId: string }>>();
+    edges.forEach((edge) => {
+      const targets = lookup.get(edge.source) ?? [];
+      targets.push({ edgeId: edge.id, targetId: edge.target });
+      lookup.set(edge.source, targets);
+    });
+    return lookup;
+  }, [edges]);
+  const minimapNodeComponent = useCallback(
+    ({ id, x, y, width, height, borderRadius, color, strokeColor, strokeWidth }: MiniMapNodeProps) => (
+      <g>
+        {showMiniMapRelations && !draggingNodeId &&
+          (minimapTargetsBySource.get(id) ?? [])
+            .map(({ edgeId, targetId }) => {
+              const target = minimapNodeLookupRef.current.get(targetId);
+              if (!target) return null;
+              const targetWidth = target.measured?.width ?? target.width ?? 0;
+              const targetHeight = target.measured?.height ?? target.height ?? 0;
+              return (
+                <line
+                  key={edgeId}
+                  x1={x + width / 2}
+                  y1={y + height / 2}
+                  x2={target.position.x + targetWidth / 2}
+                  y2={target.position.y + targetHeight / 2}
+                  stroke="var(--minimap-relation)"
+                  strokeWidth={3}
+                  opacity={0.72}
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })}
+        <rect
+          x={x}
+          y={y}
+          width={width}
+          height={height}
+          rx={borderRadius}
+          ry={borderRadius}
+          fill={color}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+        />
+      </g>
+    ),
+    [draggingNodeId, minimapTargetsBySource, showMiniMapRelations],
   );
 
   const canvasClass = useMemo(
@@ -512,6 +965,142 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     },
   ];
 
+  const handleFlowInit = useCallback<NonNullable<WorkspaceReactFlowProps["onInit"]>>(
+    (instance) => {
+      flowRef.current = instance;
+      setPieMenu((menu) => {
+        if (!menu) return menu;
+        const bounds = canvasBoundsRef.current;
+        if (!bounds) return menu;
+        const flow = instance.screenToFlowPosition({
+          x: menu.screenX + bounds.left,
+          y: menu.screenY + bounds.top,
+        });
+        return { ...menu, flowX: flow.x, flowY: flow.y };
+      });
+      window.setTimeout(() => {
+        void applyWorkspaceViewport(instance);
+      }, 80);
+    },
+    [applyWorkspaceViewport],
+  );
+  const handleNodeClick = useCallback<NonNullable<WorkspaceReactFlowProps["onNodeClick"]>>(
+    (_, node) => {
+      onSelectNode(node.id);
+      setPieMenu(null);
+      setContextMenu(null);
+    },
+    [onSelectNode],
+  );
+  const handleNodeContextMenu = useCallback<
+    NonNullable<WorkspaceReactFlowProps["onNodeContextMenu"]>
+  >(
+    (event, node) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const point = contextPoint(event.clientX, event.clientY);
+      onSelectNode(node.id);
+      setPieMenu(null);
+      setContextMenu({
+        scope: "node",
+        targetId: node.id,
+        title: node.data.record.title,
+        screenX: point.screen.x,
+        screenY: point.screen.y,
+        flowX: point.flow.x,
+        flowY: point.flow.y,
+      });
+    },
+    [contextPoint, onSelectNode],
+  );
+  const handleEdgeContextMenu = useCallback<
+    NonNullable<WorkspaceReactFlowProps["onEdgeContextMenu"]>
+  >(
+    (event, edge) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const point = contextPoint(event.clientX, event.clientY);
+      onSelectEdge(edge.id);
+      setPieMenu(null);
+      setContextMenu({
+        scope: "edge",
+        targetId: edge.id,
+        title: edge.data?.label,
+        screenX: point.screen.x,
+        screenY: point.screen.y,
+        flowX: point.flow.x,
+        flowY: point.flow.y,
+      });
+    },
+    [contextPoint, onSelectEdge],
+  );
+  const handleEdgeClick = useCallback<NonNullable<WorkspaceReactFlowProps["onEdgeClick"]>>(
+    (_, edge) => {
+      onSelectEdge(edge.id);
+      setPieMenu(null);
+      setContextMenu(null);
+    },
+    [onSelectEdge],
+  );
+  const handleNodeDragStart = useCallback<
+    NonNullable<WorkspaceReactFlowProps["onNodeDragStart"]>
+  >(
+    (_, node) => {
+      setDraggingNodeId(node.id);
+      setIncidentEdgePreview(node.id, true);
+    },
+    [setIncidentEdgePreview],
+  );
+  const handleNodeDragStop = useCallback<
+    NonNullable<WorkspaceReactFlowProps["onNodeDragStop"]>
+  >(
+    (_, node) => {
+      setIncidentEdgePreview(node.id, false);
+      setDraggingNodeId(null);
+      manualMoveRef.current = {
+        nodeId: node.id,
+        x: node.position.x,
+        y: node.position.y,
+      };
+      onMoveNode(node.id, node.position.x, node.position.y);
+    },
+    [onMoveNode, setIncidentEdgePreview],
+  );
+  const handlePaneClick = useCallback(() => {
+    setPieMenu(null);
+    setContextMenu(null);
+  }, []);
+  const handlePaneContextMenu = useCallback<
+    NonNullable<WorkspaceReactFlowProps["onPaneContextMenu"]>
+  >(
+    (event) => {
+      event.preventDefault();
+      const point = contextPoint(event.clientX, event.clientY);
+      setPieMenu(null);
+      setContextMenu({
+        scope: "canvas",
+        screenX: point.screen.x,
+        screenY: point.screen.y,
+        flowX: point.flow.x,
+        flowY: point.flow.y,
+      });
+    },
+    [contextPoint],
+  );
+  const closePieMenu = useCallback(() => {
+    radialMenuRef.current?.updateGesture(null, false);
+    setPieMenu(null);
+  }, []);
+  const choosePieItem = useCallback(
+    (item: RadialMenuItem) => {
+      if (!pieMenu) return;
+      runRadialAction(item, pieMenu.flowX, pieMenu.flowY);
+      radialMenuRef.current?.updateGesture(null, false);
+      setPieMenu(null);
+    },
+    [pieMenu, runRadialAction],
+  );
+
   return (
     <div
       ref={wrapperRef}
@@ -519,99 +1108,26 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       onContextMenuCapture={(event) => {
         event.preventDefault();
       }}
-      onWheelCapture={(event) => {
-        if (!isTauriRuntime) return;
-        // The desktop app has one gesture owner: the native complete-frame
-        // bridge. Consume WebView2's derived wheel copy without transforming.
-        // 桌面端只保留一个手势状态机：原生完整帧桥接。
-        event.preventDefault();
-        event.stopPropagation();
-      }}
     >
       <ReactFlow<WorkspaceNode, WorkspaceEdge>
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        onInit={(instance) => {
-          flowRef.current = instance;
-          setPieMenu((menu) => {
-            if (!menu || !wrapperRef.current) return menu;
-            const bounds = wrapperRef.current.getBoundingClientRect();
-            const flow = instance.screenToFlowPosition({
-              x: menu.screenX + bounds.left,
-              y: menu.screenY + bounds.top,
-            });
-            return { ...menu, flowX: flow.x, flowY: flow.y };
-          });
-          window.setTimeout(() => {
-            void applyWorkspaceViewport(instance);
-          }, 80);
-        }}
+        onInit={handleFlowInit}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
-        onNodeClick={(_, node) => {
-          onSelectNode(node.id);
-          setPieMenu(null);
-          setContextMenu(null);
-        }}
-        onNodeContextMenu={(event, node) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const point = contextPoint(event.clientX, event.clientY);
-          onSelectNode(node.id);
-          setPieMenu(null);
-          setContextMenu({
-            scope: "node",
-            targetId: node.id,
-            title: node.data.record.title,
-            screenX: point.screen.x,
-            screenY: point.screen.y,
-            flowX: point.flow.x,
-            flowY: point.flow.y,
-          });
-        }}
-        onEdgeContextMenu={(event, edge) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const point = contextPoint(event.clientX, event.clientY);
-          onSelectEdge(edge.id);
-          setPieMenu(null);
-          setContextMenu({
-            scope: "edge",
-            targetId: edge.id,
-            title: edge.data?.label,
-            screenX: point.screen.x,
-            screenY: point.screen.y,
-            flowX: point.flow.x,
-            flowY: point.flow.y,
-          });
-        }}
-        onEdgeClick={(_, edge) => {
-          onSelectEdge(edge.id);
-          setPieMenu(null);
-          setContextMenu(null);
-        }}
-        onNodeDragStop={(_, node) => onMoveNode(node.id, node.position.x, node.position.y)}
-        onPaneClick={() => {
-          setPieMenu(null);
-          setContextMenu(null);
-        }}
-        onPaneContextMenu={(event) => {
-          event.preventDefault();
-          const point = contextPoint(event.clientX, event.clientY);
-          setPieMenu(null);
-          setContextMenu({
-            scope: "canvas",
-            screenX: point.screen.x,
-            screenY: point.screen.y,
-            flowX: point.flow.x,
-            flowY: point.flow.y,
-          });
-        }}
+        onNodeClick={handleNodeClick}
+        onNodeContextMenu={handleNodeContextMenu}
+        onEdgeContextMenu={handleEdgeContextMenu}
+        onEdgeClick={handleEdgeClick}
+        onNodeDragStart={handleNodeDragStart}
+        onNodeDragStop={handleNodeDragStop}
+        onPaneClick={handlePaneClick}
+        onPaneContextMenu={handlePaneContextMenu}
         fitView
-        fitViewOptions={{ padding: 0.12, maxZoom: 1 }}
+        fitViewOptions={fitViewOptions}
         minZoom={0.45}
         maxZoom={1.7}
         zoomOnPinch={!isTauriRuntime}
@@ -622,13 +1138,15 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
         connectionMode={ConnectionMode.Loose}
         connectionRadius={26}
         className={canvasClass}
-        proOptions={{ hideAttribution: true }}
+        proOptions={proOptions}
       >
         <Background variant={BackgroundVariant.Dots} gap={28} size={0.55} color="#dfe2e5" />
         {showMiniMap && (
           <MiniMap
             nodeColor={minimapColor}
-            maskColor="rgba(255,255,255,.72)"
+            nodeComponent={minimapNodeComponent}
+            bgColor="var(--minimap-background)"
+            maskColor="var(--minimap-mask)"
             pannable
             zoomable
             className="zen-minimap"
@@ -670,12 +1188,11 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
 
       {pieMenu && (
         <RadialAddMenu
+          ref={radialMenuRef}
           menu={pieMenu}
-          onClose={() => setPieMenu(null)}
-          onChoose={(type) => {
-            onRequestCreate(type, pieMenu.flowX, pieMenu.flowY);
-            setPieMenu(null);
-          }}
+          cache={radialMenuCache}
+          onClose={closePieMenu}
+          onChoose={choosePieItem}
         />
       )}
 

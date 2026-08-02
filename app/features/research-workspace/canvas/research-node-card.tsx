@@ -3,6 +3,8 @@
 import {
   IconChartHistogram,
   IconCheck,
+  IconChevronDown,
+  IconChevronRight,
   IconDatabase,
   IconFileText,
   IconFlask2,
@@ -10,12 +12,13 @@ import {
   IconQuestionMark,
   IconUsersGroup,
 } from "@tabler/icons-react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { CSSProperties } from "react";
+import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
+import { memo, useEffect, type CSSProperties } from "react";
 import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
 import type { ResearchNodeType } from "../../../lib/research-types";
 import type { WorkspaceNode } from "../workspace-types";
+import { variableBranchValues } from "./variable-branches";
 
 const nodeTypeMessageKeys: Partial<Record<ResearchNodeType, MessageKey>> = {
   question: "node.question",
@@ -60,19 +63,29 @@ function NodeIcon({ type, selected }: { type: ResearchNodeType; selected: boolea
  * The graph node mirrors the reference's quiet serif cards and circular questions.
  * 图节点复刻参考图中的安静衬线卡片与圆形问题节点。
  */
-export function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
+export const ResearchNodeCard = memo(function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
   const { t } = useI18n();
-  const { record, shape } = data;
+  const updateNodeInternals = useUpdateNodeInternals();
+  const { record, shape, expanded, onToggleExpanded } = data;
   const valueType =
     record.type === "variable" && typeof record.data.valueType === "string"
       ? record.data.valueType
       : record.tags[0] || "summary";
   const disputed = record.tags.includes("disputed");
+  const branchValues = variableBranchValues(record);
+  const expandable = branchValues.length > 0;
+  const binary = record.data.valueType === "bool";
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => updateNodeInternals(record.id));
+    return () => window.cancelAnimationFrame(frame);
+  }, [expanded, record.id, updateNodeInternals]);
 
   return (
     <article
       className={[
-        "zen-node group relative flex h-full w-full flex-col items-center justify-center border bg-paper px-3 py-3 text-center text-ink transition",
+        "zen-node group relative flex h-full w-full flex-col items-center border bg-paper px-3 py-3 text-center text-ink transition",
+        expanded ? "justify-start" : "justify-center",
         shape === "circle" ? "rounded-full" : "rounded-[3px]",
         selected
           ? "border-blue shadow-[0_0_0_1px_#2457d6]"
@@ -88,6 +101,47 @@ export function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
         <p className="mt-2 font-serif text-[10px] leading-none text-ink/60">
           {t(nodeTypeMessageKeys[record.type] ?? "node.note")} · {valueType}
         </p>
+      )}
+      {expandable && (
+        <button
+          type="button"
+          className="nodrag nopan absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full text-ink/45 transition hover:bg-blue-soft hover:text-blue focus-visible:outline-2 focus-visible:outline-blue"
+          aria-label={t(expanded ? "node.collapseBranches" : "node.expandBranches")}
+          aria-expanded={expanded}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleExpanded(record.id);
+          }}
+        >
+          {expanded ? (
+            <IconChevronDown size={14} stroke={1.6} />
+          ) : (
+            <IconChevronRight size={14} stroke={1.6} />
+          )}
+        </button>
+      )}
+      {expanded && (
+        <div
+          className={`nodrag nopan mt-3 w-full border-t border-ink/12 pt-3 ${
+            binary ? "grid grid-cols-2 gap-2" : "space-y-1.5"
+          }`}
+          aria-label={t("inspector.values")}
+        >
+          {branchValues.map((value, index) => (
+            <div
+              key={`${value}-${index}`}
+              className={
+                binary
+                  ? "relative border-t border-ink/30 pt-2 before:absolute before:-top-2 before:left-1/2 before:h-2 before:border-l before:border-ink/30"
+                  : "relative flex items-center pl-4 before:absolute before:left-1 before:top-1/2 before:w-3 before:border-t before:border-ink/30 after:absolute after:bottom-1/2 after:left-1 after:top-[-7px] after:border-l after:border-ink/30"
+              }
+            >
+              <span className="block w-full truncate rounded-[3px] border border-ink/15 bg-canvas px-2 py-1 font-sans text-[9px] text-ink/70">
+                {value}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
       {disputed && (
         <span className="absolute -bottom-3 -right-3 grid size-6 place-items-center rounded-full border border-alert bg-paper font-serif text-[14px] text-alert">
@@ -131,4 +185,6 @@ export function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
       ))}
     </article>
   );
-}
+});
+
+ResearchNodeCard.displayName = "ResearchNodeCard";

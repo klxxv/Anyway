@@ -4,6 +4,10 @@
   "testFixture": "pinn-architecture",
   "config": {
     "autoSaveSeconds": 300,
+    "initializeRepository": true,
+    "accountProvider": "github-cli",
+    "authenticationFlow": "browser",
+    "sshKeyAlgorithm": "ed25519",
     "projectDirectory": ".research-canvas",
     "directives": ["canvas-node:", "canvas-edge:", "ablation:"],
     "graphPatchReviewRequired": true

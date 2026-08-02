@@ -1,17 +1,22 @@
 "use client";
 
 import {
+  IconBrandGithub,
   IconCheck,
   IconClock,
+  IconCopy,
   IconFileImport,
   IconGitBranch,
   IconGitCommit,
+  IconKey,
   IconRefresh,
+  IconUpload,
   IconX,
 } from "@tabler/icons-react";
 import { useI18n } from "../../../i18n/provider";
 import type {
   FolderProjectSummary,
+  GitHubAccountStatus,
   GitWorkspaceSnapshot,
 } from "../../../platform/native-project";
 import type { PluginGraphPatch } from "../../../plugins/contracts";
@@ -79,28 +84,40 @@ export function FolderWorkspaceDialog({
 
 export function GitWorkspaceDialog({
   snapshot,
+  account,
   autoSave,
   busy,
   patch,
   onClose,
   onToggleAutoSave,
+  onInitialize,
+  onRefreshAccount,
+  onLogin,
+  onGenerateSshKey,
+  onUploadSshKey,
   onSaveNow,
   onApplyPatch,
 }: {
   snapshot: GitWorkspaceSnapshot;
+  account: GitHubAccountStatus | null;
   autoSave: boolean;
   busy: boolean;
   patch: PluginGraphPatch | null;
   onClose: () => void;
   onToggleAutoSave: (enabled: boolean) => void;
+  onInitialize: () => void;
+  onRefreshAccount: () => void;
+  onLogin: () => void;
+  onGenerateSshKey: () => void;
+  onUploadSshKey: (path: string) => void;
   onSaveNow: () => void;
   onApplyPatch: () => void;
 }) {
   const { t } = useI18n();
   return (
     <div className="fixed inset-0 z-[97] grid place-items-center bg-ink/10 backdrop-blur-[2px]">
-      <section className="grid h-[min(680px,calc(100vh-32px))] w-[min(920px,calc(100vw-32px))] grid-cols-[minmax(0,1fr)_300px] overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)]">
-        <div className="flex min-h-0 flex-col border-r border-ink/15">
+      <section className="grid h-[min(680px,calc(100vh-32px))] w-[min(920px,calc(100vw-32px))] grid-cols-1 overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)] md:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="flex min-h-0 flex-col border-b border-ink/15 md:border-b-0 md:border-r">
           <header className="flex items-start justify-between border-b border-ink/15 px-7 py-5">
             <div>
               <span className="font-sans text-[8px] uppercase tracking-[0.18em] text-blue">
@@ -108,7 +125,7 @@ export function GitWorkspaceDialog({
               </span>
               <h2 className="mt-1 flex items-center gap-2 font-serif text-[21px]">
                 <IconGitBranch size={20} stroke={1.35} />
-                {snapshot.branch || "HEAD"}
+                {snapshot.branch || (snapshot.isRepository ? "HEAD" : t("workspace.gitNotRepository"))}
               </h2>
               <p className="mt-1 max-w-[520px] truncate font-mono text-[8px] text-ink/45" title={snapshot.repoPath}>
                 {snapshot.repoPath}
@@ -123,10 +140,28 @@ export function GitWorkspaceDialog({
               <p className="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
                 {t("workspace.gitTree")} · {snapshot.commits.length}
               </p>
-              <span className={`font-serif text-[9px] ${snapshot.dirty ? "text-red-500" : "text-olive"}`}>
-                {snapshot.dirty ? t("workspace.gitDirty") : t("workspace.gitClean")}
-              </span>
+              {snapshot.isRepository && (
+                <span className={`font-serif text-[9px] ${snapshot.dirty ? "text-red-500" : "text-olive"}`}>
+                  {snapshot.dirty ? t("workspace.gitDirty") : t("workspace.gitClean")}
+                </span>
+              )}
             </div>
+            {!snapshot.isRepository && (
+              <div className="grid min-h-[260px] place-items-center rounded-[6px] border border-dashed border-ink/20 bg-canvas p-8 text-center">
+                <div>
+                  <IconGitBranch className="mx-auto text-ink/35" size={30} stroke={1.2} />
+                  <h3 className="mt-4 font-serif text-[15px]">{t("workspace.gitNotRepository")}</h3>
+                  <p className="mx-auto mt-2 max-w-[360px] font-serif text-[10px] leading-[1.55] text-ink/50">
+                    {t("workspace.gitNotRepositoryHint")}
+                  </p>
+                </div>
+              </div>
+            )}
+            {snapshot.isRepository && snapshot.commits.length === 0 && (
+              <p className="rounded-[6px] border border-dashed border-ink/20 bg-canvas px-4 py-10 text-center font-serif text-[10px] text-ink/45">
+                {t("workspace.gitNoCommits")}
+              </p>
+            )}
             <div className="space-y-2">
               {snapshot.commits.map((commit) => (
                 <article key={commit.id} className="relative ml-2 flex gap-3 border-l border-ink/20 py-2 pl-5 pr-3 before:absolute before:-left-[4px] before:top-4 before:size-[7px] before:rounded-full before:border before:border-blue before:bg-paper">
@@ -159,6 +194,96 @@ export function GitWorkspaceDialog({
           </div>
         </div>
         <aside className="flex min-h-0 flex-col overflow-y-auto bg-canvas p-5">
+          <div className="border-b border-ink/15 pb-5">
+            <div className="flex items-center gap-2 text-blue">
+              <IconBrandGithub size={18} stroke={1.35} />
+              <h3 className="font-serif text-[14px]">{t("workspace.githubAccount")}</h3>
+              <button
+                className="ml-auto grid size-7 place-items-center rounded-[4px] text-ink/45 transition hover:bg-blue-soft hover:text-blue"
+                disabled={busy}
+                onClick={onRefreshAccount}
+                aria-label={t("workspace.githubRefresh")}
+              >
+                <IconRefresh className={busy ? "animate-spin" : ""} size={14} stroke={1.35} />
+              </button>
+            </div>
+            {!account?.cliAvailable ? (
+              <p className="mt-2 font-serif text-[9px] leading-[1.5] text-ink/50">
+                {t("workspace.githubCliRequired")}
+              </p>
+            ) : account.authenticated ? (
+              <div className="mt-3 rounded-[5px] border border-ink/15 bg-paper p-3">
+                <p className="font-serif text-[11px] text-ink/85">@{account.login}</p>
+                <p className="mt-1 font-mono text-[7px] text-ink/40">
+                  {account.host} · {account.gitProtocol ?? "git"}
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className="mt-2 font-serif text-[9px] leading-[1.5] text-ink/50">
+                  {t("workspace.githubLoginHint")}
+                </p>
+                <button className="button-primary mt-3 w-full justify-center" disabled={busy} onClick={onLogin}>
+                  <IconBrandGithub size={15} stroke={1.35} />
+                  {t("workspace.githubLogin")}
+                </button>
+              </>
+            )}
+
+            {account?.sshKeygenAvailable && (
+              <div className="mt-4">
+                <div className="flex items-center gap-2">
+                  <IconKey size={15} stroke={1.35} className="text-blue" />
+                  <p className="font-serif text-[11px]">{t("workspace.githubSshKeys")}</p>
+                </div>
+                <div className="mt-2 space-y-2">
+                  {account.sshKeys.map((key) => (
+                    <article key={key.path} className="rounded-[4px] border border-ink/12 bg-paper p-2.5">
+                      <p className="truncate font-mono text-[7px] text-ink/55" title={key.path}>
+                        {key.managedByApp ? "Research Canvas · " : ""}{key.algorithm}
+                      </p>
+                      <p className="mt-1 truncate font-mono text-[7px] text-ink/35" title={key.fingerprint}>
+                        {key.fingerprint || key.path}
+                      </p>
+                      <div className="mt-2 flex gap-1.5">
+                        <button
+                          className="button-secondary min-h-7 flex-1 justify-center px-2 text-[8px]"
+                          onClick={() => void navigator.clipboard.writeText(key.publicKey)}
+                        >
+                          <IconCopy size={12} stroke={1.35} />
+                          {t("workspace.githubCopyKey")}
+                        </button>
+                        {account.authenticated && (
+                          <button
+                            className="button-secondary min-h-7 flex-1 justify-center px-2 text-[8px]"
+                            disabled={busy}
+                            onClick={() => onUploadSshKey(key.path)}
+                          >
+                            <IconUpload size={12} stroke={1.35} />
+                            {t("workspace.githubUploadKey")}
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                  {!account.sshKeys.some((key) => key.managedByApp) && (
+                    <button
+                      className="button-secondary w-full justify-center"
+                      disabled={busy}
+                      onClick={onGenerateSshKey}
+                    >
+                      <IconKey size={14} stroke={1.35} />
+                      {t("workspace.githubGenerateKey")}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-5">
+          {snapshot.isRepository ? (
+            <>
           <div className="flex items-center gap-2 text-blue">
             <IconClock size={18} stroke={1.35} />
             <h3 className="font-serif text-[14px]">{t("workspace.gitAutosave")}</h3>
@@ -210,6 +335,23 @@ export function GitWorkspaceDialog({
             <button className="button-primary mt-4 w-full justify-center" disabled={!patch} onClick={onApplyPatch}>
               {t("workspace.reviewApplyPatch")}
             </button>
+          </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-blue">
+                <IconGitBranch size={18} stroke={1.35} />
+                <h3 className="font-serif text-[14px]">{t("workspace.gitInitialize")}</h3>
+              </div>
+              <p className="mt-2 font-serif text-[10px] leading-[1.5] text-ink/50">
+                {t("workspace.gitInitializeHint")}
+              </p>
+              <button className="button-primary mt-4 w-full justify-center" disabled={busy} onClick={onInitialize}>
+                <IconRefresh className={busy ? "animate-spin" : ""} size={15} stroke={1.35} />
+                {t("workspace.gitInitialize")}
+              </button>
+            </>
+          )}
           </div>
         </aside>
       </section>

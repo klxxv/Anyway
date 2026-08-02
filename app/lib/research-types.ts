@@ -324,6 +324,35 @@ export interface ThemeManifest {
     accent: string;
     border: string;
   };
+  components?: {
+    toast?: {
+      background?: string;
+      border?: string;
+      text?: string;
+      shadow?: string;
+    };
+    miniMap?: {
+      background?: string;
+      border?: string;
+      mask?: string;
+      selectedNode?: string;
+      evidenceNode?: string;
+      node?: string;
+      relation?: string;
+      showRelations?: boolean;
+    };
+    radialMenu?: {
+      background?: string;
+      border?: string;
+      divider?: string;
+      text?: string;
+      active?: string;
+      centerBackground?: string;
+      centerText?: string;
+      shadow?: string;
+      activeShadow?: string;
+    };
+  };
 }
 
 export type BlockStyleId = "research-card" | "compact-block" | "signal-block";

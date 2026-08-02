@@ -157,7 +157,7 @@ export const builtInEdgeStyleCatalog: EdgeStyleManifest[] = [
       width: 1.6,
       selectedWidth: 2.8,
       opacity: 0.92,
-      cornerRadius: 0,
+      cornerRadius: 12,
       offset: 24,
     },
     relations: {

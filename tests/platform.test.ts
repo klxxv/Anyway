@@ -15,6 +15,16 @@ import {
   type InstalledMycPlugin,
 } from "../app/plugins/contracts";
 import { contextMenuContributionsFromPlugins } from "../app/plugins/context-menu";
+import { resolveEdgeStyle } from "../app/plugins/edge-style";
+import {
+  activePlugins,
+  enableLatestPluginKeys,
+  migrateEnabledPluginKeys,
+  pluginCompatibility,
+  pluginKey,
+  updateEnabledPluginKeys,
+} from "../app/plugins/identity";
+import { resolveTheme, themeCssVariables } from "../app/plugins/theme";
 import { isProjectState } from "../app/lib/project-io";
 import type { ProjectState } from "../app/lib/research-types";
 import {
@@ -58,7 +68,7 @@ test("installed EdgeStylePlugin metadata owns the registered style identity", ()
         description: "Strict 90-degree semantic connectors",
       },
       spec: {
-        engine: ">=0.1.0",
+        engine: "declarative",
         entry: "edge-style.json",
         capabilities: ["edge.style.register"],
         permissions: [],
@@ -90,6 +100,13 @@ test("installed EdgeStylePlugin metadata owns the registered style identity", ()
   assert.equal(edgeStyle?.version, "1.0.0");
   assert.equal(edgeStyle?.routing, "orthogonal");
   assert.equal(edgeStyle?.source, "myc");
+  assert.equal(pluginCompatibility(plugin).compatible, true);
+  assert.equal(
+    resolveEdgeStyle([plugin]).id,
+    "researchcanvas.circuit-orthogonal",
+  );
+  assert.equal(resolveEdgeStyle([]).id, "research-orthogonal");
+  assert.equal(resolveEdgeStyle([]).stroke.cornerRadius, 12);
 });
 
 test(".myc filenames are recognized case-insensitively", () => {
@@ -113,7 +130,7 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
         description: "Dark research theme",
       },
       spec: {
-        engine: ">=0.1.0",
+        engine: "declarative",
         entry: "theme.json",
         capabilities: ["theme.register"],
         permissions: [],
@@ -132,6 +149,23 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
         accent: "#61afef",
         border: "#3e4451",
       },
+      components: {
+        toast: {
+          background: "#20242c",
+          text: "#f0f2f5",
+        },
+        miniMap: {
+          background: "#20242c",
+          relation: "#596170",
+          showRelations: true,
+        },
+        radialMenu: {
+          background: "#282c34",
+          divider: "#4b5263",
+          active: "#61afef",
+          centerBackground: "#21252b",
+        },
+      },
     },
   };
 
@@ -140,6 +174,35 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   assert.equal(theme?.name, "One Dark Pro");
   assert.equal(theme?.version, "1.0.0");
   assert.equal(theme?.source, "myc");
+  assert.equal(pluginCompatibility(plugin).compatible, true);
+  assert.equal(resolveTheme([plugin])?.id, "researchcanvas.onedarkpro");
+  assert.equal(themeCssVariables(theme)?.["--color-blue"], "#61afef");
+  assert.equal(themeCssVariables(theme)?.["--toast-background"], "#20242c");
+  assert.equal(themeCssVariables(theme)?.["--minimap-relation"], "#596170");
+  assert.equal(themeCssVariables(theme)?.["--radial-menu-background"], "#282c34");
+  assert.equal(themeCssVariables(theme)?.["--radial-menu-divider"], "#4b5263");
+  assert.equal(themeCssVariables(theme)?.["--radial-menu-active"], "#61afef");
+  assert.equal(themeCssVariables(theme)?.["--radial-menu-center-background"], "#21252b");
+  assert.equal(theme?.components?.miniMap?.showRelations, true);
+
+  const older: InstalledMycPlugin = {
+    ...plugin,
+    manifest: {
+      ...plugin.manifest,
+      metadata: { ...plugin.manifest.metadata, version: "0.9.0" },
+    },
+  };
+  const allKeys = enableLatestPluginKeys([older, plugin]);
+  assert.deepEqual([...allKeys], [pluginKey(plugin)]);
+  assert.deepEqual(activePlugins([older, plugin], new Set([pluginKey(older), pluginKey(plugin)])), [plugin]);
+  assert.deepEqual(
+    [...updateEnabledPluginKeys([older, plugin], new Set([pluginKey(older)]), plugin, true)],
+    [pluginKey(plugin)],
+  );
+  assert.deepEqual(
+    [...migrateEnabledPluginKeys([older, plugin], new Set([pluginKey(older)]))],
+    [pluginKey(plugin)],
+  );
 });
 
 test("runtime plugin metadata exposes only the verified wasm boundary", () => {
@@ -174,9 +237,10 @@ test("runtime plugin metadata exposes only the verified wasm boundary", () => {
   assert.equal(plugin.runtime?.language, "cpp");
   assert.equal(plugin.runtime?.entrySha256.length, 64);
   assert.deepEqual(plugin.manifest.spec.permissions, []);
+  assert.equal(pluginCompatibility(plugin).compatible, true);
 });
 
-test("plugin context menus require runtime, enablement, and an explicit capability", () => {
+test("active plugin context menus require runtime and an explicit capability", () => {
   const item: PluginContextMenuContribution = {
     id: "inspect-context",
     scope: "node",
@@ -211,14 +275,12 @@ test("plugin context menus require runtime, enablement, and an explicit capabili
       entrySha256: "b".repeat(64),
     },
   };
-  assert.equal(contextMenuContributionsFromPlugins([plugin], new Set()).length, 0);
-  const actions = contextMenuContributionsFromPlugins(
-    [plugin],
-    new Set(["researchcanvas.context@1.0.0"]),
-  );
+  assert.equal(contextMenuContributionsFromPlugins([]).length, 0);
+  const actions = contextMenuContributionsFromPlugins([plugin]);
   assert.equal(actions.length, 1);
+  assert.equal(actions[0]?.contributionId, "inspect-context");
   assert.equal(actions[0]?.scope, "node");
-  assert.equal(actions[0]?.pluginId, "researchcanvas.context");
+  assert.equal(actions[0]?.plugin.id, "researchcanvas.context");
 });
 
 test("community locale plugins extend the UI without changing the built-in language set", () => {
@@ -247,8 +309,7 @@ test("community locale plugins extend the UI without changing the built-in langu
     },
     locales: [{ locale: "ja-JP", name: "日本語", messages: { "workspace.menu": "メニュー" } }],
   };
-  const enabled = new Set(["researchcanvas.i18n-ja@1.0.0"]);
-  const bundles = localeBundlesFromPlugins([plugin], enabled);
+  const bundles = localeBundlesFromPlugins([plugin]);
   assert.equal(bundles.length, 1);
   assert.equal(normalizeLocale("ja-JP", ["en", "zh-CN", "ja-JP"]), "ja-JP");
   assert.equal(translate("ja-JP", "workspace.menu", { "ja-JP": bundles[0]!.messages }), "メニュー");
@@ -256,7 +317,7 @@ test("community locale plugins extend the UI without changing the built-in langu
   assert.deepEqual(Object.keys(localeCatalog).sort(), ["en", "zh-CN"]);
 });
 
-test("workspace commands are enabled only with their matching declared capability", () => {
+test("active workspace commands require their matching declared capability", () => {
   const plugin: InstalledMycPlugin = {
     installPath: "plugins/installed/researchcanvas.export-suite@1.0.0",
     manifest: {
@@ -298,11 +359,8 @@ test("workspace commands are enabled only with their matching declared capabilit
     },
     workspace: { schemaVersion: 1, mode: "export", testFixture: "pinn-architecture" },
   };
-  assert.equal(workspaceCommandsFromPlugins([plugin], new Set()).length, 0);
-  const commands = workspaceCommandsFromPlugins(
-    [plugin],
-    new Set(["researchcanvas.export-suite@1.0.0"]),
-  );
+  assert.equal(workspaceCommandsFromPlugins([]).length, 0);
+  const commands = workspaceCommandsFromPlugins([plugin]);
   assert.deepEqual(commands.map((command) => command.id), ["export-artifacts"]);
 });
 

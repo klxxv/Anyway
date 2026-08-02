@@ -1,7 +1,10 @@
 import type {
   InstalledMycPlugin,
+  PluginCallEnvelope,
   PluginExecutionResult,
+  PluginReference,
 } from "./contracts";
+import { PLUGIN_CALL_API_VERSION } from "./contracts";
 
 /** 检测可选桌面桥接；浏览器构建必须保持可用 / Detects optional desktop bridge; browser builds must remain usable. */
 function hasTauriRuntime(): boolean {
@@ -24,18 +27,27 @@ export async function installMycPlugin(path: string): Promise<InstalledMycPlugin
   return invoke<InstalledMycPlugin>("install_myc_plugin", { path });
 }
 
+/** Removes one exact installed version; bundled packages stay suppressed until explicitly reinstalled. */
+export async function uninstallMycPlugin(plugin: PluginReference): Promise<void> {
+  if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("uninstall_myc_plugin", {
+    pluginId: plugin.id,
+    pluginVersion: plugin.version,
+  });
+}
+
 /** Executes an installed WASM plugin inside the native capability sandbox. */
-export async function executeMycPlugin(
-  pluginId: string,
-  pluginVersion: string,
-  input: unknown,
+export async function runAnalysisPlugin<TContext = unknown, TPayload = unknown>(
+  plugin: PluginReference,
+  request: Omit<PluginCallEnvelope<TContext, TPayload>, "apiVersion">,
 ): Promise<PluginExecutionResult> {
   if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<PluginExecutionResult>("execute_myc_plugin", {
-    pluginId,
-    pluginVersion,
-    input,
+    pluginId: plugin.id,
+    pluginVersion: plugin.version,
+    input: { apiVersion: PLUGIN_CALL_API_VERSION, ...request },
   });
 }
 
