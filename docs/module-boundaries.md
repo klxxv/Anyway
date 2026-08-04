@@ -2,9 +2,18 @@
 
 ## Stable kernel
 
-`app/lib/research-types.ts` and `app/lib/research-core.ts` remain renderer- and
-desktop-independent. They own semantic records, traversal, layouts, overlays,
-influence propagation, exports, and migrations.
+`src-tauri/src/graph_compiler.rs` (Rust) is the semantic kernel: canonicalization,
+hashing (blockHash/fileHash), graph invariants, logic chains, contradiction chains,
+reachability, graph diff, deterministic layout, digest/mermaid exports. Graph
+properties are hard-computed here — never by LLM/agents (§15 of canvas-format-v3.md).
+
+The same crate is reused by the desktop app (Tauri), the registry server, and the
+`canvas compile` CLI for CI verification.
+
+`app/lib/research-types.ts` remains the renderer- and desktop-independent type
+contract. `app/lib/research-core.ts` is the thin client wrapper: fixtures and
+tests stay; algorithm implementations call the Rust compiler via Tauri commands
+until parity is proven by bit-identical dual-implementation tests.
 
 ## Application features
 

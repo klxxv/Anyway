@@ -18,34 +18,57 @@
 /.vinext/
 /out/
 
+# build artifacts
+/dist/
+/build/
+/.wrangler/
+/next-env.d.ts
+*.tsbuildinfo
+
+# runtime artifacts
+/output/
+/outputs/
+/work/
+/.playwright-cli/
+/.claude_resources.json
+
+# tauri / rust
+/src-tauri/target/
+/src-tauri/bin/
+/src-tauri/gen/
+/plugins/sdk/rust/target/
+
+# plugin installed state (verified at install; regenerated)
+/plugins/installed/*
+!/plugins/installed/.gitkeep
+
+# secrets — the app generates Ed25519 keys; never commit them
+.env
+.env.*
+*.pem
+*.key
+*.p12
+/.ssh/
+id_ed25519*
+id_ed25519.pub
+
+# internal planning/audit docs — not exposed (v3 design is not yet public)
+/docs/*
+!/docs/module-boundaries.md
+
 # misc
 .DS_Store
-*.pem
-
-# debug
+Thumbs.db
+desktop.ini
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# editor / ide
+/.idea/
+/.vscode/
 
 # vercel
 .vercel
-
-# typescript
-next-env.d.ts
-/dist/
-/.wrangler/
-/outputs/
-/output/
-/work/
-/.playwright-cli/
-/.claude_resources.json
-/src-tauri/target/
-/plugins/sdk/rust/target/
-/src-tauri/gen/
-/plugins/installed/*
-!/plugins/installed/.gitkeep
-*.tsbuildinfo
