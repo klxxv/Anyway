@@ -1,3 +1,4 @@
+pub mod graph_algorithms;
 pub mod graph_compiler;
 mod plugin_vm;
 mod plugins;
