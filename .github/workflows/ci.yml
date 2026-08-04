@@ -1,0 +1,255 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Lint & Type Check ──────────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+  # ── Test Matrix ────────────────────────────────────────────────────
+  test-core:
+    name: Test · Core
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:core
+
+  test-platform:
+    name: Test · Platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:platform
+
+  test-workspace:
+    name: Test · Workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:workspace
+
+  test-sdk:
+    name: Test · SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust crates (plugin SDK)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/sdk/rust
+
+      - run: npm ci
+      - run: npm run test:sdk
+
+  test-native:
+    name: Test · Native (Rust)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust crates (Tauri)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo test (src-tauri)
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  test-rendered:
+    name: Test · Rendered Shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build & verify rendered HTML
+        run: npm run build && node --test tests/rendered-html.test.mjs
+
+  # ── Build Verification (main push only) ────────────────────────────
+  build-next:
+    name: Build · Next.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Next.js production build
+        run: npm run build
+
+  build-desktop:
+    name: Build · Tauri Desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev
+
+      - name: Cache Rust crates (Tauri)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Tauri desktop build check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Next.js desktop build
+        run: npm run build:desktop
+
+  # ── Plugin Build Verification ──────────────────────────────────────
+  plugin-build:
+    name: Plugin · Build .myc
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Build One Dark Pro theme plugin
+        run: python scripts/build_myc_plugin.py plugins/sources/researchcanvas.onedarkpro plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+
+      - name: Verify .myc package exists
+        run: test -f plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+
+  # ── Performance Smoke (main push only) ─────────────────────────────
+  perf-smoke:
+    name: Perf · Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-next]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Start dev server
+        run: npm run dev:desktop-web &
+        env:
+          PORT: '3000'
+
+      - name: Wait for server
+        run: npx wait-on http://localhost:3000 --timeout 60000
+
+      - name: Profile canvas performance
+        run: npx playwright-cli run scripts/profile_canvas_performance.mjs --url http://localhost:3000
+        continue-on-error: true
+
+      - name: Smoke canvas performance modes
+        run: npx playwright-cli run scripts/smoke_canvas_performance_modes.mjs --url http://localhost:3000
+        continue-on-error: true
+
+  # ── Gate ───────────────────────────────────────────────────────────
+  gate:
+    name: PR Gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    steps:
+      - name: All required checks passed
+        run: echo "✅ All required checks passed — PR is ready to merge."

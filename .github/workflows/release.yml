@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.3.5)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Build matrix: Tauri desktop across platforms ───────────────────
+  build:
+    name: Build · ${{ matrix.triple }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            triple: x86_64-windows
+            artifact: msi
+          - runner: macos-latest
+            triple: aarch64-macos
+            artifact: dmg
+          - runner: ubuntu-latest
+            triple: x86_64-linux
+            artifact: AppImage
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust crates (Tauri)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev
+
+      - run: npm ci
+
+      - name: Set release version (tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG=${{ github.ref_name }}
+          VERSION=${TAG#v}
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Set release version (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "RELEASE_VERSION=${{ inputs.version }}" >> $GITHUB_ENV
+
+      - name: Bump version in package.json & Cargo.toml
+        run: |
+          npm version "${{ env.RELEASE_VERSION }}" --no-git-tag-version --allow-same-version
+          # Update src-tauri version fields
+          node -e "
+            const fs = require('fs');
+            const v = process.env.RELEASE_VERSION;
+            const tauriConf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+            tauriConf.version = v;
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(tauriConf, null, 2) + '\n');
+
+            const cargo = fs.readFileSync('src-tauri/Cargo.toml','utf8');
+            fs.writeFileSync('src-tauri/Cargo.toml',
+              cargo.replace(/^version\s*=\s*\"[\d.]+\"/m, 'version = \"' + v + '\"'));
+          "
+
+      - name: Build Tauri desktop (${{ matrix.triple }})
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target ${{ matrix.triple }}
+          tagName: v__VERSION__
+          releaseName: 'Research Canvas v__VERSION__'
+          releaseBody: |
+            ## Research Canvas ${{ env.RELEASE_VERSION }}
+
+            Human-led research graph and ablation planning workspace.
+
+            ### 安装方式
+            - **Windows**: 下载 `.msi` 安装包
+            - **macOS**: 下载 `.dmg` 镜像文件
+            - **Linux**: 下载 `.AppImage` 可执行文件
+
+            ### 更新内容
+            详见 [CHANGELOG](./CHANGELOG.md)
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload artifacts (fallback)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-canvas-${{ env.RELEASE_VERSION }}-${{ matrix.triple }}
+          path: |
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+          if-no-files-found: ignore

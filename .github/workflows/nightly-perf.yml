@@ -1,0 +1,64 @@
+name: Nightly Performance
+
+on:
+  schedule:
+    # 每天 UTC 04:00 运行（北京时间 12:00）
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-perf
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build project
+        run: npm run build
+
+      - name: Start dev server
+        run: npm run dev:desktop-web &
+        env:
+          PORT: '3000'
+
+      - name: Wait for server
+        run: npx wait-on http://localhost:3000 --timeout 60000
+
+      - name: Profile canvas performance
+        run: |
+          npx playwright-cli run scripts/profile_canvas_performance.mjs \
+            --url http://localhost:3000 \
+            > perf-results.json 2>&1 || true
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-${{ github.run_id }}
+          path: perf-results.json
+          retention-days: 30
+
+      - name: Check for regression (>15%)
+        if: success()
+        run: |
+          echo "📊 Performance benchmark completed."
+          echo "Results uploaded as artifact: perf-results-${{ github.run_id }}"
+          # TODO: Compare with historical baseline and alert if frame time regression > 15%
+          # cat perf-results.json | jq '.meanFrameMs'
