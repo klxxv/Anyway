@@ -1,22 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  cloneProject,
   allShortestPaths,
   compareScenarioReachability,
-  computeLayout,
-  computeLogicChain,
   detectCycles,
+  shortestPath,
+  traverseGraph,
+} from "../app/lib/graph";
+import {
+  cloneProject,
   evidenceBacklinks,
   exportCsv,
   exportJsonCanvas,
   exportMarkdown,
   migrateProject,
   resolveEdges,
-  propagateInfluence,
-  shortestPath,
-  traverseGraph,
-} from "../app/lib/research-core";
+} from "../app/lib/project";
+import { computeLayout } from "../app/lib/layout";
+import { computeLogicChain, propagateInfluence } from "../app/lib/analysis";
 import { initialProject } from "../app/lib/fixtures";
 import { createMnistProject } from "../app/lib/mnist-fixture";
 import { createSocialScienceProject } from "../app/lib/social-fixture";
