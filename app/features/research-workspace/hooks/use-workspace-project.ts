@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { computeLayout } from "../../../lib/research-core";
+import { computeLayout } from "../../../lib/layout";
 import type {
   LayoutMode,
   ProjectState,
