@@ -16,7 +16,7 @@
     "test": "npm run build && node --test tests/rendered-html.test.mjs && npm run test:core && npm run test:platform && npm run test:workspace && npm run test:sdk && npm run test:native",
     "test:core": "tsx --test tests/research-core.test.ts",
     "test:platform": "tsx --test tests/platform.test.ts",
-    "test:workspace": "tsx --test tests/research-workspace.test.ts",
+    "test:workspace": "tsx --test tests/research-workspace.test.ts tests/workspace-hooks.test.ts",
     "test:native": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:sdk": "tsx --test tests/plugin-sdk.test.ts && cargo check --manifest-path plugins/sdk/rust/Cargo.toml && node scripts/check_cpp_sdk.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern src-tauri/target",
