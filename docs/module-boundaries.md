@@ -2,18 +2,23 @@
 
 ## Stable kernel
 
-`src-tauri/src/graph_compiler.rs` (Rust) is the semantic kernel: canonicalization,
+`src-tauri/src/graph_compiler/` (Rust) is the semantic kernel: canonicalization,
 hashing (blockHash/fileHash), graph invariants, logic chains, contradiction chains,
 reachability, graph diff, deterministic layout, digest/mermaid exports. Graph
 properties are hard-computed here — never by LLM/agents (§15 of canvas-format-v3.md).
+Modules stay ≤500 lines each: `canonical` (canonicalization + dual hashing),
+`invariants` (invariant checks), `algorithms` (traversal/paths), `analysis`
+(cycles/contradiction chains/logic chains/scenario diffs), `mod` (compile pipeline
+§15.1 + version-control diff §6).
 
 The same crate is reused by the desktop app (Tauri), the registry server, and the
 `canvas compile` CLI for CI verification.
 
 `app/lib/research-types.ts` remains the renderer- and desktop-independent type
-contract. `app/lib/research-core.ts` is the thin client wrapper: fixtures and
-tests stay; algorithm implementations call the Rust compiler via Tauri commands
-until parity is proven by bit-identical dual-implementation tests.
+contract. Client graph algorithms live in `app/lib/graph` and `app/lib/analysis`;
+fixtures and tests stay there, and their Rust twins in `graph_compiler` are kept
+bit-identical through dual-implementation tests until the UI is switched to Tauri
+commands (`tests/research-core.test.ts` ↔ `src-tauri/tests/graph_algorithms.rs`).
 
 ## Application features
 
