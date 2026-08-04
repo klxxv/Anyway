@@ -2,10 +2,13 @@
 
 ## Stable kernel
 
-`src-tauri/src/graph_compiler.rs` (Rust) is the semantic kernel: canonicalization,
-hashing (blockHash/fileHash), graph invariants, logic chains, contradiction chains,
-reachability, graph diff, deterministic layout, digest/mermaid exports. Graph
-properties are hard-computed here — never by LLM/agents (§15 of canvas-format-v3.md).
+`src-tauri/src/graph_compiler/` (Rust) is the semantic kernel, split into
+`canonical.rs` (canonicalization + hashing), `invariants.rs` (graph invariants),
+`layout.rs` (deterministic layout), and `algorithms.rs` (graph algorithms);
+`mod.rs` re-exports the public API. Graph properties are hard-computed here —
+never by LLM/agents (§15 of canvas-format-v3.md). Layout (§11) is intent-driven:
+`views[].layout = { mode, params }` plus computed positions; only human-pinned
+coordinates override the computation, and unpinned drags never persist.
 
 The same crate is reused by the desktop app (Tauri), the registry server, and the
 `canvas compile` CLI for CI verification.
