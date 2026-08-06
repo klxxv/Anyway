@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 2,
+  "id": "project-pinn",
+  "title": "PINN architecture",
+  "discipline": "Physics-informed neural networks",
+  "updatedAt": "2026-08-01T00:00:00Z",
+  "revision": 1,
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "question",
+      "title": "主问题",
+      "body": "如何建模?",
+      "tags": ["问题"],
+      "status": "confirmed",
+      "evidenceIds": ["e1"],
+      "data": {"shape": "circle"},
+      "provenance": {"origin": "human"},
+      "createdAt": "2026-08-01T00:00:00Z",
+      "updatedAt": "2026-08-01T00:00:00Z"
+    },
+    {
+      "id": "n2",
+      "type": "concept",
+      "title": "先验约束",
+      "body": "物理守恒",
+      "tags": [],
+      "status": "confirmed",
+      "evidenceIds": [],
+      "data": {},
+      "provenance": {"origin": "human"},
+      "createdAt": "2026-08-01T00:00:00Z",
+      "updatedAt": "2026-08-01T00:00:00Z"
+    }
+  ],
+  "edges": [
+    {
+      "id": "x1",
+      "type": "supports",
+      "source": "n1",
+      "target": "n2",
+      "directed": true,
+      "polarity": "positive",
+      "confidence": 0.9,
+      "conditions": [],
+      "evidenceIds": ["e1"],
+      "note": "支持关系",
+      "provenance": {"origin": "human"}
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "sourceType": "paper",
+      "sourceId": "paper-rope-2024",
+      "title": "RoPE 论文",
+      "authors": "Chen, Rao & Li",
+      "year": 2024,
+      "doi": "10.0000/example.rope",
+      "url": "https://example.org/papers/rope",
+      "locator": {"page": 7, "quote": "引文"},
+      "status": "verified",
+      "provenance": {"origin": "human"}
+    }
+  ],
+  "placements": [
+    {
+      "id": "pl1",
+      "viewId": "main",
+      "nodeId": "n1",
+      "x": 0,
+      "y": 0,
+      "width": 200,
+      "height": 100
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "s1",
+      "name": "禁 n1",
+      "disabledNodeIds": ["n1"],
+      "disabledEdgeIds": ["x1"],
+      "nodeOverrides": {"n2": {"status": "draft"}},
+      "edgeOverrides": {},
+      "parameters": {},
+      "hypothesis": "h",
+      "expectedEffect": "e",
+      "createdAt": "2026-08-01T00:00:00Z"
+    }
+  ],
+  "activity": []
+}

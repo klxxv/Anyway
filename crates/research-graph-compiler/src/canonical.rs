@@ -39,11 +39,27 @@ pub fn canonical_number(number: &Number) -> String {
     number.to_string()
 }
 
+/// 语义有序字段：数组保持元素顺序（路径步骤、步骤序列等），不参与集合排序。
+/// Semantically ordered fields: arrays keep element order — never sorted.
+pub const SEQUENCE_FIELDS: &[&str] = &["pathSteps", "steps", "path"];
+
 /// 值 → 规范 JSON 字节 / Value → canonical JSON bytes:
 /// - 对象：键 NFC 归一化后按字典序排序（含嵌套 data），值递归；
-/// - 数组：元素规范化后按规范字节排序（顺序不敏感）；
+/// - 数组：元素规范化后按规范字节排序（顺序不敏感，集合语义）；
 /// - 数字：`canonical_number`；字符串：`normalize_text`。
 pub fn canonicalize(value: &Value) -> Vec<u8> {
+    canonicalize_mode(value, true)
+}
+
+/// 字段感知的规范化：`SEQUENCE_FIELDS` 中的数组保持元素顺序（GC02-04），
+/// 其余字段按集合语义排序（GC02-03）。递归进对象后仍按集合语义处理。
+/// Field-aware canonicalization: arrays under `SEQUENCE_FIELDS` keep their
+/// element order; every other array is sorted as a set.
+pub fn canonicalize_field(field: &str, value: &Value) -> Vec<u8> {
+    canonicalize_mode(value, !SEQUENCE_FIELDS.contains(&field))
+}
+
+fn canonicalize_mode(value: &Value, sort_arrays: bool) -> Vec<u8> {
     match value {
         Value::Null => b"null".to_vec(),
         Value::Bool(true) => b"true".to_vec(),
@@ -52,7 +68,9 @@ pub fn canonicalize(value: &Value) -> Vec<u8> {
         Value::String(text) => quoted_string(&normalize_text(text)),
         Value::Array(items) => {
             let mut canonical_items: Vec<Vec<u8>> = items.iter().map(canonicalize).collect();
-            canonical_items.sort();
+            if sort_arrays {
+                canonical_items.sort();
+            }
             let mut out =
                 Vec::with_capacity(canonical_items.iter().map(Vec::len).sum::<usize>() + 2);
             out.push(b'[');

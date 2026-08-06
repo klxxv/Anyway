@@ -1,0 +1,13 @@
+{
+  "bom-only": "empty-input",
+  "deep-nesting": "nesting-too-deep",
+  "empty": "empty-input",
+  "future-schema": "unsupported-schema-version",
+  "infinity": "invalid-number",
+  "invalid-json": "invalid-json",
+  "invalid-utf8": "invalid-utf8",
+  "missing-schema-version": "missing-schema-version",
+  "nan": "invalid-number",
+  "null-nodes": "type-mismatch",
+  "strict-unknown-field": "unknown-field"
+}

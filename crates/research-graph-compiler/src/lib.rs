@@ -38,7 +38,10 @@ pub mod traversal;
 // 公共 API（与迁移前 `src-tauri/src/graph_compiler.rs` 保持一致，薄转发）。
 // ---------------------------------------------------------------------------
 
-pub use canonical::{canonical_number, canonicalize, normalize_key, normalize_text};
+pub use canonical::SEQUENCE_FIELDS;
+pub use canonical::{
+    canonical_number, canonicalize, canonicalize_field, normalize_key, normalize_text,
+};
 pub use compile::{
     compile, compile_project, verify_hashes, CompileOptions, CompileResult, VerifyResult,
 };
@@ -48,3 +51,7 @@ pub use hash::{
     evidence_claim, file_hash, node_claim, sha256_hex,
 };
 pub use invariant::{check_invariants, InvariantViolation, Severity};
+pub use parse::{
+    check_schema, migrate_v2_to_v3, parse_bytes, parse_project, MigrationReport, ParseError,
+    ParseOptions, SCHEMA_VERSION, SCHEMA_VERSION_V2,
+};
