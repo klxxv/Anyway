@@ -1,3 +1,4 @@
+pub mod agent_commands;
 pub mod agent_host;
 pub mod graph_compiler;
 pub mod pdf_pipeline;
@@ -12,6 +13,9 @@ mod workspace_host;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(agent_commands::AgentHostState(std::sync::Mutex::new(
+            agent_host::AgentHost::new(std::env::temp_dir()),
+        )))
         .invoke_handler(tauri::generate_handler![
             plugins::install_myc_plugin,
             plugins::uninstall_myc_plugin,
@@ -27,7 +31,11 @@ pub fn run() {
             workspace_host::login_github_account,
             workspace_host::generate_github_ssh_key,
             workspace_host::upload_github_ssh_key,
-            workspace_host::git_autosave_project
+            workspace_host::git_autosave_project,
+            agent_commands::start_pdf_job,
+            agent_commands::get_job_status,
+            agent_commands::review_patch,
+            agent_commands::cancel_job
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "mode": "agent",
+  "agentType": "pdf-canvas",
+  "reviewGated": true,
+  "capabilities": [
+    "agent.pdf.read",
+    "agent.graph.patch.propose",
+    "agent.review.request"
+  ],
+  "securityBoundary": {
+    "noApiKey": true,
+    "noFileHandles": true,
+    "noNetwork": true,
+    "noGraphStoreWrite": true,
+    "hostMediated": true
+  },
+  "pipeline": {
+    "stages": [
+      "validating_file",
+      "extracting_text",
+      "ocr_optional",
+      "building_document_map",
+      "extracting_semantics",
+      "generating_patch",
+      "awaiting_review"
+    ],
+    "idempotent": true,
+    "checkpointEnabled": true
+  }
+}

@@ -311,6 +311,69 @@ impl AgentHost {
         Ok(())
     }
 
+    /// 取消 job：只能在非终态调用，直接转入 Failed。
+    pub fn cancel_job(&mut self, job_id: &str, reason: &str) -> Result<&AgentJob, String> {
+        let job = self.jobs.get_mut(job_id)
+            .ok_or_else(|| format!("Job not found: {job_id}"))?;
+        if job.state.is_terminal() {
+            return Err(format!("Job already terminal: {}", job.state.label()));
+        }
+        let now = unix_millis();
+        // 合拢上一个 checkpoint
+        if let Some(cp) = job.checkpoints.last_mut() {
+            if cp.completed_at.is_none() {
+                cp.completed_at = Some(now);
+                cp.error = Some(reason.to_string());
+            }
+        }
+        let checkpoint = StageCheckpoint {
+            stage: JobState::Failed,
+            input_hash: job.file_hash.clone(),
+            output_hash: None,
+            started_at: now,
+            completed_at: Some(now),
+            error: Some(reason.to_string()),
+            data: None,
+        };
+        job.checkpoints.push(checkpoint);
+        job.state = JobState::Failed;
+        job.updated_at = now;
+        job.error = Some(reason.to_string());
+        Ok(job)
+    }
+
+    /// 审阅裁决：接受或拒绝待审阅的 GraphPatch。
+    pub fn review_patch(&mut self, job_id: &str, accept: bool) -> Result<&AgentJob, String> {
+        let job = self.jobs.get_mut(job_id)
+            .ok_or_else(|| format!("Job not found: {job_id}"))?;
+        if job.state != JobState::AwaitingReview {
+            return Err(format!(
+                "Job must be AwaitingReview, but is {}",
+                job.state.label()
+            ));
+        }
+        let target = if accept { JobState::Accepted } else { JobState::Rejected };
+        let now = unix_millis();
+        if let Some(cp) = job.checkpoints.last_mut() {
+            if cp.completed_at.is_none() {
+                cp.completed_at = Some(now);
+            }
+        }
+        let checkpoint = StageCheckpoint {
+            stage: target,
+            input_hash: job.file_hash.clone(),
+            output_hash: None,
+            started_at: now,
+            completed_at: Some(now),
+            error: None,
+            data: None,
+        };
+        job.checkpoints.push(checkpoint);
+        job.state = target;
+        job.updated_at = now;
+        Ok(job)
+    }
+
     /// 清理终态 job（10 分钟后）。
     pub fn cleanup_completed(&mut self) -> Result<usize, String> {
         let now = unix_millis();
@@ -453,6 +516,69 @@ mod tests {
             assert_eq!(job.checkpoints.len(), 2);
             assert!(job.progress().0 >= 1);
         }
+    }
+
+    #[test]
+    fn cancel_job_from_any_non_terminal_state() {
+        let dir = tempdir().expect("tempdir");
+        let mut host = AgentHost::new(dir.path().to_path_buf());
+        let pdf = dummy_pdf(dir.path());
+        let id = { host.create_job(&pdf).expect("create").job_id.clone() };
+        host.advance_job(&id, JobState::ValidatingFile, Some("h1"), None, None).expect("a1");
+        host.cancel_job(&id, "user requested cancel").expect("cancel");
+        let job = host.get_job(&id).expect("get");
+        assert_eq!(job.state, JobState::Failed);
+        assert_eq!(job.error, Some("user requested cancel".to_string()));
+        assert!(job.state.is_terminal());
+    }
+
+    #[test]
+    fn review_patch_accepts_and_rejects() {
+        let dir = tempdir().expect("tempdir");
+        let mut host = AgentHost::new(dir.path().to_path_buf());
+        let stages = [
+            JobState::ValidatingFile, JobState::ExtractingText, JobState::OcrOptional,
+            JobState::BuildingDocumentMap, JobState::ExtractingSemantics,
+            JobState::GeneratingPatch, JobState::AwaitingReview,
+        ];
+
+        // Accept case
+        let pdf1 = dummy_pdf(dir.path());
+        let job_id1 = {
+            let job = host.create_job(&pdf1).expect("create1");
+            let id = job.job_id.clone();
+            for &stage in &stages {
+                host.advance_job(&id, stage, Some("h"), None, None).expect("advance");
+            }
+            id
+        };
+        host.review_patch(&job_id1, true).expect("accept");
+        assert_eq!(host.get_job(&job_id1).unwrap().state, JobState::Accepted);
+
+        // Reject case — 需要不同的 PDF 文件以绕过幂等
+        let pdf2 = dir.path().join("test2.pdf");
+        fs::write(&pdf2, b"%PDF-1.5\n%%EOF").expect("write second dummy pdf");
+        let job_id2 = {
+            let job = host.create_job(&pdf2).expect("create2");
+            let id = job.job_id.clone();
+            for &stage in &stages {
+                host.advance_job(&id, stage, Some("h"), None, None).expect("advance");
+            }
+            id
+        };
+        host.review_patch(&job_id2, false).expect("reject");
+        assert_eq!(host.get_job(&job_id2).unwrap().state, JobState::Rejected);
+    }
+
+    #[test]
+    fn cancel_job_rejects_already_terminal() {
+        let dir = tempdir().expect("tempdir");
+        let mut host = AgentHost::new(dir.path().to_path_buf());
+        let pdf = dummy_pdf(dir.path());
+        let id = { host.create_job(&pdf).expect("create").job_id.clone() };
+        host.advance_job(&id, JobState::ValidatingFile, Some("h"), None, None).expect("a1");
+        host.advance_job(&id, JobState::Failed, Some("h2"), None, Some("err")).expect("a2");
+        assert!(host.cancel_job(&id, "too late").is_err());
     }
 
     #[test]
