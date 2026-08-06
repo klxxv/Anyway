@@ -1,3 +1,4 @@
+pub mod deepseek_client;
 pub mod graph_compiler;
 mod plugin_vm;
 mod plugins;
@@ -11,6 +12,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            deepseek_client::set_deepseek_api_key,
+            deepseek_client::has_deepseek_api_key,
+            deepseek_client::clear_deepseek_api_key,
             plugins::install_myc_plugin,
             plugins::uninstall_myc_plugin,
             plugins::list_installed_plugins,

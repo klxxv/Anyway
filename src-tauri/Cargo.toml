@@ -18,7 +18,10 @@ serde_json = "1"
 serde_yaml = "0.9"
 sha2 = "0.10"
 tauri = { version = "2", features = [] }
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["time"] }
 unicode-normalization = "0.1.25"
 wasmi = "0.31"
 zip = { version = "2", default-features = false, features = ["deflate"] }
