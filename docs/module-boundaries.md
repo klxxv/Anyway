@@ -2,10 +2,12 @@
 
 ## Stable kernel
 
-`src-tauri/src/graph_compiler.rs` (Rust) is the semantic kernel: canonicalization,
+`crates/research-graph-compiler` (Rust) is the semantic kernel: canonicalization,
 hashing (blockHash/fileHash), graph invariants, logic chains, contradiction chains,
 reachability, graph diff, deterministic layout, digest/mermaid exports. Graph
 properties are hard-computed here — never by LLM/agents (§15 of canvas-format-v3.md).
+`src-tauri/src/graph_compiler.rs` is a thin forwarding layer re-exporting the crate
+(public API unchanged).
 
 The same crate is reused by the desktop app (Tauri), the registry server, and the
 `canvas compile` CLI for CI verification.

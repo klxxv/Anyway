@@ -73,3 +73,6 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# rust workspace crates build output
+crates/*/target/
