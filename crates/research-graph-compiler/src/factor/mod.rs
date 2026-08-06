@@ -11,8 +11,11 @@ pub mod compile;
 pub mod contradiction;
 pub mod statistics;
 
+use serde::Serialize;
+
 /// 因子种类 / Factor kinds (spec §4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FactorKind {
     Supports,
     Contradicts,
@@ -27,7 +30,8 @@ pub enum FactorKind {
 }
 
 /// 单个因子：变量域 + 真值表/参数（骨架占位）。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Factor {
     /// 因子种类。
     pub kind: FactorKind,
@@ -36,7 +40,8 @@ pub struct Factor {
 }
 
 /// 因子图（骨架占位）：变量集合 + 因子列表。
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FactorGraph {
     /// 变量名集合（布尔/有限枚举）。
     pub variables: Vec<String>,

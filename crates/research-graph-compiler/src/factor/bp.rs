@@ -2,8 +2,11 @@
 //! support/refutation 双通道：树图精确；环图固定顺序 + 阻尼 Loopy BP，
 //! 输出净信念与冲突。当前为骨架。
 
+use serde::Serialize;
+
 /// 信念状态 / Belief state (spec §4).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BeliefState {
     /// 支持通道 logit。
     pub support_logit: f64,

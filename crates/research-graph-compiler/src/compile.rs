@@ -153,6 +153,17 @@ impl CompileOptions {
 /// 全量编译入口：与现有 `compile` 等价，但以字节输入为契约（spec §5）。
 /// 目前执行 canonicalize → compile 管线；parse 阶段（GC-01）由后续任务接入。
 pub fn compile_project(bytes: &[u8]) -> Result<CompileResult, crate::error::CompileFailure> {
+    compile_project_with_options(bytes, &CompileOptions::defaults())
+}
+
+/// 带选项的全量编译入口：`compile_project` 的选项版。
+/// Compile entry with options — the options-aware twin of `compile_project`.
+/// `canvas compile` CLI 经此传入 `--strict` / `--layout`；选项字段当前为
+/// 保留项（spec §3，随 GC-04/GC-13 接入管线），结构与签名先行稳定。
+pub fn compile_project_with_options(
+    bytes: &[u8],
+    _options: &CompileOptions,
+) -> Result<CompileResult, crate::error::CompileFailure> {
     let value: Value = serde_json::from_slice(bytes)
         .map_err(|error| crate::error::CompileFailure::Parse(error.to_string()))?;
     let canonical: Value = serde_json::from_slice(&canonicalize(&value))

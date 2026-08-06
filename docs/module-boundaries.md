@@ -12,6 +12,29 @@ properties are hard-computed here — never by LLM/agents (§15 of canvas-format
 The same crate is reused by the desktop app (Tauri), the registry server, and the
 `canvas compile` CLI for CI verification.
 
+### `canvas compile` CLI
+
+`crates/canvas-cli` builds the `canvas` binary (entry `src/bin/canvas.rs`). It is a
+thin consumer of the kernel — it implements no graph algorithm itself, so on a fixed
+fixture its output is bit-identical to what the Tauri/Registry side produces through
+the same public API (`crates/canvas-cli/tests/parity.rs` proves this).
+
+```
+cargo run -p canvas-cli -- compile project.mycproj [--strict] [--layout] [--logic] [--bp] [--output json|mermaid|text]
+```
+
+The report (json, default) always carries `diagnostics` (invariant violations) and
+`hashes` (blockHashes / contentRootHash / fileHash / verified). `--logic` adds the
+logic-chain factor graph and contradiction witnesses; `--bp` adds dual-channel
+belief states; `--layout` adds deterministic layout positions — each section is
+serialized straight from the kernel. `--strict` fails (exit 1) on any diagnostic
+including warnings. Exit codes: 0 pass, 1 diagnostics/parse failure, 2 usage,
+3 unreadable input. Mermaid output is the kernel's `export_mermaid` verbatim
+(GC-13 baseline).
+
+`cargo test -p canvas-cli` runs the parity suite against
+`tests/fixtures/pinn-architecture.mycproj`.
+
 `app/lib/research-types.ts` remains the renderer- and desktop-independent type
 contract. `app/lib/research-core.ts` is the thin client wrapper: fixtures and
 tests stay; algorithm implementations call the Rust compiler via Tauri commands

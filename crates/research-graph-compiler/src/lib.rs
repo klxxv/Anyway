@@ -40,9 +40,11 @@ pub mod traversal;
 
 pub use canonical::{canonical_number, canonicalize, normalize_key, normalize_text};
 pub use compile::{
-    compile, compile_project, verify_hashes, CompileOptions, CompileResult, VerifyResult,
+    compile, compile_project, compile_project_with_options, verify_hashes, CompileOptions,
+    CompileResult, VerifyResult,
 };
 pub use error::CompileFailure;
+pub use export::{export_mermaid, project_digest, Digest, ExportOptions};
 pub use hash::{
     block_hash, compute_block_hashes, content_root_hash, content_root_hash_from_hashes, edge_claim,
     evidence_claim, file_hash, node_claim, sha256_hex,
