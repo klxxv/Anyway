@@ -57,6 +57,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.91"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae36dc4177970ef04fde5178d3e2429882def40e57a451f919c098f72baa6cec"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "atk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1185,6 +1196,17 @@ dependencies = [
  "glib-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "graphpatch-gen"
+version = "0.1.0"
+dependencies = [
+ "research-graph-compiler",
+ "semantic-pipeline",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -2573,9 +2595,11 @@ dependencies = [
 name = "research-canvas-desktop"
 version = "0.3.5"
 dependencies = [
+ "graphpatch-gen",
  "lopdf",
  "regex",
  "research-graph-compiler",
+ "semantic-pipeline",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2749,6 +2773,18 @@ dependencies = [
  "rustc-hash",
  "servo_arc",
  "smallvec",
+]
+
+[[package]]
+name = "semantic-pipeline"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
 ]
 
 [[package]]

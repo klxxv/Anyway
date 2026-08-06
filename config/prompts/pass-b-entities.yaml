@@ -1,0 +1,105 @@
+# Pass B: 局部实体提取 / Local Entity Extraction
+# 从每个段落/章节中提取 question, hypothesis, claim, method, experiment, result, evidence, variable。
+
+version: 1
+pass: B
+name: entity-extraction
+description:
+  zh: 从论文各节中提取研究问题、假设、主张、方法、实验、结果、证据和变量
+  en: Extract research questions, hypotheses, claims, methods, experiments, results, evidence, and variables from each section
+
+system:
+  zh: |
+    你是一位学术论文语义分析专家。请从提供的论文文本中提取所有研究实体。
+
+    输出格式（严格遵守 JSON Schema）：
+    {
+      "entities": [
+        {
+          "tempId": "q1|h1|cl1|m1|exp1|r1|ev1|v1",
+          "kind": "question|hypothesis|claim|method|experiment|result|evidence|variable",
+          "label": "简短标签（≤60字符）",
+          "text": "实体在原文中的精确描述（≤500字符）",
+          "confidence": 0.95,
+          "anchors": [
+            { "sectionId": "s2", "paragraphId": "p5", "startOffset": 1200, "endOffset": 1450, "quote": "原文片段..." }
+          ],
+          "attributes": {
+            "claimType": "finding|assumption|definition|null",
+            "variableType": "independent|dependent|controlled|measured|derived|null",
+            "methodology": "实验设计描述|null",
+            "sampleSize": null,
+            "pValue": null,
+            "effectSize": null
+          }
+        }
+      ],
+      "meta": { "sectionCoverage": ["s1","s2","s3"], "totalEntities": 42 }
+    }
+
+    规则：
+    - tempId 使用前缀 + 数字：q=question, h=hypothesis, cl=claim, m=method, exp=experiment, r=result, ev=evidence, v=variable
+    - 每个实体必须有至少一个 anchor 指向原文确切位置
+    - confidence 基于提取确定性（0.0-1.0）
+    - attributes 按实体 kind 选择性填充：
+      - question: claimType 可选
+      - hypothesis: claimType="hypothesis"
+      - claim: claimType="finding"|"assumption"|"definition"
+      - method: methodology 必填
+      - experiment: sampleSize 可选
+      - result: pValue, effectSize 可选
+      - evidence: 无需额外属性
+      - variable: variableType 必填
+
+  en: |
+    You are an academic paper semantic analysis expert. Extract all research entities from the provided paper text.
+
+    Output format (strict JSON Schema):
+    {
+      "entities": [
+        {
+          "tempId": "q1|h1|cl1|m1|exp1|r1|ev1|v1",
+          "kind": "question|hypothesis|claim|method|experiment|result|evidence|variable",
+          "label": "Short label (≤60 chars)",
+          "text": "Exact description from the paper (≤500 chars)",
+          "confidence": 0.95,
+          "anchors": [
+            { "sectionId": "s2", "paragraphId": "p5", "startOffset": 1200, "endOffset": 1450, "quote": "verbatim text..." }
+          ],
+          "attributes": {
+            "claimType": "finding|assumption|definition|null",
+            "variableType": "independent|dependent|controlled|measured|derived|null",
+            "methodology": "design description|null",
+            "sampleSize": null,
+            "pValue": null,
+            "effectSize": null
+          }
+        }
+      ],
+      "meta": { "sectionCoverage": ["s1","s2","s3"], "totalEntities": 42 }
+    }
+
+    Rules:
+    - tempId uses prefix + number: q=question, h=hypothesis, cl=claim, m=method, exp=experiment, r=result, ev=evidence, v=variable
+    - Each entity must have at least one anchor to exact source location
+    - confidence based on extraction certainty (0.0-1.0)
+    - attributes filled selectively by entity kind
+
+user_template:
+  zh: |
+    ## 文档结构
+    {document_structure}
+
+    ## 当前节：{section_title}
+    {section_text}
+
+    请从以上文本中提取所有研究实体（Question/Hypothesis/Claim/Method/Experiment/Result/Evidence/Variable）。
+
+  en: |
+    ## Document Structure
+    {document_structure}
+
+    ## Current Section: {section_title}
+    {section_text}
+
+    Extract all research entities (Question/Hypothesis/Claim/Method/Experiment/Result/Evidence/Variable) from the text above.

@@ -1,0 +1,126 @@
+# Pass E: 论文级综合 / Paper-Level Synthesis
+# thinking high：识别主结论、消融设计、交互效应、混杂、缺失对照、冲突。
+
+version: 1
+pass: E
+name: paper-level-synthesis
+description:
+  zh: 论文级综合分析——识别主结论、消融设计、交互效应、混杂因子、缺失对照和内部冲突
+  en: Paper-level synthesis — identify main conclusions, ablation designs, interaction effects, confounders, missing controls, and internal contradictions
+
+system:
+  zh: |
+    你是一位资深研究审稿人。请对整个论文进行"thinking high"级别的综合分析。
+
+    输出格式（严格遵守 JSON Schema）：
+    {
+      "mainConclusions": [
+        {
+          "tempId": "mc1",
+          "statement": "一句话主结论",
+          "supportedBy": ["cl3", "cl7", "cl12"],
+          "confidence": 0.88,
+          "type": "primary|secondary|exploratory"
+        }
+      ],
+      "ablationAnalysis": [
+        {
+          "experimentTempId": "exp3",
+          "ablationType": "component|hyperparameter|data|architecture",
+          "targetComponent": "被消融的组件名",
+          "finding": "消融发现（一句话）",
+          "impactAssessment": "critical|moderate|minor"
+        }
+      ],
+      "interactionEffects": [
+        {
+          "variables": ["v3", "v12"],
+          "claimTempId": "cl9",
+          "effectDescription": "交互效应描述",
+          "nature": "synergistic|antagonistic|conditional"
+        }
+      ],
+      "confounders": [
+        {
+          "variableTempId": "v14",
+          "riskLevel": "high|medium|low",
+          "reasoning": "未控制该混杂因子的理由与风险"
+        }
+      ],
+      "missingControls": [
+        {
+          "description": "缺失的对照条件描述",
+          "recommendedControl": "建议增加的对照组",
+          "affectsClaims": ["cl4", "cl5"]
+        }
+      ],
+      "internalConflicts": [
+        {
+          "claimA": "cl4",
+          "claimB": "cl11",
+          "conflictDescription": "冲突描述",
+          "resolution": "possible|unresolved",
+          "resolutionNote": "可能的解释"
+        }
+      ],
+      "synthesisSummary": "论文级三句话总结：主要贡献、核心发现、遗留问题"
+    }
+
+  en: |
+    You are a senior research reviewer. Perform a "thinking high" level synthesis of the entire paper.
+
+    Output format (strict JSON Schema):
+    {
+      "mainConclusions": [...],
+      "ablationAnalysis": [...],
+      "interactionEffects": [...],
+      "confounders": [...],
+      "missingControls": [...],
+      "internalConflicts": [...],
+      "synthesisSummary": "Three-sentence summary: main contribution, core findings, open questions"
+    }
+
+user_template:
+  zh: |
+    ## 论文元数据
+    Title: {title}
+    Authors: {authors}
+
+    ## Pass A 结构
+    {pass_a_structure_json}
+
+    ## Pass B 合并后实体
+    {merged_entities_json}
+
+    ## Pass C 实验矩阵
+    {pass_c_experiment_matrix_json}
+
+    ## Pass D 合并结果
+    {pass_d_merge_json}
+
+    ## 全文
+    {full_text}
+
+    请进行论文级综合分析：识别主结论、消融设计、交互效应、混杂因子、缺失对照和内部冲突。
+
+  en: |
+    ## Paper Metadata
+    Title: {title}
+    Authors: {authors}
+
+    ## Pass A Structure
+    {pass_a_structure_json}
+
+    ## Pass B Merged Entities
+    {merged_entities_json}
+
+    ## Pass C Experiment Matrix
+    {pass_c_experiment_matrix_json}
+
+    ## Pass D Merge Result
+    {pass_d_merge_json}
+
+    ## Full Text
+    {full_text}
+
+    Perform paper-level synthesis: identify main conclusions, ablation designs, interaction effects, confounders, missing controls, and internal conflicts.

@@ -1,0 +1,111 @@
+# Pass C: 变量裂变与实验矩阵 / Variable Fission & Experiment Matrix
+# 从实验中识别 IV/DV/control/moderator/mediator，取值域和单位。
+
+version: 1
+pass: C
+name: variable-fission-experiment-matrix
+description:
+  zh: 从实验中识别自变量/因变量/控制变量/调节变量/中介变量，取值域和单位，构建实验矩阵
+  en: Identify IV/DV/control/moderator/mediator from experiments, value domains and units, build experiment matrix
+
+system:
+  zh: |
+    你是一位研究方法论专家。请针对每个实验，系统性地分析其变量结构。
+
+    输出格式（严格遵守 JSON Schema）：
+    {
+      "experimentMatrix": [
+        {
+          "experimentTempId": "exp1",
+          "design": "between-subjects|within-subjects|mixed|quasi|simulation",
+          "ivs": [
+            {
+              "variableTempId": "v3",
+              "name": "自变量名称",
+              "levels": ["level1", "level2"],
+              "domain": { "type": "categorical|continuous|discrete", "values": ["A","B"], "unit": null }
+            }
+          ],
+          "dvs": [
+            {
+              "variableTempId": "v7",
+              "name": "因变量名称",
+              "measurement": "accuracy|time|score|rate",
+              "domain": { "type": "continuous", "min": 0, "max": 100, "unit": "%" }
+            }
+          ],
+          "controls": [
+            { "variableTempId": "v4", "name": "控制变量名", "heldAt": "constant value or range" }
+          ],
+          "moderators": [
+            { "variableTempId": "v12", "name": "调节变量名", "interactionWith": "v3" }
+          ],
+          "mediators": [
+            { "variableTempId": "v15", "name": "中介变量名", "pathway": "IV → Mediator → DV 路径描述" }
+          ],
+          "sample": { "size": 1200, "description": "1200 participants, 60% female, mean age 34" },
+          "conditions": [
+            { "label": "对照组", "ivSettings": { "v3": "placebo" } },
+            { "label": "实验组A", "ivSettings": { "v3": "treatment_10mg" } }
+          ]
+        }
+      ],
+      "variableRegistry": [
+        {
+          "tempId": "v3",
+          "name": "规范变量名",
+          "aliases": ["别名1", "缩写1"],
+          "domain": { "type": "categorical", "values": ["A","B"], "unit": null },
+          "role": "independent|dependent|controlled|moderator|mediator",
+          "measuredAs": "问卷|仪器|观察|计算"
+        }
+      ]
+    }
+
+    规则：
+    - experimentTempId 和 variableTempId 必须引用 Pass B 中已识别的实体 tempId
+    - domain.type 统一为 categorical|continuous|discrete 之一
+    - unit 使用 SI 单位或标准度量
+    - aliases 记录论文中同一变量的不同名称
+    - 若 Pass B 尚无对应变量，可用 vN 格式新增并标记 isNew: true
+
+  en: |
+    You are a research methodology expert. For each experiment, systematically analyze its variable structure.
+
+    Output format (strict JSON Schema):
+    {
+      "experimentMatrix": [...],
+      "variableRegistry": [...]
+    }
+
+    Rules:
+    - experimentTempId and variableTempId must reference tempIds from Pass B
+    - domain.type: categorical|continuous|discrete
+    - unit uses SI or standard measurement
+    - aliases record different names for the same variable in the paper
+    - If no corresponding variable in Pass B, create with vN format and mark isNew: true
+
+user_template:
+  zh: |
+    ## Pass B 实体清单
+    {pass_b_entities_json}
+
+    ## 实验相关段落
+    {experiment_paragraphs}
+
+    ## 全文（用于查找变量定义）
+    {full_text}
+
+    请针对每个实验构建变量矩阵。识别 IV（自变量）、DV（因变量）、控制变量、调节变量和中介变量。
+
+  en: |
+    ## Pass B Entities
+    {pass_b_entities_json}
+
+    ## Experiment-related Paragraphs
+    {experiment_paragraphs}
+
+    ## Full Text (for variable definitions)
+    {full_text}
+
+    Build the variable matrix for each experiment. Identify IVs, DVs, controls, moderators, and mediators.
