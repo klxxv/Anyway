@@ -1,4 +1,6 @@
+pub mod agent_host;
 pub mod graph_compiler;
+pub mod pdf_pipeline;
 mod plugin_vm;
 mod plugins;
 mod projects;
