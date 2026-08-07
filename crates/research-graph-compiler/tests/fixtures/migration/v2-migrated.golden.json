@@ -1,0 +1,119 @@
+{
+  "activity": [],
+  "discipline": "Physics-informed neural networks",
+  "edges": [
+    {
+      "conditions": [],
+      "confidence": 0.9,
+      "directed": true,
+      "evidenceIds": [
+        "355ffe7c9e42"
+      ],
+      "id": "d3b61e16ecad",
+      "note": "支持关系",
+      "polarity": "positive",
+      "provenance": {
+        "origin": "human"
+      },
+      "source": "f13d563010ff",
+      "target": "43c7977c07d5",
+      "type": "supports"
+    }
+  ],
+  "evidence": [
+    {
+      "authors": "Chen, Rao & Li",
+      "doi": "10.0000/example.rope",
+      "id": "355ffe7c9e42",
+      "locator": {
+        "page": 7,
+        "quote": "引文"
+      },
+      "provenance": {
+        "origin": "human"
+      },
+      "sourceId": "paper-rope-2024",
+      "sourceType": "paper",
+      "status": "verified",
+      "title": "RoPE 论文",
+      "url": "https://example.org/papers/rope",
+      "year": 2024
+    }
+  ],
+  "id": "project-pinn",
+  "nodes": [
+    {
+      "body": "如何建模?",
+      "createdAt": "2026-08-01T00:00:00Z",
+      "data": {
+        "shape": "circle"
+      },
+      "evidenceIds": [
+        "355ffe7c9e42"
+      ],
+      "id": "f13d563010ff",
+      "provenance": {
+        "origin": "human"
+      },
+      "status": "confirmed",
+      "tags": [
+        "问题"
+      ],
+      "title": "主问题",
+      "type": "question",
+      "updatedAt": "2026-08-01T00:00:00Z"
+    },
+    {
+      "body": "物理守恒",
+      "createdAt": "2026-08-01T00:00:00Z",
+      "data": {},
+      "evidenceIds": [],
+      "id": "43c7977c07d5",
+      "provenance": {
+        "origin": "human"
+      },
+      "status": "confirmed",
+      "tags": [],
+      "title": "先验约束",
+      "type": "concept",
+      "updatedAt": "2026-08-01T00:00:00Z"
+    }
+  ],
+  "placements": [
+    {
+      "height": 100,
+      "id": "pl1",
+      "nodeId": "f13d563010ff",
+      "viewId": "main",
+      "width": 200,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "revision": 1,
+  "scenarios": [
+    {
+      "createdAt": "2026-08-01T00:00:00Z",
+      "disabledEdgeIds": [
+        "d3b61e16ecad"
+      ],
+      "disabledNodeIds": [
+        "f13d563010ff"
+      ],
+      "edgeOverrides": {},
+      "expectedEffect": "e",
+      "hypothesis": "h",
+      "id": "s1",
+      "name": "禁 n1",
+      "nodeOverrides": {
+        "43c7977c07d5": {
+          "status": "draft"
+        }
+      },
+      "parameters": {}
+    }
+  ],
+  "schemaVersion": 3,
+  "title": "PINN architecture",
+  "updatedAt": "2026-08-01T00:00:00Z"
+}

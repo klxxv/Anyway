@@ -38,7 +38,10 @@ pub mod traversal;
 // 公共 API（与迁移前 `src-tauri/src/graph_compiler.rs` 保持一致，薄转发）。
 // ---------------------------------------------------------------------------
 
-pub use canonical::{canonical_number, canonicalize, normalize_key, normalize_text};
+pub use canonical::SEQUENCE_FIELDS;
+pub use canonical::{
+    canonical_number, canonicalize, canonicalize_field, normalize_key, normalize_text,
+};
 pub use compile::{
     compile, compile_project, compile_project_with_options, verify_hashes, CompileOptions,
     CompileResult, VerifyResult,
@@ -50,7 +53,6 @@ pub use hash::{
     evidence_claim, file_hash, node_claim, sha256_hex,
 };
 pub use invariant::{check_invariants, InvariantViolation, Severity};
-
 // ---------------------------------------------------------------------------
 // 逻辑计算层（spec §4-5, GC-08…GC-11）：因子图编译、统计证据、BP、矛盾见证。
 // ---------------------------------------------------------------------------
@@ -69,3 +71,7 @@ pub use factor::statistics::{
     P_VALUE_FLOOR,
 };
 pub use factor::{Factor, FactorDiagnostic, FactorGraph, FactorKind, FactorVariable};
+pub use parse::{
+    check_schema, migrate_v2_to_v3, parse_bytes, parse_project, MigrationReport, ParseError,
+    ParseOptions, SCHEMA_VERSION, SCHEMA_VERSION_V2,
+};
