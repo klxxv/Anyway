@@ -287,23 +287,196 @@ pub fn compare_scenario_reachability(project: &Value, root_id: &str, scenario_id
 
 /// Compute a structural graph diff between two project versions and return a GraphPatch.
 /// Used by workspace_host to convert git history into graph operations.
-// TODO(Phase 2): implement full structural diff with add-node/update-node/add-edge operations.
 pub fn graph_patch_from_diff(
-    _old: &Value,
-    _new: &Value,
-    _plugin_id: &str,
-    _operation: &str,
-    _description: &str,
+    old: &Value,
+    new: &Value,
+    plugin_id: &str,
+    operation: &str,
+    description: &str,
 ) -> Value {
+    let mut operations: Vec<Value> = Vec::new();
+
+    // --- nodes ---
+    let old_nodes = old
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    let new_nodes = new
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+
+    let old_ids: std::collections::HashSet<&str> = old_nodes
+        .iter()
+        .filter_map(|n| n["id"].as_str())
+        .collect();
+    let new_ids: std::collections::HashSet<&str> = new_nodes
+        .iter()
+        .filter_map(|n| n["id"].as_str())
+        .collect();
+
+    // added nodes
+    for n in new_nodes {
+        if let Some(id) = n["id"].as_str() {
+            if !old_ids.contains(id) {
+                operations.push(serde_json::json!({
+                    "op": "add-node",
+                    "nodeId": id,
+                    "node": n
+                }));
+            }
+        }
+    }
+
+    // removed nodes
+    for n in old_nodes {
+        if let Some(id) = n["id"].as_str() {
+            if !new_ids.contains(id) {
+                operations.push(serde_json::json!({
+                    "op": "remove-node",
+                    "nodeId": id,
+                    "node": n
+                }));
+            }
+        }
+    }
+
+    // updated nodes (same id, different content)
+    for new_n in new_nodes {
+        if let Some(id) = new_n["id"].as_str() {
+            if let Some(old_n) = old_nodes.iter().find(|o| o["id"].as_str() == Some(id)) {
+                let mut changes = serde_json::Map::new();
+                // compare key scalar fields
+                for key in &["title", "body", "type", "status"] {
+                    if old_n[key] != new_n[key] {
+                        changes.insert(key.to_string(), new_n[key].clone());
+                    }
+                }
+                // compare array fields
+                for key in &["tags", "evidenceIds"] {
+                    if old_n[key] != new_n[key] {
+                        changes.insert(key.to_string(), new_n[key].clone());
+                    }
+                }
+                // deep-compare data
+                if old_n["data"] != new_n["data"] {
+                    changes.insert("data".to_string(), new_n["data"].clone());
+                }
+                if !changes.is_empty() {
+                    operations.push(serde_json::json!({
+                        "op": "update-node",
+                        "nodeId": id,
+                        "changes": changes
+                    }));
+                }
+            }
+        }
+    }
+
+    // --- edges ---
+    let old_edges = old
+        .get("edges")
+        .and_then(Value::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    let new_edges = new
+        .get("edges")
+        .and_then(Value::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+
+    let old_edge_ids: std::collections::HashSet<&str> = old_edges
+        .iter()
+        .filter_map(|e| e["id"].as_str())
+        .collect();
+    let new_edge_ids: std::collections::HashSet<&str> = new_edges
+        .iter()
+        .filter_map(|e| e["id"].as_str())
+        .collect();
+
+    for e in new_edges {
+        if let Some(id) = e["id"].as_str() {
+            if !old_edge_ids.contains(id) {
+                operations.push(serde_json::json!({
+                    "op": "add-edge",
+                    "edgeId": id,
+                    "edge": e
+                }));
+            }
+        }
+    }
+
+    for e in old_edges {
+        if let Some(id) = e["id"].as_str() {
+            if !new_edge_ids.contains(id) {
+                operations.push(serde_json::json!({
+                    "op": "remove-edge",
+                    "edgeId": id,
+                    "edge": e
+                }));
+            }
+        }
+    }
+
+    // updated edges (same id, different content)
+    for new_e in new_edges {
+        if let Some(id) = new_e["id"].as_str() {
+            if let Some(old_e) = old_edges.iter().find(|o| o["id"].as_str() == Some(id)) {
+                let mut changes = serde_json::Map::new();
+                for key in &["type", "source", "target", "polarity", "confidence"] {
+                    if old_e[key] != new_e[key] {
+                        changes.insert(key.to_string(), new_e[key].clone());
+                    }
+                }
+                if !changes.is_empty() {
+                    operations.push(serde_json::json!({
+                        "op": "update-edge",
+                        "edgeId": id,
+                        "changes": changes
+                    }));
+                }
+            }
+        }
+    }
+
+    let add_count = operations.iter().filter(|op| op["op"] == "add-node").count();
+    let update_count = operations.iter().filter(|op| op["op"] == "update-node").count();
+    let remove_count = operations.iter().filter(|op| op["op"] == "remove-node").count();
+    let edge_count = operations
+        .iter()
+        .filter(|op| op["op"] == "add-edge" || op["op"] == "remove-edge")
+        .count();
+
+    let mut parts: Vec<String> = Vec::new();
+    if add_count > 0 {
+        parts.push(format!("{} node(s) added", add_count));
+    }
+    if remove_count > 0 {
+        parts.push(format!("{} node(s) removed", remove_count));
+    }
+    if update_count > 0 {
+        parts.push(format!("{} node(s) updated", update_count));
+    }
+    if edge_count > 0 {
+        parts.push(format!("{} edge change(s)", edge_count));
+    }
+    let summary = if parts.is_empty() {
+        "No structural changes detected.".to_string()
+    } else {
+        format!("{} structural changes: {}", parts.len(), parts.join(", "))
+    };
+
     serde_json::json!({
         "apiVersion": "researchcanvas.dev/graph-patch/v1alpha1",
         "source": {
-            "pluginId": _plugin_id,
-            "operation": _operation
+            "pluginId": plugin_id,
+            "operation": operation
         },
-        "title": _description,
-        "summary": "Structural graph diff placeholder.",
-        "reviewRequired": true,
-        "operations": []
+        "title": description,
+        "summary": summary,
+        "reviewRequired": false,
+        "operations": operations
     })
 }
