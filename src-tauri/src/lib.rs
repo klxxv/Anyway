@@ -1,5 +1,6 @@
 pub mod agent_commands;
 pub mod agent_host;
+pub mod deepseek_client;
 pub mod graph_algorithms;
 pub mod graph_compiler;
 pub mod pdf_pipeline;
@@ -22,6 +23,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             graph_cmds::compute_graph_layout,
             graph_cmds::layout_project_view,
+            deepseek_client::set_deepseek_api_key,
+            deepseek_client::has_deepseek_api_key,
+            deepseek_client::clear_deepseek_api_key,
             plugins::install_myc_plugin,
             plugins::uninstall_myc_plugin,
             plugins::list_installed_plugins,
