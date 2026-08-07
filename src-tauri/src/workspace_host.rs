@@ -4,12 +4,14 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     path::{Component, Path, PathBuf},
     process::Command,
 };
 use tauri::AppHandle;
+
+use crate::graph_compiler;
 
 const MAX_ARTIFACT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_GIT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
@@ -498,13 +500,105 @@ fn parse_git_log(output: &str) -> Vec<GitCommitRecord> {
         .collect()
 }
 
-fn directive_parts<'a>(line: &'a str, prefix: &str) -> Option<Vec<&'a str>> {
-    line.trim()
-        .strip_prefix(prefix)
-        .map(|value| value.trim().split('|').map(str::trim).collect())
+/// 在仓库内定位项目文件（.research-canvas/ 优先，其次根目录的 .mycproj），
+/// 返回仓库相对路径。JSON 仅在 .research-canvas/ 下接受，避免误抓 package.json 等。
+fn find_project_file(repo: &Path) -> Option<PathBuf> {
+    let mut searches: Vec<PathBuf> = vec![repo.join(".research-canvas")];
+    if let Ok(entries) = fs::read_dir(repo) {
+        let mut roots: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path.extension().and_then(|value| value.to_str()) == Some("mycproj")
+            })
+            .collect();
+        roots.sort();
+        searches.extend(roots);
+    }
+    for dir in searches {
+        if !dir.is_dir() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut candidates: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                if !path.is_file() {
+                    return false;
+                }
+                let ext = path.extension().and_then(|value| value.to_str()).unwrap_or("");
+                matches!(ext, "mycproj" | "json")
+            })
+            .collect();
+        candidates.sort();
+        if let Some(file) = candidates.into_iter().next() {
+            return file.strip_prefix(repo).ok().map(PathBuf::from);
+        }
+    }
+    None
 }
 
-fn graph_patch_from_commits(plugin_id: &str, commits: &[GitCommitRecord]) -> Value {
+/// `git show <rev>:<relative>` 读取文件在某次提交的版本；不存在则返回 None。
+fn git_show_file(repo: &Path, rev: &str, relative: &Path) -> Option<String> {
+    // git 接受正斜杠路径，与平台无关。
+    let spec = format!("{rev}:{}", relative.to_string_lossy().replace('\\', "/"));
+    let output = git_output(repo, &["show", &spec]).ok()?;
+    if output.trim().is_empty() {
+        return None;
+    }
+    Some(output)
+}
+
+fn empty_project() -> Value {
+    json!({
+        "schemaVersion": 2, "id": "", "title": "", "discipline": "",
+        "nodes": [], "edges": [], "evidence": [],
+        "placements": [], "scenarios": [], "activity": []
+    })
+}
+
+/// 合并多 commit 的 diff 操作：add 按实体 id 去重（保留首个），update 保留末个。
+fn dedup_operations(operations: Vec<Value>) -> Vec<Value> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut result: Vec<Value> = Vec::new();
+    let mut last_update: HashMap<String, Value> = HashMap::new();
+    let mut update_order: Vec<String> = Vec::new();
+    for operation in operations {
+        let op_type = operation.get("op").and_then(Value::as_str).unwrap_or("");
+        if op_type == "add-node" || op_type == "add-edge" {
+            let pointer = if op_type == "add-node" { "node.id" } else { "edge.id" };
+            let id = operation
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_default();
+            if seen.insert(id) {
+                result.push(operation);
+            }
+        } else {
+            let key = if op_type == "update-node" { "nodeId" } else { "edgeId" };
+            let id = operation
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_default();
+            if !last_update.contains_key(&id) {
+                update_order.push(id.clone());
+            }
+            last_update.insert(id, operation);
+        }
+    }
+    result.extend(update_order.into_iter().filter_map(|id| last_update.remove(&id)));
+    result
+}
+
+/// 基线（commit → evidence 节点 + parent 边）之上，用编译器解析项目文件
+/// git diff（§6 版控差异 → GraphPatch），取代旧的 commit message 约定指令。
+fn graph_patch_from_commits(plugin_id: &str, repo: &Path, commits: &[GitCommitRecord]) -> Value {
     let mut operations = Vec::new();
     let short_ids = commits
         .iter()
@@ -539,62 +633,56 @@ fn graph_patch_from_commits(plugin_id: &str, commits: &[GitCommitRecord]) -> Val
                 }
             }));
         }
-        for line in commit.message.lines() {
-            if let Some(parts) = directive_parts(line, "canvas-node:") {
-                if parts.len() >= 3 {
-                    operations.push(json!({
-                        "op": "add-node",
-                        "node": {
-                            "id": parts[0], "type": parts[1], "title": parts[2],
-                            "tags": ["git-comment"], "data": { "gitCommit": commit.id }
-                        }
-                    }));
-                }
-            } else if let Some(parts) = directive_parts(line, "canvas-edge:") {
-                if parts.len() >= 3 {
-                    operations.push(json!({
-                        "op": "add-edge",
-                        "edge": {
-                            "id": format!("git-directive-{}-{}", commit.short_id, operations.len()),
-                            "source": parts[0], "type": parts[1], "target": parts[2],
-                            "note": "git comment"
-                        }
-                    }));
-                }
-            } else if let Some(parts) = directive_parts(line, "ablation:") {
-                if let Some(name) = parts.first() {
-                    let parameters = parts
-                        .iter()
-                        .skip(1)
-                        .filter_map(|item| item.split_once('='))
-                        .map(|(key, value)| (key.trim().to_string(), json!(value.trim())))
-                        .collect::<serde_json::Map<_, _>>();
-                    let id = format!("ablation-{}-{}", commit.short_id, operations.len());
-                    operations.push(json!({
-                        "op": "add-node",
-                        "node": {
-                            "id": id, "type": "experiment", "title": name,
-                            "tags": ["ablation", "git-derived"],
-                            "data": { "parameters": parameters, "gitCommit": commit.id }
-                        }
-                    }));
-                    operations.push(json!({
-                        "op": "add-edge",
-                        "edge": {
-                            "id": format!("ablation-evidence-{}-{}", commit.short_id, operations.len()),
-                            "source": format!("git-{}", commit.short_id),
-                            "target": id, "type": "supports", "note": "ablation commit"
-                        }
-                    }));
-                }
+    }
+
+    // 主路径：解析项目文件 git diff，聚合为去重后的 GraphPatch 操作。
+    let mut diff_operations = Vec::new();
+    let mut parsed = 0usize;
+    if let Some(relative) = find_project_file(repo) {
+        for commit in commits {
+            let Some(new_text) = git_show_file(repo, &commit.id, &relative) else {
+                continue;
+            };
+            let Ok(new_value) = serde_json::from_str::<Value>(&new_text) else {
+                continue;
+            };
+            let old_value = commit
+                .parents
+                .first()
+                .and_then(|parent| git_show_file(repo, parent, &relative))
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .unwrap_or_else(empty_project);
+            let patch = graph_compiler::graph_patch_from_diff(
+                &old_value,
+                &new_value,
+                plugin_id,
+                "git-history-import",
+                "Git history research graph",
+            );
+            if let Some(ops) = patch.get("operations").and_then(Value::as_array) {
+                diff_operations.extend(ops.iter().cloned());
+                parsed += 1;
             }
         }
     }
+    let diff_count = diff_operations.len();
+    operations.extend(dedup_operations(diff_operations));
+
+    let summary = if parsed > 0 {
+        format!(
+            "{} commits; {} structural changes from {} parsed project diffs",
+            commits.len(),
+            diff_count,
+            parsed
+        )
+    } else {
+        format!("{} commits and their git history evidence", commits.len())
+    };
     json!({
         "apiVersion": "researchcanvas.dev/graph-patch/v1alpha1",
         "source": { "pluginId": plugin_id, "operation": "git-history-import" },
         "title": "Git history research graph",
-        "summary": format!("{} commits and their research directives", commits.len()),
+        "summary": summary,
         "reviewRequired": true,
         "operations": operations
     })
@@ -623,7 +711,7 @@ fn git_snapshot(plugin_id: &str, repo: &Path) -> Result<GitWorkspaceSnapshot, St
     let graph_patch = if commits.is_empty() {
         Value::Null
     } else {
-        graph_patch_from_commits(plugin_id, &commits)
+        graph_patch_from_commits(plugin_id, &root, &commits)
     };
     Ok(GitWorkspaceSnapshot {
         repo_path: root.to_string_lossy().into_owned(),
@@ -892,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn git_history_links_a_pinn_ablation_to_its_commit_and_tag() {
+    fn git_history_links_commits_as_evidence_without_project_files() {
         let root = tempdir().expect("temporary git repository");
         git(root.path(), &["init"]);
         git(
@@ -910,7 +998,7 @@ mod tests {
             &[
                 "commit",
                 "-m",
-                "PINN Fourier embedding ablation\n\nablation: fourier-embedding|fourier=false|hiddenDim=64|hiddenLayers=10|residual=true|hardConstraint=cos-sin|pdeLoss=true|separateLoss=true|autoWeight=true",
+                "PINN Fourier embedding ablation",
             ],
         );
         git(root.path(), &["tag", "research/pinn-fourier-off"]);
@@ -925,14 +1013,81 @@ mod tests {
         let operations = snapshot.graph_patch["operations"]
             .as_array()
             .expect("graph patch operations");
+        // 无项目文件：仅生成 commit → evidence 节点，不再解析 commit message 约定指令。
         assert!(operations.iter().any(|operation| {
+            operation["op"] == "add-node"
+                && operation["node"]["type"] == "evidence"
+                && operation["node"]["id"].as_str().unwrap().starts_with("git-")
+        }));
+        assert!(!operations.iter().any(|operation| {
             operation["node"]["type"] == "experiment"
-                && operation["node"]["data"]["parameters"]["hiddenDim"] == "64"
+        }));
+    }
+
+    #[test]
+    fn git_history_parses_project_file_diffs_through_the_compiler() {
+        let root = tempdir().expect("temporary git repository");
+        git(root.path(), &["init"]);
+        git(
+            root.path(),
+            &["config", "user.name", "Research Canvas Test"],
+        );
+        git(
+            root.path(),
+            &["config", "user.email", "canvas@example.invalid"],
+        );
+        fs::create_dir_all(root.path().join(".research-canvas")).expect("autosave directory");
+        let project = json!({
+            "schemaVersion": 2, "id": "pinn", "title": "PINN", "discipline": "Physics",
+            "nodes": [
+                {"id": "n1", "type": "question", "title": "主问题", "body": "如何建模?", "tags": [], "data": {},
+                 "evidenceIds": [], "status": "confirmed", "provenance": {}},
+                {"id": "n2", "type": "concept", "title": "先验约束", "body": "物理守恒", "tags": [], "data": {},
+                 "evidenceIds": [], "status": "confirmed", "provenance": {}}
+            ],
+            "edges": [
+                {"id": "x1", "type": "supports", "source": "n1", "target": "n2", "directed": true,
+                 "polarity": "positive", "confidence": 0.9, "conditions": [], "evidenceIds": [], "provenance": {}}
+            ],
+            "evidence": [], "placements": [], "scenarios": [], "activity": []
+        });
+        let path = root.path().join(".research-canvas/pinn.mycproj");
+        fs::write(&path, serde_json::to_string_pretty(&project).unwrap()).expect("write project");
+        git(root.path(), &["add", ".research-canvas/pinn.mycproj"]);
+        git(root.path(), &["commit", "-m", "feat: initial PINN project"]);
+
+        let mut edited = project.clone();
+        edited["nodes"].as_array_mut().unwrap().push(json!({
+            "id": "n3", "type": "concept", "title": "新增", "body": "b", "tags": [], "data": {},
+            "evidenceIds": [], "status": "draft", "provenance": {}
+        }));
+        edited["nodes"][0]["body"] = json!("改过的正文");
+        fs::write(&path, serde_json::to_string_pretty(&edited).unwrap()).expect("rewrite project");
+        git(root.path(), &["add", ".research-canvas/pinn.mycproj"]);
+        git(root.path(), &["commit", "-m", "refactor: extend the PINN graph"]);
+
+        let snapshot = git_snapshot("researchcanvas.git-workspace", root.path())
+            .expect("read git research snapshot");
+        let operations = snapshot.graph_patch["operations"]
+            .as_array()
+            .expect("graph patch operations");
+        assert!(snapshot.graph_patch["summary"]
+            .as_str()
+            .unwrap()
+            .contains("structural changes"));
+        // 第二次提交引入 n3 → add-node；第一次提交 n1 的 body 变化 → update-node。
+        assert!(operations.iter().any(|operation| {
+            operation["op"] == "add-node" && operation["node"]["id"] == "n3"
         }));
         assert!(operations.iter().any(|operation| {
-            operation["edge"]["type"] == "supports"
-                && operation["edge"]["note"] == "ablation commit"
+            operation["op"] == "update-node"
+                && operation["nodeId"] == "n1"
+                && operation["changes"]["body"] == "改过的正文"
         }));
+        // 基线 commit → evidence 节点仍然存在。
+        assert!(operations
+            .iter()
+            .any(|operation| operation["node"]["id"].as_str().unwrap().starts_with("git-")));
     }
 
     #[test]
