@@ -28,6 +28,7 @@ import {
 } from "react";
 import type { MessageKey } from "../../../i18n/catalog";
 import { useI18n } from "../../../i18n/provider";
+import type { DiffOverlayState } from "../../../lib/graph/canvas-diff";
 import type {
   EdgeStyleManifest,
   ProjectState,
@@ -112,6 +113,10 @@ type ResearchGraphCanvasProps = {
   radialMenu: RadialMenuPreferences;
   shortcuts: WorkspaceShortcuts;
   pluginContextMenuActions: ResolvedPluginContextMenuAction[];
+  /** Canvas Diff 叠加状态：三色标记 + 幽灵节点/边（null 表示不叠加）。 */
+  diffOverlay?: DiffOverlayState | null;
+  /** 点击 diff 条目后的定位请求；nonce 保证重复点击同一实体仍触发。 */
+  diffFocus?: { id: string; kind: "node" | "edge"; nonce: number } | null;
   onLegendFilter: (filter: LinkLegendFilter | null) => void;
   onSelectNode: (nodeId: string) => void;
   onSelectEdge: (edgeId: string) => void;
@@ -137,9 +142,10 @@ function buildNodes(
   expandedNodeIds: ReadonlySet<string>,
   onToggleExpanded: (nodeId: string) => void,
   highlightedNodeIds?: ReadonlySet<string>,
+  diffOverlay: DiffOverlayState | null | undefined,
 ): WorkspaceNode[] {
   const projected = projectForLegendFilter(project, filter);
-  return projected.nodes.map((record) => {
+  const nodes: WorkspaceNode[] = projected.nodes.map((record) => {
     const placement = projected.placements.find((item) => item.nodeId === record.id);
     const circle = record.data.shape === "circle" || record.type === "question";
     const expanded = !circle && expandedNodeIds.has(record.id) && isExpandableVariable(record);
@@ -159,9 +165,35 @@ function buildNodes(
         expanded,
         onToggleExpanded,
         highlighted: highlightedNodeIds?.has(record.id),
+        diffState: diffOverlay?.nodes[record.id],
       },
     };
   });
+  // 幽灵节点：removed 实体从 base 版本注入，红色虚化且不可交互。
+  if (diffOverlay) {
+    for (const ghost of diffOverlay.removedNodes) {
+      nodes.push({
+        id: ghost.record.id,
+        type: "researchNode",
+        position: { x: ghost.x, y: ghost.y },
+        width: 164,
+        height: 116,
+        selected: false,
+        selectable: false,
+        dragging: false,
+        connectable: false,
+        focusable: false,
+        data: {
+          record: ghost.record,
+          shape: ghost.record.data.shape === "circle" || ghost.record.type === "question" ? "circle" : "card",
+          expanded: false,
+          onToggleExpanded,
+          diffState: "removed",
+        },
+      });
+    }
+  }
+  return nodes;
 }
 
 function buildEdges(
@@ -171,10 +203,11 @@ function buildEdges(
   edgeTypeLabel: (type: ResearchEdgeType) => string,
   edgeStyle: EdgeStyleManifest,
   highlightedEdgeIds?: ReadonlySet<string>,
+  diffOverlay: DiffOverlayState | null | undefined,
 ): WorkspaceEdge[] {
   const projected = projectForLegendFilter(project, filter);
   const routes = computeEdgeRoutes(projected);
-  return projected.edges.map((record) => {
+  const edges: WorkspaceEdge[] = projected.edges.map((record) => {
     const route = routes[record.id];
     return {
       id: record.id,
@@ -191,9 +224,31 @@ function buildEdges(
         labelOffsetX: route?.labelOffsetX,
         labelOffsetY: route?.labelOffsetY,
         highlighted: highlightedEdgeIds?.has(record.id),
+        diffState: diffOverlay?.edges[record.id],
       },
     };
   });
+  // 幽灵边：removed 关系从 base 版本注入（端点存在于 compare 或幽灵集合）。
+  if (diffOverlay) {
+    for (const ghost of diffOverlay.removedEdges) {
+      edges.push({
+        id: ghost.record.id,
+        source: ghost.record.source,
+        target: ghost.record.target,
+        type: "researchEdge",
+        selected: false,
+        selectable: false,
+        focusable: false,
+        data: {
+          record: ghost.record,
+          label: customEdgeNote(ghost.record) || edgeTypeLabel(ghost.record.type),
+          edgeStyle,
+          diffState: "removed",
+        },
+      });
+    }
+  }
+  return edges;
 }
 
 function ResearchGraphInner(props: ResearchGraphCanvasProps) {
@@ -219,6 +274,8 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     radialMenu,
     shortcuts,
     pluginContextMenuActions,
+    diffOverlay,
+    diffFocus,
     onLegendFilter,
     onSelectNode,
     onSelectEdge,
@@ -309,10 +366,10 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     [highlightChain],
   );
   const [nodes, setNodes] = useState(() =>
-    buildNodes(project, selectedNodeId, linkFilter, expandedNodeIds, toggleNodeExpanded, highlightedNodeIds),
+    buildNodes(project, selectedNodeId, linkFilter, expandedNodeIds, toggleNodeExpanded, highlightedNodeIds, diffOverlay),
   );
   const [edges, setEdges] = useState(() =>
-    buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle, highlightedEdgeIds),
+    buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle, highlightedEdgeIds, diffOverlay),
   );
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [contextMenu, setContextMenu] = useState<WorkspaceContextMenuState | null>(null);
@@ -396,12 +453,14 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
           expandedNodeIds,
           toggleNodeExpanded,
           highlightedNodeIds,
+          diffOverlay,
         ),
       );
-      setEdges(buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle, highlightedEdgeIds));
+      setEdges(buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle, highlightedEdgeIds, diffOverlay));
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
+    diffOverlay,
     edgeStyle,
     edgeTypeLabel,
     expandedNodeIds,
@@ -423,6 +482,27 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     }, 380);
     return () => window.clearTimeout(timer);
   }, [applyWorkspaceViewport, inspectorOpen]);
+
+  // Canvas Diff 条目定位：点击变更项后 fitView 到目标节点（边定位到其源节点）。
+  useEffect(() => {
+    if (!diffFocus) return;
+    const instance = flowRef.current;
+    if (!instance) return;
+    const timer = window.setTimeout(() => {
+      const targetId =
+        diffFocus.kind === "edge"
+          ? edges.find((edge) => edge.id === diffFocus.id)?.source ?? diffFocus.id
+          : diffFocus.id;
+      if (!nodes.some((node) => node.id === targetId)) return;
+      void instance.fitView({
+        nodes: [{ id: targetId }],
+        padding: 0.35,
+        maxZoom: 1.15,
+        duration: 260,
+      });
+    }, 140);
+    return () => window.clearTimeout(timer);
+  }, [diffFocus, edges, nodes]);
 
   useEffect(() => {
     const manualMove = manualMoveRef.current;

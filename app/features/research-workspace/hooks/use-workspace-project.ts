@@ -292,6 +292,8 @@ export function useWorkspaceProject(options: WorkspaceProjectOptions = {}) {
 
   return {
     project,
+    /** 撤销历史快照（past，按时间旧→新）；供 Canvas Diff 版本选择。 */
+    history: past,
     selectedNode,
     selectedNodeId,
     selectedEdge,

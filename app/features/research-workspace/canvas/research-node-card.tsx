@@ -66,7 +66,7 @@ function NodeIcon({ type, selected }: { type: ResearchNodeType; selected: boolea
 export const ResearchNodeCard = memo(function ResearchNodeCard({ data, selected }: NodeProps<WorkspaceNode>) {
   const { t } = useI18n();
   const updateNodeInternals = useUpdateNodeInternals();
-  const { record, shape, expanded, onToggleExpanded } = data;
+  const { record, shape, expanded, onToggleExpanded, diffState } = data;
   const highlighted = data.highlighted === true;
   const valueType =
     record.type === "variable" && typeof record.data.valueType === "string"
@@ -76,11 +76,20 @@ export const ResearchNodeCard = memo(function ResearchNodeCard({ data, selected 
   const branchValues = variableBranchValues(record);
   const expandable = branchValues.length > 0;
   const binary = record.data.valueType === "bool";
+  const ghost = diffState === "removed";
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => updateNodeInternals(record.id));
     return () => window.cancelAnimationFrame(frame);
   }, [expanded, record.id, updateNodeInternals]);
+
+  const diffBorder = diffState
+    ? diffState === "added"
+      ? "border-diff-added bg-diff-added-soft"
+      : diffState === "removed"
+        ? "border-diff-removed border-dashed bg-diff-removed-soft"
+        : "border-diff-modified bg-diff-modified-soft"
+    : null;
 
   return (
     <article
@@ -88,13 +97,15 @@ export const ResearchNodeCard = memo(function ResearchNodeCard({ data, selected 
         "zen-node group relative flex h-full w-full flex-col items-center border bg-paper px-3 py-3 text-center text-ink transition",
         expanded ? "justify-start" : "justify-center",
         shape === "circle" ? "rounded-full" : "rounded-[3px]",
-        selected
-          ? "border-blue shadow-[0_0_0_1px_#2457d6]"
-          : highlighted
-            ? "chain-highlight-node"
-            : disputed
-              ? "border-alert"
-              : "border-ink/70 hover:border-ink",
+        diffBorder ??
+          (selected
+            ? "border-blue shadow-[0_0_0_1px_#2457d6]"
+            : highlighted
+              ? "chain-highlight-node"
+              : disputed
+                ? "border-alert"
+                : "border-ink/70 hover:border-ink"),
+        ghost ? "pointer-events-none opacity-60" : "",
       ].join(" ")}
       aria-label={`${t(nodeTypeMessageKeys[record.type] ?? "node.note")}: ${record.title}`}
     >
@@ -145,6 +156,20 @@ export const ResearchNodeCard = memo(function ResearchNodeCard({ data, selected 
             </div>
           ))}
         </div>
+      )}
+      {diffState && (
+        <span
+          className={`absolute -top-3 -right-3 grid size-6 place-items-center rounded-full border bg-paper font-serif text-[13px] font-bold shadow-sm ${
+            diffState === "added"
+              ? "border-diff-added text-diff-added"
+              : diffState === "removed"
+                ? "border-diff-removed text-diff-removed"
+                : "border-diff-modified text-diff-modified"
+          }`}
+          aria-hidden
+        >
+          {diffState === "added" ? "+" : diffState === "removed" ? "−" : "~"}
+        </span>
       )}
       {disputed && (
         <span className="absolute -bottom-3 -right-3 grid size-6 place-items-center rounded-full border border-alert bg-paper font-serif text-[14px] text-alert">

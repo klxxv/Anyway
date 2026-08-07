@@ -32,6 +32,7 @@ pub fn run() {
             graph_cmds::compute_graph_layout,
             graph_cmds::layout_project_view,
             graph_cmds::compile_project,
+            graph_cmds::compute_diff,
             deepseek_client::set_deepseek_api_key,
             deepseek_client::has_deepseek_api_key,
             deepseek_client::clear_deepseek_api_key,

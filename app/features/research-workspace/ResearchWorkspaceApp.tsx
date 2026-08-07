@@ -43,6 +43,7 @@ import {
 } from "../../platform/agent-client";
 import type { PluginGraphPatch } from "../../plugins/contracts";
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
+import { DiffPanel, type DiffMode, type DiffVersion } from "./components/diff-panel";
 import { InspectorPanel } from "./components/inspector-panel";
 import { PdfUploadDialog } from "./components/pdf-upload-dialog";
 import { AgentReviewPanel } from "./components/agent-review-panel";
@@ -60,6 +61,7 @@ import {
 } from "./components/workspace-dialogs";
 import { WorkspaceTopbar } from "./components/workspace-topbar";
 import { useWorkspaceProject } from "./hooks/use-workspace-project";
+import { useCanvasDiff } from "./hooks/use-canvas-diff";
 import type { LinkLegendFilter } from "./workspace-layout";
 import {
   defaultWorkspacePreferences,
@@ -146,7 +148,12 @@ export function ResearchWorkspaceApp() {
   } | null>(null);
   const [pdfCompileResult, setPdfCompileResult] = useState<PdfCompileResult | null>(null);
   const [pdfCompileError, setPdfCompileError] = useState("");
-
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [diffMode, setDiffMode] = useState<DiffMode>("side-by-side");
+  const [diffBaseId, setDiffBaseId] = useState("current");
+  const [diffCompareId, setDiffCompareId] = useState("current");
+  const [diffFocus, setDiffFocus] = useState<{ id: string; kind: "node" | "edge"; nonce: number } | null>(null);
+  const diffFocusRef = useRef(0);
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
@@ -222,6 +229,41 @@ export function ResearchWorkspaceApp() {
   const exportCommand = workspaceCommands.find((command) => command.category === "export");
   const folderCommand = workspaceCommands.find((command) => command.category === "folder");
   const availableGitCommand = workspaceCommands.find((command) => command.category === "git");
+
+  // Canvas Diff 版本列表：撤销历史（旧→新）在前，当前版本居末。
+  const diffVersions = useMemo<DiffVersion[]>(() => {
+    const versions: DiffVersion[] = [];
+    for (let index = workspace.history.length - 1; index >= 0; index -= 1) {
+      const entry = workspace.history[index];
+      versions.push({
+        id: `history-${index}`,
+        label: t("diff.historyVersion", { label: entry.label }),
+        project: entry.project,
+      });
+    }
+    versions.push({ id: "current", label: t("diff.currentVersion"), project: workspace.project });
+    return versions;
+  }, [t, workspace.history, workspace.project]);
+
+  const diffBase = diffVersions.find((version) => version.id === diffBaseId)?.project ?? null;
+  const diffCompare =
+    diffVersions.find((version) => version.id === diffCompareId)?.project ?? null;
+  const diff = useCanvasDiff(diffBase, diffCompare, diffOpen && diffBase !== diffCompare);
+
+  const openDiffPanel = useCallback(() => {
+    setDiffOpen(true);
+    setDiffMode("side-by-side");
+    setDiffFocus(null);
+    setDiffBaseId(
+      workspace.history.length > 0 ? `history-${workspace.history.length - 1}` : "current",
+    );
+    setDiffCompareId("current");
+  }, [workspace.history.length]);
+
+  const closeDiffPanel = useCallback(() => {
+    setDiffOpen(false);
+    setDiffFocus(null);
+  }, []);
   const gitPatch = useMemo(
     () => normalizePluginGraphPatch(gitSnapshot?.graphPatch),
     [gitSnapshot?.graphPatch],
@@ -566,6 +608,7 @@ export function ResearchWorkspaceApp() {
           setLayoutMode(mode);
           showNotice(t("toast.layoutApplied", { layout: layoutLabel(mode) }));
         }}
+        onCompare={openDiffPanel}
         onUndo={workspace.undo}
         onRedo={workspace.redo}
         onExport={exportProject}
@@ -655,6 +698,8 @@ export function ResearchWorkspaceApp() {
               showNotice(t("toast.relationDeleted"));
             }}
             onApplyDefaultLayout={applyDefaultLayout}
+            diffOverlay={diffOpen && diffMode === "overlay" ? diff.overlay : null}
+            diffFocus={diffOpen && diffMode === "overlay" ? diffFocus : null}
             onCreateEdge={(source, target) => {
               const edgeId = workspace.createEdge(source, target, connectType);
               setConnectMode(false);
@@ -873,6 +918,32 @@ export function ResearchWorkspaceApp() {
             setComposer(null);
             setInspectorOpen(true);
             showNotice(t("toast.nodeAdded"));
+          }}
+        />
+      )}
+      {diffOpen && (
+        <DiffPanel
+          versions={diffVersions}
+          baseId={diffBaseId}
+          compareId={diffCompareId}
+          mode={diffMode}
+          result={diff.result}
+          loading={diff.loading}
+          error={diff.error ? t("diff.error", { error: diff.error }) : null}
+          onBaseChange={(id) => {
+            setDiffBaseId(id);
+            setDiffFocus(null);
+          }}
+          onCompareChange={(id) => {
+            setDiffCompareId(id);
+            setDiffFocus(null);
+          }}
+          onModeChange={setDiffMode}
+          onClose={closeDiffPanel}
+          onFocus={(kind, id) => {
+            setDiffMode("overlay");
+            diffFocusRef.current += 1;
+            setDiffFocus({ kind, id, nonce: diffFocusRef.current });
           }}
         />
       )}
