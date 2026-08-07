@@ -2,6 +2,7 @@
 //! 布局是可重算的编译产物：固定算法、固定遍历顺序、不依赖字体测量；
 //! pinned 节点保持坐标，其余节点确定性重排。当前为骨架。
 
+use serde::Serialize;
 use serde_json::Value;
 
 /// 布局模式（spec GC-13: 与前端 view layout mode 对齐）。
@@ -14,7 +15,8 @@ pub enum LayoutMode {
 }
 
 /// 单个节点的布局结果。
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Position {
     pub x: f64,
     pub y: f64,

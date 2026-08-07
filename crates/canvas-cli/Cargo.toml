@@ -1,0 +1,20 @@
+[package]
+name = "canvas-cli"
+version = "0.1.0"
+edition = "2021"
+description = "canvas compile — Research Canvas 图编译 CLI（CI 验证用）。入口 src/bin/canvas.rs，委托 crates/research-graph-compiler 语义内核"
+license = "AGPL-3.0"
+authors = ["Research Canvas Contributors"]
+publish = false
+
+[[bin]]
+name = "canvas"
+path = "src/bin/canvas.rs"
+
+[dependencies]
+research-graph-compiler = { path = "../research-graph-compiler" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
