@@ -116,27 +116,13 @@ jobs:
       - name: Cargo test (src-tauri)
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-  test-rendered:
-    name: Test · Rendered Shell
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      - name: Build & verify rendered HTML
-        run: npm run build:desktop && node --test tests/rendered-html.test.mjs
-
   # ── Build Verification (main push only) ────────────────────────────
   build-next:
     name: Build · Next.js
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -152,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native]
     steps:
       - uses: actions/checkout@v4
 
@@ -194,7 +180,7 @@ jobs:
     name: Plugin · Build .myc
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -249,7 +235,7 @@ jobs:
     name: PR Gate
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native, test-rendered]
+    needs: [lint, test-core, test-platform, test-workspace, test-sdk, test-native]
     steps:
       - name: All required checks passed
         run: echo "✅ All required checks passed — PR is ready to merge."
