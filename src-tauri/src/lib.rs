@@ -3,6 +3,9 @@ pub mod agent_host;
 pub mod deepseek_client;
 pub mod graph_algorithms;
 pub mod graph_compiler;
+pub mod llm_client;
+pub mod llm_plugin;
+pub mod llm_provider_registry;
 pub mod pdf_pipeline;
 mod graph_cmds;
 mod plugin_vm;
@@ -24,6 +27,7 @@ pub fn run() {
         .manage(agent_commands::AgentHostState(std::sync::Mutex::new(
             agent_host::AgentHost::new(std::env::temp_dir()),
         )))
+        .manage(llm_provider_registry::ProviderRegistryState::default())
         .invoke_handler(tauri::generate_handler![
             graph_cmds::compute_graph_layout,
             graph_cmds::layout_project_view,
@@ -48,7 +52,12 @@ pub fn run() {
             agent_commands::start_pdf_job,
             agent_commands::get_job_status,
             agent_commands::review_patch,
-            agent_commands::cancel_job
+            agent_commands::cancel_job,
+            llm_provider_registry::list_llm_providers,
+            llm_provider_registry::set_active_llm_provider,
+            llm_provider_registry::set_llm_api_key,
+            llm_provider_registry::has_llm_api_key,
+            llm_provider_registry::clear_llm_api_key
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

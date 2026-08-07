@@ -18,6 +18,8 @@ use tauri::AppHandle;
 use tauri::Manager;
 use zip::ZipArchive;
 
+use crate::llm_plugin::{self, ProviderDescriptor};
+
 const MYC_API_VERSION: &str = "researchcanvas.dev/v1alpha1";
 const PLUGIN_CALL_API_VERSION: &str = "researchcanvas.dev/plugin-call/v1alpha1";
 const MAX_ARCHIVE_BYTES: u64 = 16 * 1024 * 1024;
@@ -28,74 +30,74 @@ const REMOVED_PLUGINS_FILE: &str = "removed-plugins.json";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MycPluginMetadata {
-    id: String,
-    name: String,
-    version: String,
-    publisher: String,
-    developer: String,
-    description: String,
-    homepage: Option<String>,
-    license: Option<String>,
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub publisher: String,
+    pub developer: String,
+    pub description: String,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginContextMenuContribution {
-    id: String,
-    scope: String,
-    label: String,
-    icon: Option<String>,
+    pub id: String,
+    pub scope: String,
+    pub label: String,
+    pub icon: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginLocaleContribution {
-    locale: String,
-    name: String,
-    path: String,
+    pub locale: String,
+    pub name: String,
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginCommandContribution {
-    id: String,
-    label: String,
-    description: String,
-    category: String,
-    capability: String,
-    formats: Option<Vec<String>>,
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub category: String,
+    pub capability: String,
+    pub formats: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MycPluginContributions {
-    context_menus: Option<Vec<PluginContextMenuContribution>>,
-    locales: Option<Vec<PluginLocaleContribution>>,
-    commands: Option<Vec<PluginCommandContribution>>,
+    pub context_menus: Option<Vec<PluginContextMenuContribution>>,
+    pub locales: Option<Vec<PluginLocaleContribution>>,
+    pub commands: Option<Vec<PluginCommandContribution>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MycPluginSpec {
-    engine: String,
-    entry: String,
-    language: Option<String>,
-    capabilities: Vec<String>,
-    permissions: Vec<String>,
-    contributes: Option<MycPluginContributions>,
+    pub engine: String,
+    pub entry: String,
+    pub language: Option<String>,
+    pub capabilities: Vec<String>,
+    pub permissions: Vec<String>,
+    pub contributes: Option<MycPluginContributions>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MycPluginManifest {
-    api_version: String,
-    kind: String,
-    metadata: MycPluginMetadata,
-    spec: MycPluginSpec,
+    pub api_version: String,
+    pub kind: String,
+    pub metadata: MycPluginMetadata,
+    pub spec: MycPluginSpec,
     /// 发布者对清单内容的 Ed25519 签名（base64 编码，覆盖不含本字段的 JSON 序列化的 SHA-256）。
     /// Ed25519 signature (base64) over SHA-256 of the JSON-serialized manifest without this field.
     #[serde(default)]
-    signature: Option<String>,
+    pub signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -117,13 +119,14 @@ pub struct ThemeManifest {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledMycPlugin {
-    manifest: MycPluginManifest,
-    install_path: String,
-    theme: Option<ThemeManifest>,
-    edge_style: Option<serde_json::Value>,
-    runtime: Option<MycPluginRuntime>,
-    locales: Option<Vec<InstalledPluginLocale>>,
-    workspace: Option<serde_json::Value>,
+    pub(crate) manifest: MycPluginManifest,
+    pub(crate) install_path: String,
+    pub(crate) theme: Option<ThemeManifest>,
+    pub(crate) edge_style: Option<serde_json::Value>,
+    pub(crate) runtime: Option<MycPluginRuntime>,
+    pub(crate) locales: Option<Vec<InstalledPluginLocale>>,
+    pub(crate) workspace: Option<serde_json::Value>,
+    pub provider: Option<ProviderDescriptor>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -318,8 +321,8 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
         .as_ref()
         .and_then(|contributions| contributions.commands.as_ref())
     {
-        if manifest.kind != "WorkspacePlugin" {
-            return Err("Workspace commands require WorkspacePlugin".to_string());
+        if manifest.kind != "WorkspacePlugin" && manifest.kind != "ProviderPlugin" {
+            return Err("Workspace commands require WorkspacePlugin or ProviderPlugin".to_string());
         }
         if commands.len() > 24 {
             return Err("A plugin can contribute at most 24 workspace commands".to_string());
@@ -334,7 +337,7 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
             }
             if !matches!(
                 command.category.as_str(),
-                "export" | "folder" | "git" | "import"
+                "export" | "folder" | "git" | "import" | "llm-provider"
             ) {
                 return Err(format!(
                     "Unsupported workspace command category: {}",
@@ -452,9 +455,31 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 return Err("LocalePlugin entry must reference locales/<tag>.json".to_string());
             }
         }
+        "ProviderPlugin" => {
+            if manifest.spec.engine != "host-mediated" {
+                return Err("ProviderPlugin engine must be host-mediated".to_string());
+            }
+            if manifest.spec.entry != "provider.json" {
+                return Err("ProviderPlugin entry must be provider.json".to_string());
+            }
+            if manifest.spec.language.is_some() {
+                return Err("ProviderPlugin must not declare a guest language".to_string());
+            }
+            let has_llm = manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|c| c == "llm.chat" || c == "llm.configure");
+            if !has_llm {
+                return Err(
+                    "ProviderPlugin must declare at least one of llm.chat or llm.configure"
+                        .to_string(),
+                );
+            }
+        }
         _ => {
             return Err(
-                "Installer accepts ThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, and WorkspacePlugin packages"
+                "Installer accepts ThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, WorkspacePlugin, and ProviderPlugin packages"
                     .to_string(),
             );
         }
@@ -518,7 +543,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     validate_manifest(&manifest)?;
 
     let entry_path = directory.join(&manifest.spec.entry);
-    let (theme, edge_style, runtime, workspace) = match manifest.kind.as_str() {
+    let (theme, edge_style, runtime, workspace, provider) = match manifest.kind.as_str() {
         "ThemePlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
                 .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
@@ -530,6 +555,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
                 edge_style,
                 None,
                 None,
+                None,
             )
         }
         "EdgeStylePlugin" => {
@@ -538,6 +564,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             (
                 None,
                 Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+                None,
                 None,
                 None,
             )
@@ -562,6 +589,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
                     entry_sha256: format!("{digest:x}"),
                 }),
                 None,
+                None,
             )
         }
         "WorkspacePlugin" => {
@@ -580,9 +608,17 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             {
                 return Err("Invalid workspace-plugin.json descriptor".to_string());
             }
-            (None, None, None, Some(descriptor))
+            (None, None, None, Some(descriptor), None)
         }
-        _ => (None, None, None, None),
+        "ProviderPlugin" => {
+            let entry_text = fs::read_to_string(&entry_path)
+                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            let descriptor: ProviderDescriptor =
+                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+            llm_plugin::validate_provider_descriptor(&descriptor)?;
+            (None, None, None, None, Some(descriptor))
+        }
+        _ => (None, None, None, None, None),
     };
     let locales = read_locale_bundles(directory, &manifest)?;
 
@@ -594,6 +630,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         runtime,
         locales,
         workspace,
+        provider,
     })
 }
 
@@ -1053,6 +1090,7 @@ spec:
             }),
             locales: None,
             workspace: None,
+            provider: None,
         }
     }
 

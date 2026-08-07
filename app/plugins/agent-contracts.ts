@@ -1,5 +1,25 @@
 import type { PluginGraphPatch } from "./contracts";
 
+// ── LLM Provider 类型 / LLM Provider types ──
+
+/** 前端可用的 provider 摘要信息 / Provider summary info for frontend. */
+export interface LlmProviderInfo {
+  pluginId: string;
+  pluginVersion: string;
+  providerName: string;
+  providerType: string;
+  baseUrl: string;
+  isActive: boolean;
+  hasApiKey: boolean;
+  requiresApiKey: boolean;
+  apiKeyLabel?: string;
+  defaultRouting: {
+    extraction: { model: string; thinking: boolean; thinkingLevel?: string; jsonOutput: boolean };
+    synthesis: { model: string; thinking: boolean; thinkingLevel?: string; jsonOutput: boolean };
+    recovery: { model: string; thinking: boolean; jsonOutput: boolean };
+  };
+}
+
 // ── AgentPlugin 类型定义 / AgentPlugin type definition ──
 
 /** Agent 运行阶段标签 / Agent pipeline stage labels. */

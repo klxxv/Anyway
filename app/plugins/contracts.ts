@@ -30,7 +30,8 @@ export type MycPluginKind =
   | "SourcePlugin"
   | "ConnectorPlugin"
   | "AnalysisPlugin"
-  | "AgentPlugin";
+  | "AgentPlugin"
+  | "ProviderPlugin";
 
 export interface MycPluginMetadata {
   id: string;
@@ -80,7 +81,7 @@ export interface PluginLocaleContribution {
   path: string;
 }
 
-export type PluginCommandCategory = "export" | "folder" | "git" | "import";
+export type PluginCommandCategory = "export" | "folder" | "git" | "import" | "llm-provider";
 
 /** 由宿主中介的命令元数据；执行时仍需复核命名能力 / Host-mediated metadata still requires its named capability. */
 export interface PluginCommandContribution {
@@ -116,6 +117,35 @@ export interface MycPluginManifest {
   spec: MycPluginSpec;
 }
 
+/** Provider 模型路由条目 / Provider model route entry. */
+export interface ProviderRoutingEntry {
+  model: string;
+  thinking: boolean;
+  thinkingLevel?: "low" | "medium" | "high";
+  jsonOutput: boolean;
+}
+
+/** Provider 配置 / Provider configuration descriptor. */
+export interface ProviderConfig {
+  type: "openai-compatible";
+  baseUrl: string;
+  chatCompletionsPath: string;
+  defaultRouting: {
+    extraction: ProviderRoutingEntry;
+    synthesis: ProviderRoutingEntry;
+    recovery: ProviderRoutingEntry;
+  };
+  requiresApiKey: boolean;
+  apiKeyLabel?: string;
+  timeoutSecs?: number;
+}
+
+/** Provider 描述符 / Provider descriptor (provider.json). */
+export interface ProviderDescriptor {
+  schemaVersion: 1;
+  provider: ProviderConfig;
+}
+
 export interface InstalledMycPlugin {
   manifest: MycPluginManifest;
   installPath: string;
@@ -124,6 +154,7 @@ export interface InstalledMycPlugin {
   runtime?: MycPluginRuntime;
   locales?: InstalledPluginLocale[];
   workspace?: WorkspacePluginDescriptor;
+  provider?: ProviderDescriptor;
 }
 
 export interface MycPluginRuntime {

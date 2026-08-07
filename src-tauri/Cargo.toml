@@ -24,6 +24,7 @@ serde_yaml = "0.9"
 base64 = "0.22"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 sha2 = "0.10"
+async-trait = "0.1"
 tauri = { version = "2", features = [] }
 thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
