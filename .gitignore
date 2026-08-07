@@ -57,6 +57,29 @@ id_ed25519.pub
 !/docs/module-boundaries.md
 !/docs/architecture/
 
+# deployment-specific credentials
+/.openai/
+
+# external reference examples (not core app)
+/examples/
+
+# standalone demos
+/demos/
+
+# cloudflare worker (not used in desktop app)
+/worker/
+
+# cloudflare d1 database (not used in desktop app)
+/db/
+/drizzle/
+
+# openai deployment plugin (tied to .openai/)
+/build/
+
+# auto-generated docs
+/merge-roadmap.md
+/design-qa.md
+
 # misc
 .DS_Store
 Thumbs.db
