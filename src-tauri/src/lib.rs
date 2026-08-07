@@ -13,6 +13,10 @@ mod signing;
 mod trackpad;
 mod workspace_host;
 
+// ── PDF Agent 多阶段提取与 GraphPatch 构建（不合并到 pdf_pipeline）──
+pub use graphpatch_gen;
+pub use semantic_pipeline;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

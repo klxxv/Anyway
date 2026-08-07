@@ -15,7 +15,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 lopdf = "0.34"
 regex = "1"
+graphpatch-gen = { path = "../crates/graphpatch-gen" }
 research-graph-compiler = { path = "../crates/research-graph-compiler" }
+semantic-pipeline = { path = "../crates/semantic-pipeline" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
