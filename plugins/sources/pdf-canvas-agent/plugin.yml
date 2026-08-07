@@ -1,0 +1,21 @@
+apiVersion: researchcanvas.dev/v1alpha1
+kind: AgentPlugin
+metadata:
+  id: pdf-canvas-agent
+  name: PDF Canvas Agent
+  version: 0.1.0
+  publisher: Research Canvas
+  developer: Agent Platform Team
+  description: >
+    从 PDF 论文中提取 DocumentMap → 语义结构 → 审阅门控的 GraphPatch。
+    Agent 不持有 API Key、文件系统句柄、网络访问、Graph store 写权限。
+    宿主管理一切，Agent 输出只能进入 reviewRequired GraphPatch。
+  license: MIT
+spec:
+  engine: host-mediated
+  entry: agent-manifest.json
+  capabilities:
+    - agent.pdf.read
+    - agent.graph.patch.propose
+    - agent.review.request
+  permissions: []

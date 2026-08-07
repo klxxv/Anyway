@@ -14,8 +14,6 @@
 use super::{Factor, FactorGraph, FactorKind};
 use serde::Serialize;
 
-use serde::Serialize;
-
 /// 信念状态 / Belief state (spec §4).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
