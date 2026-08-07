@@ -1,6 +1,7 @@
 mod plugin_vm;
 mod plugins;
 mod projects;
+mod signing;
 #[cfg(windows)]
 mod trackpad;
 mod workspace_host;

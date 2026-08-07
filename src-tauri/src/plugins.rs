@@ -92,6 +92,10 @@ pub struct MycPluginManifest {
     kind: String,
     metadata: MycPluginMetadata,
     spec: MycPluginSpec,
+    /// 发布者对清单内容的 Ed25519 签名（base64 编码，覆盖不含本字段的 JSON 序列化的 SHA-256）。
+    /// Ed25519 signature (base64) over SHA-256 of the JSON-serialized manifest without this field.
+    #[serde(default)]
+    signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -588,6 +592,16 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     })
 }
 
+/// 将清单序列化为 JSON 并移除 signature 字段，用于签名验证。
+/// Serializes manifest to JSON with the signature field removed, for signature verification.
+fn manifest_to_json_without_signature(manifest: &MycPluginManifest) -> serde_json::Value {
+    let mut value = serde_json::to_value(manifest).expect("Manifest serialization is infallible");
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("signature");
+    }
+    value
+}
+
 /// 原子移动到 `installed` 前校验并暂存归档 / Validates and stages an archive before atomically renaming it into `installed`.
 fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
     if archive_path
@@ -622,6 +636,23 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
         let manifest: MycPluginManifest =
             serde_yaml::from_str(&text).map_err(|error| error.to_string())?;
         validate_manifest(&manifest)?;
+
+        // --- Ed25519 签名验证 / Ed25519 signature verification ---
+        if let Some(ref signature_b64) = manifest.signature {
+            if signature_b64.trim().is_empty() {
+                return Err("Plugin manifest contains an empty signature field".to_string());
+            }
+            let trusted_keys = crate::signing::load_all_trusted_keys(base)?;
+            let manifest_without_sig = manifest_to_json_without_signature(&manifest);
+            crate::signing::verify_manifest_signature(
+                &manifest.metadata.publisher,
+                &manifest_without_sig,
+                signature_b64,
+                &trusted_keys,
+            )?;
+        }
+        // --- 签名验证结束 / End signature verification ---
+
         manifest
     };
 
@@ -1235,5 +1266,337 @@ spec:
         assert_eq!(locales[0].locale, "ja-JP");
         assert_eq!(locales[0].messages["workspace.menu"], "メニュー");
         assert!(installed.runtime.is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // Ed25519 signature verification tests
+    // ------------------------------------------------------------------
+
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    use ed25519_dalek::{Signature, Signer, SigningKey};
+
+    fn signed_theme_manifest(publisher: &str, sign_fn: Option<&dyn Fn(&str) -> String>) -> String {
+        let mut yaml = format!(
+            r#"apiVersion: researchcanvas.dev/v1alpha1
+kind: ThemePlugin
+metadata:
+  id: {publisher}.test-theme
+  name: Signed Theme
+  version: 1.0.0
+  publisher: {publisher}
+  developer: Test
+  description: A signed theme plugin.
+spec:
+  engine: declarative
+  entry: theme.json
+  capabilities:
+    - theme.register
+  permissions: []
+"#,
+        );
+        if let Some(sign) = sign_fn {
+            // Must match the exact JSON shape produced by serde_json::to_value(MycPluginManifest),
+            // including Option fields that serialize as null.
+            let manifest_value = serde_json::json!({
+                "apiVersion": "researchcanvas.dev/v1alpha1",
+                "kind": "ThemePlugin",
+                "metadata": {
+                    "id": format!("{publisher}.test-theme"),
+                    "name": "Signed Theme",
+                    "version": "1.0.0",
+                    "publisher": publisher,
+                    "developer": "Test",
+                    "description": "A signed theme plugin.",
+                    "homepage": null,
+                    "license": null
+                },
+                "spec": {
+                    "engine": "declarative",
+                    "entry": "theme.json",
+                    "language": null,
+                    "capabilities": ["theme.register"],
+                    "permissions": [],
+                    "contributes": null
+                }
+            });
+            let payload = crate::signing::manifest_payload(&manifest_value);
+            let signature_b64 = sign(&BASE64.encode(&payload));
+            yaml.push_str(&format!("signature: {signature_b64}\n"));
+        }
+        yaml
+    }
+
+    /// A minimal valid theme.json that satisfies ThemeManifest deserialization.
+    fn valid_theme_json() -> serde_json::Value {
+        serde_json::json!({
+            "id": "test.theme",
+            "name": "Test Theme",
+            "publisher": "test-publisher",
+            "colors": {}
+        })
+    }
+
+    #[test]
+    fn accepts_signed_plugin_with_trusted_key() {
+        let root = tempdir().expect("temp root");
+
+        let signing_key = SigningKey::generate(&mut rand_core::OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_b64 = BASE64.encode(verifying_key.as_bytes());
+        let publisher = "trusted-publisher";
+
+        let trusted_json =
+            serde_json::json!({ publisher: pubkey_b64 }).to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json)
+            .expect("write trusted keys");
+
+        let package = root.path().join("signed-theme.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+        let sign_closure = |payload_b64: &str| -> String {
+            let payload_bytes = BASE64.decode(payload_b64).expect("decode payload");
+            let signature: Signature = signing_key.sign(&payload_bytes);
+            BASE64.encode(signature.to_bytes())
+        };
+
+        let manifest_yaml = signed_theme_manifest(publisher, Some(&sign_closure));
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(manifest_yaml.as_bytes())
+            .expect("manifest bytes");
+        let theme_json = valid_theme_json().to_string();
+        archive
+            .start_file("theme.json", options)
+            .expect("theme entry");
+        archive
+            .write_all(theme_json.as_bytes())
+            .expect("theme bytes");
+        archive.finish().expect("finish archive");
+
+        let installed =
+            install_archive_into(root.path(), &package).expect("signed plugin should install");
+        assert_eq!(installed.manifest.metadata.publisher, publisher);
+        assert!(installed.manifest.signature.is_some());
+        assert!(installed.theme.is_some());
+    }
+
+    #[test]
+    fn rejects_signed_plugin_with_wrong_key() {
+        let root = tempdir().expect("temp root");
+
+        let signing_key_a = SigningKey::generate(&mut rand_core::OsRng);
+        let verifying_key_b = SigningKey::generate(&mut rand_core::OsRng).verifying_key();
+        let pubkey_b64_b = BASE64.encode(verifying_key_b.as_bytes());
+        let publisher = "untrusted-publisher";
+
+        let trusted_json =
+            serde_json::json!({ publisher: pubkey_b64_b }).to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json)
+            .expect("write trusted keys");
+
+        let package = root.path().join("bad-sig.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+        let sign_closure_a = |payload_b64: &str| -> String {
+            let payload_bytes = BASE64.decode(payload_b64).expect("decode payload");
+            let signature: Signature = signing_key_a.sign(&payload_bytes);
+            BASE64.encode(signature.to_bytes())
+        };
+
+        let manifest_yaml = signed_theme_manifest(publisher, Some(&sign_closure_a));
+        let theme_json = valid_theme_json().to_string();
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(manifest_yaml.as_bytes())
+            .expect("manifest bytes");
+        archive
+            .start_file("theme.json", options)
+            .expect("theme entry");
+        archive
+            .write_all(theme_json.as_bytes())
+            .expect("theme bytes");
+        archive.finish().expect("finish archive");
+
+        let result = install_archive_into(root.path(), &package);
+        assert!(result.is_err(), "signature mismatch must be rejected");
+        assert!(
+            result
+                .unwrap_err()
+                .contains("signature verification failed"),
+            "error should mention signature verification"
+        );
+    }
+
+    #[test]
+    fn rejects_signed_plugin_without_trusted_key() {
+        let root = tempdir().expect("temp root");
+
+        let signing_key = SigningKey::generate(&mut rand_core::OsRng);
+        let publisher = "unknown-publisher";
+
+        let package = root.path().join("unknown-sig.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+        let sign_closure = |payload_b64: &str| -> String {
+            let payload_bytes = BASE64.decode(payload_b64).expect("decode payload");
+            let signature: Signature = signing_key.sign(&payload_bytes);
+            BASE64.encode(signature.to_bytes())
+        };
+
+        let manifest_yaml = signed_theme_manifest(publisher, Some(&sign_closure));
+        let theme_json = valid_theme_json().to_string();
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(manifest_yaml.as_bytes())
+            .expect("manifest bytes");
+        archive
+            .start_file("theme.json", options)
+            .expect("theme entry");
+        archive
+            .write_all(theme_json.as_bytes())
+            .expect("theme bytes");
+        archive.finish().expect("finish archive");
+
+        let result = install_archive_into(root.path(), &package);
+        assert!(result.is_err(), "unknown publisher must be rejected");
+        assert!(
+            result.unwrap_err().contains("No trusted public key found"),
+            "error should mention missing trusted key"
+        );
+    }
+
+    #[test]
+    fn unsigned_plugin_still_installs() {
+        let root = tempdir().expect("temp root");
+
+        let manifest_yaml = signed_theme_manifest("unsigned-publisher", None::<&dyn Fn(&str) -> String>);
+        let theme_json = valid_theme_json().to_string();
+
+        let package = root.path().join("unsigned.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(manifest_yaml.as_bytes())
+            .expect("manifest bytes");
+        archive
+            .start_file("theme.json", options)
+            .expect("theme entry");
+        archive
+            .write_all(theme_json.as_bytes())
+            .expect("theme bytes");
+        archive.finish().expect("finish archive");
+
+        let installed =
+            install_archive_into(root.path(), &package).expect("unsigned plugin should install");
+        assert!(installed.manifest.signature.is_none());
+        assert!(installed.theme.is_some());
+    }
+
+    #[test]
+    fn tampered_manifest_with_valid_signature_rejected() {
+        let root = tempdir().expect("temp root");
+
+        let signing_key = SigningKey::generate(&mut rand_core::OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_b64 = BASE64.encode(verifying_key.as_bytes());
+        let publisher = "honest-publisher";
+
+        let trusted_json =
+            serde_json::json!({ publisher: pubkey_b64 }).to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json)
+            .expect("write trusted keys");
+
+        let original_value = serde_json::json!({
+            "apiVersion": "researchcanvas.dev/v1alpha1",
+            "kind": "ThemePlugin",
+            "metadata": {
+                "id": "honest-publisher.test-theme",
+                "name": "Honest Theme",
+                "version": "1.0.0",
+                "publisher": publisher,
+                "developer": "Honest Dev",
+                "description": "Honest plugin.",
+                "homepage": null,
+                "license": null
+            },
+            "spec": {
+                "engine": "declarative",
+                "entry": "theme.json",
+                "language": null,
+                "capabilities": ["theme.register"],
+                "permissions": [],
+                "contributes": null
+            }
+        });
+        let payload = crate::signing::manifest_payload(&original_value);
+        let signature: Signature = signing_key.sign(&payload);
+        let signature_b64 = BASE64.encode(signature.to_bytes());
+
+        let tampered_yaml = format!(
+            r#"apiVersion: researchcanvas.dev/v1alpha1
+kind: ThemePlugin
+metadata:
+  id: {publisher}.evil-theme
+  name: Evil Theme
+  version: 9.9.9
+  publisher: {publisher}
+  developer: Evil Dev
+  description: Tampered malicious plugin.
+spec:
+  engine: declarative
+  entry: theme.json
+  capabilities:
+    - theme.register
+  permissions: []
+signature: {signature_b64}
+"#
+        );
+
+        let package = root.path().join("tampered.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(tampered_yaml.as_bytes())
+            .expect("tampered manifest bytes");
+        let theme_json = valid_theme_json().to_string();
+        archive
+            .start_file("theme.json", options)
+            .expect("theme entry");
+        archive
+            .write_all(theme_json.as_bytes())
+            .expect("theme bytes");
+        archive.finish().expect("finish archive");
+
+        let result = install_archive_into(root.path(), &package);
+        assert!(
+            result.is_err(),
+            "tampered manifest with valid signature must be rejected"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .contains("signature verification failed"),
+            "error should mention signature verification failure"
+        );
     }
 }
