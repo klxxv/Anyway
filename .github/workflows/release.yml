@@ -20,18 +20,21 @@ jobs:
     name: Build · ${{ matrix.triple }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: windows-latest
-            triple: x86_64-windows
+            triple: x86_64-pc-windows-msvc
             artifact: msi
           - runner: macos-latest
-            triple: aarch64-macos
+            triple: aarch64-apple-darwin
             artifact: dmg
           - runner: ubuntu-latest
-            triple: x86_64-linux
+            triple: x86_64-unknown-linux-gnu
             artifact: AppImage
 
     steps:
