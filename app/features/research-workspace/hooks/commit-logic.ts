@@ -1,4 +1,4 @@
-import { computeLayout } from "../../../lib/research-core";
+import { computeLayout } from "../../../lib/layout";
 import type {
   LayoutMode,
   ProjectState,

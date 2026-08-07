@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProjectState, ResearchNodeType } from "../app/lib/research-types";
-import { computeLayout } from "../app/lib/research-core";
+import { computeLayout } from "../app/lib/layout";
 import type { PluginGraphPatch } from "../app/plugins/contracts";
 import { zenWorkspaceFixture } from "../app/features/research-workspace/workspace-fixture";
 import { projectForLegendFilter } from "../app/features/research-workspace/workspace-layout";
