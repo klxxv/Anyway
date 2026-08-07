@@ -110,6 +110,8 @@ pub struct ThemeManifest {
     source: Option<String>,
     colors: serde_json::Value,
     components: Option<serde_json::Value>,
+    /// ThemePlugin 可内嵌边样式，统一颜色+连线外观。
+    edge_style: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -520,9 +522,12 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         "ThemePlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
                 .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            let theme: ThemeManifest =
+                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+            let edge_style = theme.edge_style.clone();
             (
-                Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
-                None,
+                Some(theme),
+                edge_style,
                 None,
                 None,
             )

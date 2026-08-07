@@ -1,17 +1,18 @@
 apiVersion: researchcanvas.dev/v1alpha1
-kind: EdgeStylePlugin
+kind: ThemePlugin
 metadata:
   id: researchcanvas.circuit-orthogonal
   name: Circuit Orthogonal
   version: 1.1.0
   publisher: Research Canvas Community
   developer: Research Canvas Visual Systems
-  description: Crisp 90-degree experiment connectors with semantic support and refutation strokes.
+  description: Blueprint-inspired theme with crisp 90-degree experiment connectors, semantic support, and refutation strokes.
   homepage: https://github.com/research-canvas/plugins
   license: MIT
 spec:
   engine: declarative
-  entry: edge-style.json
+  entry: theme.json
   capabilities:
+    - theme.register
     - edge.style.register
   permissions: []

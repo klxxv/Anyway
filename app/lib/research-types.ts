@@ -306,6 +306,24 @@ export interface PluginManifest {
   publisher: string;
 }
 
+/** 声明式主题中可嵌入的视觉-only 边样式（不含 id/name 等元数据）。 */
+export interface EdgeStyleContent {
+  routing: EdgeRoutingMode;
+  stroke: EdgeStrokeStyle & {
+    color: string;
+    width: number;
+    selectedWidth: number;
+    opacity: number;
+    cornerRadius?: number;
+    offset?: number;
+  };
+  relations?: Partial<Record<ResearchEdgeType, EdgeStrokeStyle>>;
+  marker: {
+    type: "arrow" | "closed-arrow" | "none";
+    size: number;
+  };
+}
+
 /** 声明式主题令牌，不携带可执行代码 / Declarative theme tokens with no executable code. */
 export interface ThemeManifest {
   id: string;
@@ -324,6 +342,8 @@ export interface ThemeManifest {
     accent: string;
     border: string;
   };
+  /** 可选：主题内嵌的边样式（ThemePlugin 统一颜色+连线外观）。 */
+  edgeStyle?: EdgeStyleContent;
   components?: {
     toast?: {
       background?: string;
