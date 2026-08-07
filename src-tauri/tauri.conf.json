@@ -21,7 +21,11 @@
       "../plugins/packages/*.myc": "plugins/packages/"
     },
     "targets": [
-      "nsis"
+      "nsis",
+      "dmg",
+      "appimage",
+      "deb",
+      "rpm"
     ],
     "windows": {
       "nsis": {
