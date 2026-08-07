@@ -1,5 +1,6 @@
 pub mod graph_algorithms;
 pub mod graph_compiler;
+mod graph_cmds;
 mod plugin_vm;
 mod plugins;
 mod projects;
@@ -13,6 +14,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            graph_cmds::compute_graph_layout,
+            graph_cmds::layout_project_view,
             plugins::install_myc_plugin,
             plugins::uninstall_myc_plugin,
             plugins::list_installed_plugins,

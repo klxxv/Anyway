@@ -1,13 +1,14 @@
 //! 图不变式检查 / Graph invariant checks.
 //!
-//! 覆盖：dangling 引用、id 唯一性（跨集合全局）、证据接地完整性、边极性一致性、
-//! 布局/场景/导航区的悬空引用。一切图属性由本模块硬计算，绝不由 LLM/代理生成。
+//! 覆盖：dangling 引用 / id 唯一性（跨集合全局）/ 证据接地完整性 / 边极性一致性 /
+//! 布局区 placement 引用 / 场景区禁用与覆盖引用 / 导航区最近与固定节点引用。
+//! 编译管线（§15.1）在 `canonical::compile` 中调用本模块。
 
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-/// 违规严重度。
+/// 违规严重度 / Violation severity.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -15,14 +16,14 @@ pub enum Severity {
     Warning,
 }
 
-/// 一条图不变式违规。
+/// 一条图不变式违规 / A single graph-invariant violation.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct InvariantViolation {
-    /// 机器可读代码，如 "dangling-node-reference"。
+    /// 机器可读代码 / Machine-readable code, e.g. "dangling-node-reference".
     pub code: String,
     pub severity: Severity,
-    /// 违规实体位置，如 "edge:x1"。
+    /// 违规实体位置，如 "edge:x1" / Entity location, e.g. "edge:x1".
     pub entity: String,
     pub message: String,
 }
@@ -67,7 +68,7 @@ fn collect_ids(
     }
 }
 
-/// 检查实体的 evidenceIds 是否全部可解析（证据接地完整性的一半）。
+/// 检查实体的 evidenceIds 是否全部可解析（证据接地完整性的另一半）。
 fn check_evidence_ids(
     entity: &Value,
     location: &str,
@@ -137,6 +138,8 @@ fn check_polarity(edge: &Value, location: &str, violations: &mut Vec<InvariantVi
 }
 
 /// 图不变式检查：dangling 引用 / id 唯一性 / 证据接地完整性 / 边极性一致性。
+/// Graph invariant checks: dangling references, id uniqueness, evidence
+/// grounding completeness, and edge polarity consistency.
 pub fn check_invariants(project: &Value) -> Vec<InvariantViolation> {
     let mut violations = Vec::new();
 
@@ -169,7 +172,7 @@ pub fn check_invariants(project: &Value) -> Vec<InvariantViolation> {
         }
     }
 
-    // id 唯一性（跨集合全局唯一）。
+    // id 唯一性（跨集合全局唯一）/ Global id uniqueness across collections.
     let mut seen: HashMap<String, String> = HashMap::new();
     collect_ids(&nodes, "nodes", &mut seen, &mut violations);
     collect_ids(&edges, "edges", &mut seen, &mut violations);
@@ -340,23 +343,14 @@ pub fn check_invariants(project: &Value) -> Vec<InvariantViolation> {
     violations
 }
 
+// ---------------------------------------------------------------------------
+// 测试 / Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn clean_project_has_no_invariant_violations() {
-        let project = json!({
-            "schemaVersion": 2, "id": "p", "title": "T", "discipline": "D",
-            "updatedAt": "2026-08-01T00:00:00Z", "revision": 1,
-            "nodes": [{"id": "n1", "type": "question", "title": "Q", "body": "b", "tags": [], "data": {}, "evidenceIds": ["e1"], "status": "confirmed", "provenance": {}}],
-            "edges": [{"id": "x1", "type": "supports", "source": "n1", "target": "n1", "directed": true, "polarity": "positive", "conditions": [], "evidenceIds": [], "provenance": {}}],
-            "evidence": [{"id": "e1", "sourceType": "paper", "sourceId": "p", "title": "T", "status": "verified", "provenance": {}}],
-            "placements": [], "scenarios": [], "activity": []
-        });
-        assert!(check_invariants(&project).is_empty());
-    }
 
     #[test]
     fn invariants_report_dangling_references_and_duplicates() {
@@ -388,7 +382,14 @@ mod tests {
         assert!(codes.contains(&"unresolved-evidence-reference"), "{codes:?}");
         assert!(codes.contains(&"uncited-evidence"), "{codes:?}");
         assert!(codes.contains(&"polarity-conflict"), "{codes:?}");
+        // dangling 位置标注正确。
         assert!(violations.iter().any(|v| v.entity == "edge:x1" && v.code == "dangling-node-reference"));
         assert!(violations.iter().any(|v| v.entity == "placement:pl" && v.code == "dangling-node-reference"));
+    }
+
+    #[test]
+    fn clean_project_has_no_invariant_violations() {
+        let violations = check_invariants(&super::super::canonical::tests::sample_project());
+        assert!(violations.is_empty(), "{violations:?}");
     }
 }

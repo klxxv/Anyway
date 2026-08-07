@@ -284,3 +284,26 @@ pub fn compare_scenario_reachability(project: &Value, root_id: &str, scenario_id
         alternate_path_node_ids: alternate,
     }
 }
+
+/// Compute a structural graph diff between two project versions and return a GraphPatch.
+/// Used by workspace_host to convert git history into graph operations.
+// TODO(Phase 2): implement full structural diff with add-node/update-node/add-edge operations.
+pub fn graph_patch_from_diff(
+    _old: &Value,
+    _new: &Value,
+    _plugin_id: &str,
+    _operation: &str,
+    _description: &str,
+) -> Value {
+    serde_json::json!({
+        "apiVersion": "researchcanvas.dev/graph-patch/v1alpha1",
+        "source": {
+            "pluginId": _plugin_id,
+            "operation": _operation
+        },
+        "title": _description,
+        "summary": "Structural graph diff placeholder.",
+        "reviewRequired": true,
+        "operations": []
+    })
+}

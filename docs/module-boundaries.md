@@ -2,35 +2,21 @@
 
 ## Stable kernel
 
-`src-tauri/src/graph_compiler/` (Rust) is the semantic kernel: canonicalization,
-hashing (blockHash/fileHash), graph invariants, logic chains, contradiction chains,
-reachability, graph diff, deterministic layout, digest/mermaid exports. Graph
-properties are hard-computed here — never by LLM/agents (§15 of canvas-format-v3.md).
-Modules stay ≤500 lines each: `canonical` (canonicalization + dual hashing),
-`invariants` (invariant checks), `algorithms` (traversal/paths), `analysis`
-(cycles/contradiction chains/logic chains/scenario diffs), `mod` (compile pipeline
-§15.1 + version-control diff §6).
-`src-tauri/src/graph_algorithms.rs` is the companion kernel for the deterministic
-hard-computations that ship in `app/lib/graph|layout|analysis`: BFS/DFS traversal,
-cycle detection, shortest paths, scenario reachability, logic chains, influence
-propagation, and the six deterministic layout projections.
+`src-tauri/src/graph_compiler/` (Rust) is the semantic kernel, split into
+`canonical.rs` (canonicalization + hashing), `invariants.rs` (graph invariants),
+`layout.rs` (deterministic layout), and `algorithms.rs` (graph algorithms);
+`mod.rs` re-exports the public API. Graph properties are hard-computed here —
+never by LLM/agents (§15 of canvas-format-v3.md). Layout (§11) is intent-driven:
+`views[].layout = { mode, params }` plus computed positions; only human-pinned
+coordinates override the computation, and unpinned drags never persist.
 
 The same crate is reused by the desktop app (Tauri), the registry server, and the
 `canvas compile` CLI for CI verification.
 
 `app/lib/research-types.ts` remains the renderer- and desktop-independent type
-contract. Client graph algorithms live in `app/lib/graph`, `app/lib/layout`, and
-`app/lib/analysis`; fixtures and tests stay there, and their Rust twins in
-`graph_compiler` are kept bit-identical through dual-implementation tests until
-the UI is switched to Tauri commands.
-Parity with the Rust kernel is gated by `tests/compiler-parity.test.ts`
-(npm run test:compiler), which drives the SAME MNIST + social fixtures through both
-implementations and asserts bit-for-bit identical output. Only after the parity gate
-passes is the TS implementation allowed to be removed (§15.5 migration path).
-
-`app/lib/compiler-reference.ts` is a TS reference implementation of the v3
-canonicalization. It is used ONLY as the comparison anchor for the canonicalize
-byte-level parity check and is not part of any runtime path.
+contract. `app/lib/research-core.ts` is the thin client wrapper: fixtures and
+tests stay; algorithm implementations call the Rust compiler via Tauri commands
+until parity is proven by bit-identical dual-implementation tests.
 
 ## Application features
 
