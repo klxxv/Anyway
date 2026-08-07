@@ -50,3 +50,22 @@ pub use hash::{
     evidence_claim, file_hash, node_claim, sha256_hex,
 };
 pub use invariant::{check_invariants, InvariantViolation, Severity};
+
+// ---------------------------------------------------------------------------
+// 逻辑计算层（spec §4-5, GC-08…GC-11）：因子图编译、统计证据、BP、矛盾见证。
+// ---------------------------------------------------------------------------
+
+pub use factor::bp::{
+    belief_propagation, loopy_belief_propagation, sigmoid, tree_belief_propagation, BeliefState,
+    BpOptions, BpResult, BpStatus,
+};
+pub use factor::compile::compile_factor_graph;
+pub use factor::contradiction::{
+    find_contradictions, ContradictionOptions, ContradictionReport, ContradictionWitness,
+};
+pub use factor::statistics::{
+    combine_related_evidence, edge_efficacy, log_likelihood_ratio, normalize_statistical_evidence,
+    CalibrationMethod, CompiledEdgeMetric, EdgeQuality, EvidenceDirection, StatisticalEvidence,
+    P_VALUE_FLOOR,
+};
+pub use factor::{Factor, FactorDiagnostic, FactorGraph, FactorKind, FactorVariable};
