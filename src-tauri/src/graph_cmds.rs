@@ -3,7 +3,63 @@
 //! 语义内核（graph_compiler）是纯 Rust 库；本模块是它到 Webview 的唯一桥：
 //! 参数经 JSON 校验后交给纯函数，结果序列化为 camelCase JSON。不持有状态。
 
-use serde_json::Value;
+use serde_json::{json, Value};
+
+/// 解析 diff 输入：接受完整 ProjectState JSON，或 `{ fileHash, project }` 包装。
+/// 包装形式会校验 fileHash 与 project 内容一致（git 式自编码自校验），
+/// 纯 fileHash 字符串不可逆，拒绝并提示。
+fn resolve_diff_input(value: &Value) -> Result<Value, String> {
+    if let Some(object) = value.as_object() {
+        if let Some(project) = object.get("project") {
+            let expected = object
+                .get("fileHash")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "diff input { fileHash, project } requires a fileHash string".to_string())?;
+            let actual = research_graph_compiler::hash::file_hash(project);
+            if actual != expected {
+                return Err(format!("diff input fileHash mismatch: expected {expected}, computed {actual}"));
+            }
+            return Ok(project.clone());
+        }
+        if object.contains_key("nodes") || object.contains_key("edges") {
+            return Ok(value.clone());
+        }
+    }
+    if value.is_string() {
+        return Err("diff input cannot be a bare fileHash: it is not reversible; pass the ProjectState JSON or { fileHash, project }".to_string());
+    }
+    Err("diff input must be a ProjectState JSON object or { fileHash, project }".to_string())
+}
+
+/// 两个版本的结构化 diff（内核层 Canvas Diff）。
+/// 每个参数接受完整 ProjectState JSON，或带 fileHash 自校验的 `{ fileHash, project }` 包装。
+/// 返回 CanvasDiffResult：addedNodes / removedNodes / modifiedNodes / changedBlockHashes /
+/// addedEdges / removedEdges 等（camelCase，见 canvas-diff-design.md §2.1）。
+#[tauri::command]
+pub fn compute_diff(v1: Value, v2: Value) -> Result<Value, String> {
+    let project_v1 = resolve_diff_input(&v1)?;
+    let project_v2 = resolve_diff_input(&v2)?;
+    let entity_count = ["nodes", "edges", "evidence"]
+        .iter()
+        .map(|collection| {
+            project_v1
+                .get(*collection)
+                .and_then(Value::as_array)
+                .map(|array| array.len())
+                .unwrap_or(0)
+                + project_v2
+                    .get(*collection)
+                    .and_then(Value::as_array)
+                    .map(|array| array.len())
+                    .unwrap_or(0)
+        })
+        .sum::<usize>();
+    if entity_count > 100_000 {
+        return Err(format!("project too large for diff: {entity_count} entities exceeds the 100k limit"));
+    }
+    let result = research_graph_compiler::diff::canvas_diff(&project_v1, &project_v2);
+    serde_json::to_value(result).map_err(|error| error.to_string())
+}
 
 /// 确定性布局：给定项目 + 模式 + 可选根节点与参数，返回计算后的展示结果。
 /// Deterministic layout: given a project, mode, optional root id and params,
@@ -82,5 +138,64 @@ mod tests {
         assert_eq!(object["positions"]["b"]["y"], 654.0);
         // 未 pinned 节点保持计算坐标。
         assert_eq!(object["positions"]["a"]["x"], 80.0);
+    }
+
+    #[test]
+    fn compute_diff_reports_structural_changes() {
+        let v1 = serde_json::json!({
+            "nodes": [
+                {"id": "a", "type": "note", "title": "Alpha", "evidenceIds": []},
+                {"id": "b", "type": "note", "title": "Beta", "evidenceIds": []}
+            ],
+            "edges": [{"id": "e1", "type": "causes", "source": "a", "target": "b", "directed": true}]
+        });
+        let mut v2 = v1.clone();
+        v2["nodes"][0]["title"] = serde_json::json!("Alpha renamed");
+        v2["nodes"].as_array_mut().unwrap().push(serde_json::json!({
+            "id": "c", "type": "note", "title": "Gamma", "evidenceIds": []
+        }));
+        let result = compute_diff(v1, v2).unwrap();
+        let object = result.as_object().unwrap();
+        assert_eq!(object["addedNodes"][0], "c");
+        assert_eq!(object["modifiedNodes"][0]["entityId"], "a");
+        assert!(object.get("changedBlockHashes").is_some());
+        assert!(object.get("durationMs").is_some());
+    }
+
+    #[test]
+    fn compute_diff_accepts_filehash_wrapped_input() {
+        let project = serde_json::json!({
+            "nodes": [
+                {"id": "a", "type": "note", "title": "Alpha", "evidenceIds": []}
+            ],
+            "edges": []
+        });
+        let wrapped = serde_json::json!({
+            "fileHash": research_graph_compiler::hash::file_hash(&project),
+            "project": project.clone()
+        });
+        let result = compute_diff(wrapped, project.clone()).unwrap();
+        assert!(result.as_object().unwrap()["addedNodes"].as_array().unwrap().is_empty());
+
+        // 包装形式必须通过 fileHash 自校验；篡改内容应报错。
+        let tampered = serde_json::json!({
+            "fileHash": research_graph_compiler::hash::file_hash(&project),
+            "project": serde_json::json!({"nodes": [{"id": "x", "type": "note"}]})
+        });
+        assert!(compute_diff(tampered, project).is_err());
+    }
+
+    #[test]
+    fn compute_diff_rejects_bare_filehash_and_oversized_projects() {
+        assert!(compute_diff(
+            serde_json::json!("0123456789abcdef"),
+            serde_json::json!({})
+        )
+        .is_err());
+        let big_nodes: Vec<Value> = (0..100_001)
+            .map(|index| serde_json::json!({"id": format!("n{index}"), "type": "note"}))
+            .collect();
+        let big = serde_json::json!({"nodes": big_nodes, "edges": []});
+        assert!(compute_diff(big.clone(), serde_json::json!({"nodes": [], "edges": []})).is_err());
     }
 }

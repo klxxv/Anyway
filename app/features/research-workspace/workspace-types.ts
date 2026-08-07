@@ -1,4 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
+import type { DiffState } from "../../lib/graph/canvas-diff";
 import type {
   EdgeStyleManifest,
   ProjectState,
@@ -18,6 +19,8 @@ export type WorkspaceNodeData = {
   shape: "card" | "circle";
   expanded: boolean;
   onToggleExpanded: (nodeId: string) => void;
+  /** Canvas Diff 叠加标记（added/removed/modified）；removed 为幽灵节点。 */
+  diffState?: DiffState;
 };
 export type WorkspaceEdgeData = {
   record: ResearchEdge;
@@ -27,6 +30,8 @@ export type WorkspaceEdgeData = {
   labelOffsetY?: number;
   /** Uses a cheap path and suppresses labels while an incident node is moving. */
   dragPreview?: boolean;
+  /** Canvas Diff 叠加标记（added/removed/modified）。 */
+  diffState?: DiffState;
 };
 
 export type WorkspaceNode = Node<WorkspaceNodeData, "researchNode">;

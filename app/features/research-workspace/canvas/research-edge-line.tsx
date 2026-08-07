@@ -50,8 +50,22 @@ export const ResearchEdgeLine = memo(function ResearchEdgeLine({
           });
   const contradictory = type === "contradicts";
   const relationStyle = edgeStyle?.relations?.[type];
-  const dash = relationStyle?.dash?.join(" ") ??
-    (type === "controls" ? "7 6" : type === "derived_from" ? "2 4" : contradictory ? "7 4" : undefined);
+  const diffState = data?.diffState;
+  const dash =
+    diffState === "removed"
+      ? "6 5"
+      : relationStyle?.dash?.join(" ") ??
+        (type === "controls" ? "7 6" : type === "derived_from" ? "2 4" : contradictory ? "7 4" : undefined);
+  const strokeColor =
+    diffState === "added"
+      ? "var(--color-diff-added)"
+      : diffState === "removed"
+        ? "var(--color-diff-removed)"
+        : diffState === "modified"
+          ? "var(--color-diff-modified)"
+          : selected
+            ? "#2457d6"
+            : relationStyle?.color ?? (contradictory ? "#c85c55" : edgeStyle?.stroke.color ?? "#656b72");
   const renderedLabelX = labelX + (data?.labelOffsetX ?? 0);
   const renderedLabelY = labelY + (data?.labelOffsetY ?? 0);
 
@@ -61,13 +75,14 @@ export const ResearchEdgeLine = memo(function ResearchEdgeLine({
         id={id}
         path={path}
         style={{
-          stroke: selected
-            ? "#2457d6"
-            : relationStyle?.color ?? (contradictory ? "#c85c55" : edgeStyle?.stroke.color ?? "#656b72"),
+          stroke: strokeColor,
           strokeWidth: selected
             ? edgeStyle?.stroke.selectedWidth ?? 2.6
             : relationStyle?.width ?? edgeStyle?.stroke.width ?? 1.05,
-          opacity: relationStyle?.opacity ?? edgeStyle?.stroke.opacity ?? 1,
+          opacity:
+            diffState === "removed"
+              ? 0.55
+              : relationStyle?.opacity ?? edgeStyle?.stroke.opacity ?? 1,
           strokeDasharray: dash,
         }}
       />

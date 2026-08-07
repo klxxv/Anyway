@@ -9,6 +9,12 @@
   --color-blue-soft: #eef3ff;
   --color-olive: #51624a;
   --color-alert: #c85c55;
+  --color-diff-added: #2f9e63;
+  --color-diff-added-soft: #e9f6ee;
+  --color-diff-removed: #c85c55;
+  --color-diff-removed-soft: #fbeceb;
+  --color-diff-modified: #b58a1c;
+  --color-diff-modified-soft: #faf2dc;
   --font-serif: Georgia, Cambria, "Times New Roman", serif;
   --font-sans: Inter, "Segoe UI", system-ui, sans-serif;
 }

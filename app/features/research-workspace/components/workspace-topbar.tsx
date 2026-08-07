@@ -15,6 +15,7 @@ import {
   IconFlag3,
   IconFlask2,
   IconGitBranch,
+  IconGitCompare,
   IconHelp,
   IconHierarchy2,
   IconListTree,
@@ -62,6 +63,7 @@ type WorkspaceTopbarProps = {
   onFind: () => void;
   activeLayout: LayoutMode | null;
   onLayout: (mode: LayoutMode) => void;
+  onCompare: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onExport: () => void;
@@ -271,6 +273,7 @@ export function WorkspaceTopbar({
   onFind,
   activeLayout,
   onLayout,
+  onCompare,
   onUndo,
   onRedo,
   onExport,
@@ -337,6 +340,14 @@ export function WorkspaceTopbar({
           shortcut={shortcuts.layout}
           onLayout={onLayout}
         />
+        <button
+          className={commandClass(commandDensity)}
+          onClick={onCompare}
+          aria-label={t("diff.compare")}
+        >
+          <IconGitCompare size={19} stroke={1.4} />
+          {t("diff.compare")}
+        </button>
       </nav>
 
       <nav className="flex h-full items-stretch" aria-label="History and export">
