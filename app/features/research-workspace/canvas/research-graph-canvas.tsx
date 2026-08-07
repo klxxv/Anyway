@@ -99,6 +99,8 @@ type ResearchGraphCanvasProps = {
   connectType: ResearchEdgeType;
   inspectorOpen: boolean;
   linkFilter: LinkLegendFilter | null;
+  /** 逻辑链高亮（阶段 4）：nodeIds/edgeIds 命中路径 / Logic-chain highlight (phase 4). */
+  highlightChain?: { nodeIds: string[]; edgeIds: string[] } | null;
   showMiniMap: boolean;
   showMiniMapRelations: boolean;
   showLinkCounts: boolean;
@@ -134,6 +136,7 @@ function buildNodes(
   filter: LinkLegendFilter | null,
   expandedNodeIds: ReadonlySet<string>,
   onToggleExpanded: (nodeId: string) => void,
+  highlightedNodeIds?: ReadonlySet<string>,
 ): WorkspaceNode[] {
   const projected = projectForLegendFilter(project, filter);
   return projected.nodes.map((record) => {
@@ -155,6 +158,7 @@ function buildNodes(
         shape: circle ? "circle" : "card",
         expanded,
         onToggleExpanded,
+        highlighted: highlightedNodeIds?.has(record.id),
       },
     };
   });
@@ -166,6 +170,7 @@ function buildEdges(
   selectedEdgeId: string,
   edgeTypeLabel: (type: ResearchEdgeType) => string,
   edgeStyle: EdgeStyleManifest,
+  highlightedEdgeIds?: ReadonlySet<string>,
 ): WorkspaceEdge[] {
   const projected = projectForLegendFilter(project, filter);
   const routes = computeEdgeRoutes(projected);
@@ -185,6 +190,7 @@ function buildEdges(
         edgeStyle,
         labelOffsetX: route?.labelOffsetX,
         labelOffsetY: route?.labelOffsetY,
+        highlighted: highlightedEdgeIds?.has(record.id),
       },
     };
   });
@@ -201,6 +207,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     connectType,
     inspectorOpen,
     linkFilter,
+    highlightChain,
     showMiniMap,
     showMiniMapRelations,
     showLinkCounts,
@@ -293,11 +300,19 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
       return next;
     });
   }, []);
+  const highlightedNodeIds = useMemo(
+    () => (highlightChain ? new Set(highlightChain.nodeIds) : undefined),
+    [highlightChain],
+  );
+  const highlightedEdgeIds = useMemo(
+    () => (highlightChain ? new Set(highlightChain.edgeIds) : undefined),
+    [highlightChain],
+  );
   const [nodes, setNodes] = useState(() =>
-    buildNodes(project, selectedNodeId, linkFilter, expandedNodeIds, toggleNodeExpanded),
+    buildNodes(project, selectedNodeId, linkFilter, expandedNodeIds, toggleNodeExpanded, highlightedNodeIds),
   );
   const [edges, setEdges] = useState(() =>
-    buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle),
+    buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle, highlightedEdgeIds),
   );
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [contextMenu, setContextMenu] = useState<WorkspaceContextMenuState | null>(null);
@@ -380,15 +395,18 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
           linkFilter,
           expandedNodeIds,
           toggleNodeExpanded,
+          highlightedNodeIds,
         ),
       );
-      setEdges(buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle));
+      setEdges(buildEdges(project, linkFilter, selectedEdgeId, edgeTypeLabel, edgeStyle, highlightedEdgeIds));
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
     edgeStyle,
     edgeTypeLabel,
     expandedNodeIds,
+    highlightedEdgeIds,
+    highlightedNodeIds,
     linkFilter,
     project,
     selectedEdgeId,

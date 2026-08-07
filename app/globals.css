@@ -129,6 +129,11 @@
     @apply border-blue bg-blue text-white hover:bg-blue/90;
   }
 
+  .chain-highlight-node {
+    border-color: color-mix(in srgb, var(--color-blue) 85%, var(--color-paper));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-blue) 30%, transparent);
+  }
+
   .zen-flow {
     background: var(--color-canvas);
   }

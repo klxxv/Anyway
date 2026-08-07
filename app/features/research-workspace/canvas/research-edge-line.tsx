@@ -30,6 +30,7 @@ export const ResearchEdgeLine = memo(function ResearchEdgeLine({
   const edgeStyle = data?.edgeStyle;
   const routing = edgeStyle?.routing ?? "orthogonal";
   const dragPreview = data?.dragPreview ?? false;
+  const highlighted = data?.highlighted === true;
   const pathOptions = {
     sourceX,
     sourceY,
@@ -61,13 +62,17 @@ export const ResearchEdgeLine = memo(function ResearchEdgeLine({
         id={id}
         path={path}
         style={{
-          stroke: selected
-            ? "#2457d6"
-            : relationStyle?.color ?? (contradictory ? "#c85c55" : edgeStyle?.stroke.color ?? "#656b72"),
-          strokeWidth: selected
-            ? edgeStyle?.stroke.selectedWidth ?? 2.6
-            : relationStyle?.width ?? edgeStyle?.stroke.width ?? 1.05,
-          opacity: relationStyle?.opacity ?? edgeStyle?.stroke.opacity ?? 1,
+          stroke: highlighted
+            ? "var(--color-blue)"
+            : selected
+              ? "#2457d6"
+              : relationStyle?.color ?? (contradictory ? "#c85c55" : edgeStyle?.stroke.color ?? "#656b72"),
+          strokeWidth: highlighted
+            ? (edgeStyle?.stroke.selectedWidth ?? 2.6) + 0.6
+            : selected
+              ? edgeStyle?.stroke.selectedWidth ?? 2.6
+              : relationStyle?.width ?? edgeStyle?.stroke.width ?? 1.05,
+          opacity: highlighted ? 1 : relationStyle?.opacity ?? edgeStyle?.stroke.opacity ?? 1,
           strokeDasharray: dash,
         }}
       />

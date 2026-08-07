@@ -67,6 +67,7 @@ type WorkspaceTopbarProps = {
   onExport: () => void;
   exportFormats?: Array<"pdf" | "svg" | "png">;
   onExportFormat?: (format: "pdf" | "svg" | "png") => void;
+  onImportPdf: () => void;
 };
 
 type MenuOption<T extends string> = {
@@ -276,6 +277,7 @@ export function WorkspaceTopbar({
   onExport,
   exportFormats = [],
   onExportFormat,
+  onImportPdf,
 }: WorkspaceTopbarProps) {
   const { t } = useI18n();
   return (
@@ -340,6 +342,14 @@ export function WorkspaceTopbar({
       </nav>
 
       <nav className="flex h-full items-stretch" aria-label="History and export">
+        <button
+          className={commandClass(commandDensity)}
+          onClick={onImportPdf}
+          aria-label={t("agent.importPdf")}
+        >
+          <IconFileText size={19} stroke={1.4} />
+          {t("agent.importPdf")}
+        </button>
         <button
           className={commandClass(commandDensity)}
           onClick={onUndo}

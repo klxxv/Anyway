@@ -18,6 +18,8 @@ export type WorkspaceNodeData = {
   shape: "card" | "circle";
   expanded: boolean;
   onToggleExpanded: (nodeId: string) => void;
+  /** 逻辑链高亮（阶段 4） / Logic-chain highlight (phase 4). */
+  highlighted?: boolean;
 };
 export type WorkspaceEdgeData = {
   record: ResearchEdge;
@@ -27,6 +29,8 @@ export type WorkspaceEdgeData = {
   labelOffsetY?: number;
   /** Uses a cheap path and suppresses labels while an incident node is moving. */
   dragPreview?: boolean;
+  /** 逻辑链高亮（阶段 4） / Logic-chain highlight (phase 4). */
+  highlighted?: boolean;
 };
 
 export type WorkspaceNode = Node<WorkspaceNodeData, "researchNode">;

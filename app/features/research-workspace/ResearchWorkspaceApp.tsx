@@ -37,8 +37,15 @@ import { resolveEdgeStyle } from "../../plugins/edge-style";
 import { usePluginHost } from "../../plugins/plugin-host";
 import { resolveTheme, themeCssVariables } from "../../plugins/theme";
 import { runAnalysisPlugin } from "../../plugins/tauri-client";
+import {
+  compileProject,
+  type PdfCompileResult,
+} from "../../platform/agent-client";
+import type { PluginGraphPatch } from "../../plugins/contracts";
 import { ResearchGraphCanvas } from "./canvas/research-graph-canvas";
 import { InspectorPanel } from "./components/inspector-panel";
+import { PdfUploadDialog } from "./components/pdf-upload-dialog";
+import { AgentReviewPanel } from "./components/agent-review-panel";
 import { PluginStoreDialog } from "./components/plugin-store-dialog";
 import {
   FolderWorkspaceDialog,
@@ -131,6 +138,15 @@ export function ResearchWorkspaceApp() {
   const [gitCommand, setGitCommand] = useState<EnabledWorkspaceCommand | null>(null);
   const [gitAutoSave, setGitAutoSave] = useState(false);
   const [pluginBusy, setPluginBusy] = useState(false);
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [reviewJobId, setReviewJobId] = useState<string | null>(null);
+  const [highlightChain, setHighlightChain] = useState<{
+    nodeIds: string[];
+    edgeIds: string[];
+  } | null>(null);
+  const [pdfCompileResult, setPdfCompileResult] = useState<PdfCompileResult | null>(null);
+  const [pdfCompileError, setPdfCompileError] = useState("");
+
   const edgeTypeLabel = useCallback(
     (type: ResearchEdgeType) => t(edgeTypeMessageKeys[type]),
     [t],
@@ -151,6 +167,39 @@ export function ResearchWorkspaceApp() {
     },
     [showNotice, t],
   );
+
+  /** 阶段 3→4：应用 Agent 补丁后自动触发图编译器（不变式 + blockHash + 逻辑链 + BP）。 */
+  const applyAgentPatch = useCallback(
+    async (patch: PluginGraphPatch) => {
+      setReviewJobId(null);
+      setPdfDialogOpen(false);
+      workspace.applyGraphPatch(patch);
+      setPdfCompileResult(null);
+      setPdfCompileError("");
+      showNotice(t("agent.patchApplied"));
+      try {
+        const result = await compileProject(workspace.project);
+        setPdfCompileResult(result);
+        setHighlightChain({
+          nodeIds: result.logicChain.nodeIds,
+          edgeIds: result.logicChain.edgeIds,
+        });
+        showNotice(t("agent.highlightChain"));
+      } catch (compileError) {
+        const message = compileError instanceof Error ? compileError.message : String(compileError);
+        setPdfCompileError(message);
+        console.warn("Graph compile failed", compileError);
+      }
+    },
+    [showNotice, t, workspace],
+  );
+
+  const rejectAgentPatch = useCallback(() => {
+    setReviewJobId(null);
+    setPdfDialogOpen(false);
+    setHighlightChain(null);
+    showNotice(t("agent.patchRejected"));
+  }, [showNotice, t]);
 
   const pluginContextMenuActions = useMemo(
     () =>
@@ -474,6 +523,7 @@ export function ResearchWorkspaceApp() {
       setSettingsOpen(false);
       setPluginStoreOpen(false);
       setConnectMode(false);
+      setPdfDialogOpen(false);
     };
     window.addEventListener("keydown", closeTransientUi);
     return () => window.removeEventListener("keydown", closeTransientUi);
@@ -521,6 +571,7 @@ export function ResearchWorkspaceApp() {
         onExport={exportProject}
         exportFormats={exportCommand?.formats}
         onExportFormat={exportCommand ? runPluginExport : undefined}
+        onImportPdf={() => setPdfDialogOpen(true)}
       />
 
       <div
@@ -556,6 +607,7 @@ export function ResearchWorkspaceApp() {
             trackpadFilterStrength={preferences.trackpadFilterStrength}
             edgeStyle={edgeStyle}
             referenceViewport={layoutMode === null && linkFilter === null}
+            highlightChain={highlightChain}
             contextMenus={preferences.contextMenus}
             radialMenu={preferences.radialMenu}
             shortcuts={preferences.shortcuts}
@@ -709,6 +761,9 @@ export function ResearchWorkspaceApp() {
             setLayoutMode(null);
             setLinkFilter(null);
             setNotice(null);
+            setHighlightChain(null);
+            setPdfCompileResult(null);
+            setPdfCompileError("");
             setMenuOpen(false);
           }}
         />
@@ -787,6 +842,25 @@ export function ResearchWorkspaceApp() {
             setInspectorOpen(true);
             setSearchOpen(false);
           }}
+        />
+      )}
+      {pdfDialogOpen && (
+        <PdfUploadDialog
+          onClose={() => setPdfDialogOpen(false)}
+          onReady={(jobId) => {
+            setPdfDialogOpen(false);
+            setReviewJobId(jobId);
+          }}
+        />
+      )}
+      {reviewJobId && (
+        <AgentReviewPanel
+          jobId={reviewJobId}
+          compileResult={pdfCompileResult}
+          compileError={pdfCompileError}
+          onClose={() => setReviewJobId(null)}
+          onApply={(patch) => void applyAgentPatch(patch)}
+          onReject={rejectAgentPatch}
         />
       )}
       {composer && (

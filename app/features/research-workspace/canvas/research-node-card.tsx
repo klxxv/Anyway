@@ -67,6 +67,7 @@ export const ResearchNodeCard = memo(function ResearchNodeCard({ data, selected 
   const { t } = useI18n();
   const updateNodeInternals = useUpdateNodeInternals();
   const { record, shape, expanded, onToggleExpanded } = data;
+  const highlighted = data.highlighted === true;
   const valueType =
     record.type === "variable" && typeof record.data.valueType === "string"
       ? record.data.valueType
@@ -89,9 +90,11 @@ export const ResearchNodeCard = memo(function ResearchNodeCard({ data, selected 
         shape === "circle" ? "rounded-full" : "rounded-[3px]",
         selected
           ? "border-blue shadow-[0_0_0_1px_#2457d6]"
-          : disputed
-            ? "border-alert"
-            : "border-ink/70 hover:border-ink",
+          : highlighted
+            ? "chain-highlight-node"
+            : disputed
+              ? "border-alert"
+              : "border-ink/70 hover:border-ink",
       ].join(" ")}
       aria-label={`${t(nodeTypeMessageKeys[record.type] ?? "node.note")}: ${record.title}`}
     >
