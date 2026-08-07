@@ -42,6 +42,7 @@ pub fn run() {
             #[cfg(not(debug_assertions))]
             let url = tauri::WebviewUrl::App("index.html".into());
 
+            #[cfg_attr(not(windows), allow(unused_variables))]
             let window = tauri::WebviewWindowBuilder::new(app, "main", url)
                 .title("Research Canvas")
                 .inner_size(1440.0, 900.0)
