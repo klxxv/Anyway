@@ -128,7 +128,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build & verify rendered HTML
-        run: npm run build && node --test tests/rendered-html.test.mjs
+        run: npm run build:desktop && node --test tests/rendered-html.test.mjs
 
   # ── Build Verification (main push only) ────────────────────────────
   build-next:
@@ -145,7 +145,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Next.js production build
-        run: npm run build
+        run: npm run build:desktop
 
   build-desktop:
     name: Build · Tauri Desktop

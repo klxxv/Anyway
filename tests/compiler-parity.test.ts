@@ -92,9 +92,9 @@ function normalizeProject(project: ProjectState): ProjectState {
 }
 
 /** 剥离运行时遥测字段（durationMs），仅比对确定性产物。 */
-function stripRuntime(value: Record<string, unknown>): Record<string, unknown> {
-  const copy = { ...value, durationMs: 0 };
-  delete copy.durationMs;
+function stripRuntime<T extends Record<string, unknown>>(value: T): Omit<T, "durationMs"> {
+  const { durationMs: _, ...copy } = value;
+  void _;
   return copy;
 }
 
@@ -144,7 +144,7 @@ for (const fixtureName of Object.keys(fixtureNames)) {
     const label = `${request.strategy}/${request.direction}/${request.startId}/d${request.maxDepth}`;
     test(`${fixtureName}: traverse ${label} 逐字段一致`, () => {
       const project = make();
-      const ts = stripRuntime(traverseGraph(project, request));
+      const ts = stripRuntime(traverseGraph(project, request) as unknown as Record<string, unknown>);
       const r = rust("traverse", request as unknown as Record<string, unknown>, project);
       const actual = stripRuntime(r as Record<string, unknown>);
       assert.deepStrictEqual(actual, ts, `${fixtureName} traverse ${label} differs`);
