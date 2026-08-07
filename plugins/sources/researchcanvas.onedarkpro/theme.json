@@ -43,5 +43,40 @@
       "shadow": "0 12px 34px rgba(0, 0, 0, 0.34)",
       "activeShadow": "rgba(97, 175, 239, 0.28)"
     }
+  },
+  "edgeStyle": {
+    "routing": "bezier",
+    "stroke": {
+      "color": "#61afef",
+      "width": 1.7,
+      "selectedWidth": 2.8,
+      "opacity": 0.9
+    },
+    "relations": {
+      "supports": {
+        "color": "#98c379",
+        "width": 1.9
+      },
+      "contradicts": {
+        "color": "#e06c75",
+        "width": 1.9,
+        "dash": [7, 4]
+      },
+      "depends_on": {
+        "color": "#61afef",
+        "width": 1.7
+      },
+      "controls": {
+        "color": "#7f8797",
+        "dash": [3, 4]
+      },
+      "measures": {
+        "color": "#c678dd"
+      }
+    },
+    "marker": {
+      "type": "closed-arrow",
+      "size": 15
+    }
   }
 }

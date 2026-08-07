@@ -1,4 +1,5 @@
 import type {
+  EdgeStyleContent,
   EdgeStyleManifest,
   PluginManifest,
   ThemeManifest,
@@ -238,7 +239,22 @@ export function normalizeInstalledTheme(plugin: InstalledMycPlugin): ThemeManife
 export function normalizeInstalledEdgeStyle(
   plugin: InstalledMycPlugin,
 ): EdgeStyleManifest | null {
-  if (!plugin.edgeStyle || plugin.manifest.kind !== "EdgeStylePlugin") return null;
+  if (!plugin.edgeStyle) return null;
+  if (plugin.manifest.kind === "ThemePlugin") {
+    const content = plugin.edgeStyle as unknown as EdgeStyleContent;
+    if (!content.routing || !content.stroke) return null;
+    return {
+      ...content,
+      id: plugin.manifest.metadata.id,
+      name: plugin.manifest.metadata.name,
+      publisher: plugin.manifest.metadata.publisher,
+      version: plugin.manifest.metadata.version,
+      description: plugin.manifest.metadata.description,
+      developer: plugin.manifest.metadata.developer,
+      source: "myc",
+    };
+  }
+  if (plugin.manifest.kind !== "EdgeStylePlugin") return null;
   return {
     ...plugin.edgeStyle,
     id: plugin.manifest.metadata.id,
