@@ -717,6 +717,44 @@ fn manifest_to_json_without_signature(manifest: &MycPluginManifest) -> serde_jso
 }
 
 /// 原子移动到 `installed` 前校验并暂存归档 / Validates and stages an archive before atomically renaming it into `installed`.
+/// 仅读取归档中的 plugin.yml(含签名校验),供发现与安装共用。
+/// Reads only plugin.yml from an archive (with signature verification), shared by discovery and install.
+fn read_archive_manifest(base: &Path, archive_path: &Path) -> Result<MycPluginManifest, String> {
+    let file = File::open(archive_path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    if archive.len() > MAX_ENTRIES {
+        return Err("Plugin package contains too many files".to_string());
+    }
+    let mut entry = archive
+        .by_name("plugin.yml")
+        .map_err(|_| "plugin.yml is required at the package root".to_string())?;
+    let mut text = String::new();
+    entry
+        .read_to_string(&mut text)
+        .map_err(|error| error.to_string())?;
+    let manifest: MycPluginManifest =
+        serde_yaml::from_str(&text).map_err(|error| error.to_string())?;
+    validate_manifest(&manifest)?;
+
+    // --- Ed25519 签名验证 / Ed25519 signature verification ---
+    if let Some(ref signature_b64) = manifest.signature {
+        if signature_b64.trim().is_empty() {
+            return Err("Plugin manifest contains an empty signature field".to_string());
+        }
+        let trusted_keys = crate::signing::load_all_trusted_keys(base)?;
+        let manifest_without_sig = manifest_to_json_without_signature(&manifest);
+        crate::signing::verify_manifest_signature(
+            &manifest.metadata.publisher,
+            &manifest_without_sig,
+            signature_b64,
+            &trusted_keys,
+        )?;
+    }
+    // --- 签名验证结束 / End signature verification ---
+
+    Ok(manifest)
+}
+
 fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
     if archive_path
         .extension()
@@ -734,41 +772,7 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
         return Err("Plugin package exceeds the 16 MB archive limit".to_string());
     }
 
-    let manifest = {
-        let file = File::open(archive_path).map_err(|error| error.to_string())?;
-        let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
-        if archive.len() > MAX_ENTRIES {
-            return Err("Plugin package contains too many files".to_string());
-        }
-        let mut entry = archive
-            .by_name("plugin.yml")
-            .map_err(|_| "plugin.yml is required at the package root".to_string())?;
-        let mut text = String::new();
-        entry
-            .read_to_string(&mut text)
-            .map_err(|error| error.to_string())?;
-        let manifest: MycPluginManifest =
-            serde_yaml::from_str(&text).map_err(|error| error.to_string())?;
-        validate_manifest(&manifest)?;
-
-        // --- Ed25519 签名验证 / Ed25519 signature verification ---
-        if let Some(ref signature_b64) = manifest.signature {
-            if signature_b64.trim().is_empty() {
-                return Err("Plugin manifest contains an empty signature field".to_string());
-            }
-            let trusted_keys = crate::signing::load_all_trusted_keys(base)?;
-            let manifest_without_sig = manifest_to_json_without_signature(&manifest);
-            crate::signing::verify_manifest_signature(
-                &manifest.metadata.publisher,
-                &manifest_without_sig,
-                signature_b64,
-                &trusted_keys,
-            )?;
-        }
-        // --- 签名验证结束 / End signature verification ---
-
-        manifest
-    };
+    let manifest = read_archive_manifest(base, archive_path)?;
 
     let installed_root = base.join("installed");
     fs::create_dir_all(&installed_root).map_err(|error| error.to_string())?;
@@ -833,6 +837,51 @@ fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycP
     install_archive_into(&base, archive_path)
 }
 
+fn install_pending_from(base: &Path, packages: &Path, removed: &HashSet<String>) -> Result<(), String> {
+    if !packages.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(packages).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if !path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("myc"))
+        {
+            continue;
+        }
+        // 安装目录与墓碑都以 manifest id@version 为准,与文件名无关;
+        // 发现阶段必须按同一身份判断,否则改名包会重复安装、墓碑失效。
+        // Installed dirs and tombstones key on manifest id@version, not the
+        // filename; discovery must use the same identity or renamed packages
+        // reinstall forever and tombstones silently stop working.
+        let manifest = match read_archive_manifest(base, &path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!(
+                    "Skipping invalid plugin package {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        let directory_name = format!("{}@{}", manifest.metadata.id, manifest.metadata.version);
+        let already_installed = base.join("installed").join(&directory_name).is_dir();
+        let explicitly_removed = removed.contains(&directory_name);
+        if !already_installed && !explicitly_removed {
+            // 一个坏包不能毒化整个插件发现:跳过并继续其他包。
+            // A bad package must not poison discovery; skip it and continue.
+            if let Err(error) = install_archive_into(base, &path) {
+                eprintln!(
+                    "Skipping invalid plugin package {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     let base = plugin_base(app)?;
     let removed = read_removed_plugins(&base)?;
@@ -847,30 +896,7 @@ fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
             .join("plugins/packages"),
     ];
     for packages in package_roots {
-        if !packages.is_dir() {
-            continue;
-        }
-        for entry in fs::read_dir(packages).map_err(|error| error.to_string())? {
-            let path = entry.map_err(|error| error.to_string())?.path();
-            if !path
-                .extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.eq_ignore_ascii_case("myc"))
-            {
-                continue;
-            }
-            let already_installed = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .is_some_and(|package| base.join("installed").join(package).is_dir());
-            let explicitly_removed = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .is_some_and(|package| removed.contains(package));
-            if !already_installed && !explicitly_removed {
-                install_archive(app, &path)?;
-            }
-        }
+        install_pending_from(&base, &packages, &removed)?;
     }
     Ok(())
 }
@@ -1499,6 +1525,96 @@ spec:
         let error = install_archive_into(root.path(), &unknown_package)
             .expect_err("unknown agent capability must be rejected");
         assert!(error.contains("capabilities"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn pending_installs_skip_corrupt_packages_and_keep_discovering() {
+        let root = tempdir().expect("temp root");
+        let packages = root.path().join("packages");
+        fs::create_dir_all(&packages).expect("packages dir");
+
+        // 坏包在前(文件名排序靠前),好包在后:坏包不能阻断好包安装。
+        // The corrupt package sorts first; it must not block the valid one.
+        fs::write(packages.join("aaa.corrupt@1.0.0.myc"), b"not a zip")
+            .expect("corrupt package");
+
+        // 好包的文件名故意与 manifest id@version 不一致:
+        // 发现、去重、墓碑都必须按 manifest 身份而不是文件名。
+        // The valid package filename deliberately differs from its manifest
+        // id@version: discovery, dedupe, and tombstones all key on identity.
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let valid_package = packages.join("zzz.renamed-file@9.9.9.myc");
+        let file = File::create(&valid_package).expect("valid archive");
+        let mut archive = ZipWriter::new(file);
+        archive.start_file("plugin.yml", options).expect("manifest");
+        archive
+            .write_all(
+                br#"apiVersion: researchcanvas.dev/v1alpha1
+kind: ThemePlugin
+metadata:
+  id: myc.valid-theme
+  name: Valid Theme
+  version: 1.0.0
+  publisher: Research Canvas
+  developer: Tests
+  description: A valid theme package.
+spec:
+  engine: declarative
+  entry: theme.json
+  capabilities: [theme.register]
+  permissions: []
+"#,
+            )
+            .expect("manifest bytes");
+        archive
+            .start_file("theme.json", options)
+            .expect("theme payload");
+        archive
+            .write_all(
+                br#"{"id":"myc.valid-theme","name":"Valid Theme","publisher":"Research Canvas","colors":{}}"#,
+            )
+            .expect("theme bytes");
+        archive.finish().expect("valid package");
+
+        install_pending_from(root.path(), &packages, &HashSet::new())
+            .expect("pending installs complete despite the corrupt package");
+
+        let installed_dir = root.path().join("installed").join("myc.valid-theme@1.0.0");
+        assert!(
+            installed_dir.is_dir(),
+            "valid package installs under its manifest identity"
+        );
+        assert!(
+            !root.path()
+                .join("installed")
+                .join("aaa.corrupt@1.0.0")
+                .exists(),
+            "corrupt package must not be installed"
+        );
+
+        // 再次运行不再重复安装(按 manifest 身份识别已装);
+        // A second pass recognizes the install by identity, not filename.
+        install_pending_from(root.path(), &packages, &HashSet::new())
+            .expect("second pass is a no-op");
+
+        // 墓碑按 manifest id@version 生效,即使文件名不同。
+        // Tombstones key on manifest id@version even when filenames differ.
+        let root2 = tempdir().expect("second temp root");
+        let packages2 = root2.path().join("packages");
+        fs::create_dir_all(&packages2).expect("second packages dir");
+        fs::copy(&valid_package, packages2.join("zzz.renamed-file@9.9.9.myc"))
+            .expect("copy valid package");
+        let mut tombstoned = HashSet::new();
+        tombstoned.insert("myc.valid-theme@1.0.0".to_string());
+        install_pending_from(root2.path(), &packages2, &tombstoned)
+            .expect("tombstoned pass completes");
+        assert!(
+            !root2.path()
+                .join("installed")
+                .join("myc.valid-theme@1.0.0")
+                .exists(),
+            "tombstoned package must not install regardless of filename"
+        );
     }
 
     // ------------------------------------------------------------------
