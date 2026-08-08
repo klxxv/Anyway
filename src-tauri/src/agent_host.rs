@@ -171,17 +171,17 @@ impl AgentHost {
 
     // ── Job 生命周期 ──
 
-    /// 创建 Agent Job。幂等：相同路径 + 相同哈希的已完成 job 直接返回已有结果。
+    /// 创建 Agent Job。幂等：相同路径 + 相同哈希的进行中 job 直接复用;
+    /// 终态 job(Accepted/Rejected/Failed)不阻挡重新导入,保证可重试。
     pub fn create_job(&mut self, pdf_path: &Path) -> Result<&AgentJob, String> {
         let path_str = pdf_path.to_string_lossy().into_owned();
         let file_hash = Self::validate_pdf_file(pdf_path)?;
         let now = unix_millis();
 
-        // 幂等查找
+        // 幂等查找:只复用非终态 job。终态 job 必须允许重建,否则一次失败后
+        // 同一 PDF 永远无法重试(恒真谓词 is_terminal || !is_terminal 的修复)。
         let existing_id = self.jobs.values().find(|j| {
-            j.pdf_path == path_str && j.file_hash == file_hash
-                && (j.state.is_terminal()
-                    || !j.state.is_terminal())
+            j.pdf_path == path_str && j.file_hash == file_hash && !j.state.is_terminal()
         }).map(|j| j.job_id.clone());
         if let Some(ref id) = existing_id {
             return Ok(&self.jobs[id]);
@@ -254,12 +254,17 @@ impl AgentHost {
             started_at: now,
             completed_at: if next_state.is_terminal() { Some(now) } else { None },
             error: error.map(String::from),
-            data,
+            data: data.clone(),
         };
 
         job.checkpoints.push(checkpoint);
         job.state = next_state;
         job.updated_at = now;
+        if next_state == JobState::AwaitingReview {
+            // 审阅载荷:进入待审阅时,result 固定为待审 GraphPatch,
+            // 审阅面板凭 result.operations 渲染 Apply/Reject。
+            job.result = data;
+        }
         if next_state.is_terminal() {
             job.error = error.map(String::from);
         }
@@ -404,11 +409,17 @@ fn unix_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
+static JOB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn job_id_from(pdf_path: &str, now: u64) -> String {
+    // 毫秒时间戳在快速重建时会碰撞(同一 ms 内重试得到同 id 并互相覆盖),
+    // 叠加单调序号保证进程内唯一。
+    let seq = JOB_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut hasher = Sha256::new();
     hasher.update(pdf_path.as_bytes());
     hasher.update(b":");
     hasher.update(now.to_le_bytes());
+    hasher.update(seq.to_le_bytes());
     format!("{:x}", hasher.finalize())[..JOB_ID_PREFIX_LEN].to_string()
 }
 
@@ -481,6 +492,48 @@ mod tests {
         let j2 = { host.create_job(&pdf).expect("second").job_id.clone() };
         assert_eq!(j1, j2);
         assert_eq!(host.list_jobs().len(), 1);
+    }
+
+    #[test]
+    fn terminal_job_does_not_block_retry() {
+        let dir = tempdir().expect("tempdir");
+        let mut host = AgentHost::new(dir.path().to_path_buf());
+        let pdf = dummy_pdf(dir.path());
+        let first = { host.create_job(&pdf).expect("first").job_id.clone() };
+        host.cancel_job(&first, "transient failure").expect("cancel");
+        // 终态 job 不再被幂等复用:同一 PDF 可以重建新 job 重试。
+        let second = { host.create_job(&pdf).expect("retry after terminal").job_id.clone() };
+        assert_ne!(first, second);
+        assert_eq!(host.list_jobs().len(), 2);
+        // 新 job 是进行中的非终态,幂等查找仍然复用它。
+        let third = { host.create_job(&pdf).expect("reuse in-flight").job_id.clone() };
+        assert_eq!(second, third);
+        assert_eq!(host.list_jobs().len(), 2);
+    }
+
+    #[test]
+    fn awaiting_review_fills_result_with_review_payload() {
+        let dir = tempdir().expect("tempdir");
+        let mut host = AgentHost::new(dir.path().to_path_buf());
+        let pdf = dummy_pdf(dir.path());
+        let id = { host.create_job(&pdf).expect("create").job_id.clone() };
+        let stages = [
+            JobState::ValidatingFile, JobState::ExtractingText, JobState::OcrOptional,
+            JobState::BuildingDocumentMap, JobState::ExtractingSemantics,
+            JobState::GeneratingPatch,
+        ];
+        for &stage in &stages {
+            host.advance_job(&id, stage, Some("h"), None, None).expect("advance");
+        }
+        assert!(host.get_job(&id).unwrap().result.is_none());
+        let patch = serde_json::json!({
+            "apiVersion": "researchcanvas.dev/graph-patch/v1alpha1",
+            "operations": [{"op": "add-node", "node": {"id": "n1", "type": "note", "title": "t"}}]
+        });
+        host.advance_job(&id, JobState::AwaitingReview, Some("h2"), Some(patch.clone()), None)
+            .expect("awaiting review");
+        let job = host.get_job(&id).unwrap();
+        assert_eq!(job.result, Some(patch), "review payload must be exposed as result");
     }
 
     #[test]

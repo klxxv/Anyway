@@ -88,6 +88,21 @@ pub fn start_pdf_job(
         job.job_id.clone()
     };
 
+    let outcome = run_pdf_stages(&mut host, &job_id, &abs_path);
+    if let Err(error) = outcome {
+        // 管线失败必须落 Failed 终态,否则 job 永久卡死在非终态;
+        // 若 job 已被并发取消/裁决,保持既有终态。
+        let _ = host.advance_job(&job_id, JobState::Failed, None, None, Some(&error));
+        return Err(error);
+    }
+
+    let job = host.get_job(&job_id).ok_or_else(|| "Job vanished".to_string())?;
+    Ok(PdfJobStatus::from(job))
+}
+
+/// 管线主体:任一阶段失败即返回错误,由调用方落 Failed 终态。
+/// Pipeline body: any stage failure bubbles up so the caller can land Failed.
+fn run_pdf_stages(host: &mut AgentHost, job_id: &str, abs_path: &Path) -> Result<(), String> {
     // ── 阶段 1：ValidatingFile ──
     host.advance_job(&job_id, JobState::ValidatingFile, Some("v1"), None, None)?;
 
@@ -158,21 +173,19 @@ pub fn start_pdf_job(
         &job_id,
         JobState::GeneratingPatch,
         Some(&semantic_hash),
-        Some(patch),
+        Some(patch.clone()),
         None,
     )?;
 
-    // ── 阶段 7：AwaitingReview ──
+    // ── 阶段 7:AwaitingReview(data 即审阅载荷,advance_job 写入 job.result)──
     host.advance_job(
         &job_id,
         JobState::AwaitingReview,
-        None,
-        None,
+        Some(&semantic_hash),
+        Some(patch),
         None,
     )?;
-
-    let job = host.get_job(&job_id).ok_or_else(|| "Job vanished".to_string())?;
-    Ok(PdfJobStatus::from(job))
+    Ok(())
 }
 
 /// 查询 Job 状态 / Query job status.
