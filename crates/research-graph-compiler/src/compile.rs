@@ -168,5 +168,18 @@ pub fn compile_project_with_options(
         .map_err(|error| crate::error::CompileFailure::Parse(error.to_string()))?;
     let canonical: Value = serde_json::from_slice(&canonicalize(&value))
         .map_err(|error| crate::error::CompileFailure::Parse(error.to_string()))?;
-    Ok(compile(&canonical))
+    let result = compile(&canonical);
+    // Error 级违规(重复 id、悬挂引用、极性冲突等)必须拒绝编译:
+    // 否则破损图照样拿到 blockHash/fileHash,哈希与签名层失去意义,
+    // 重复 id 还会在最后写入胜出的哈希表中静默损坏根哈希。
+    let errors: Vec<String> = result
+        .violations
+        .iter()
+        .filter(|violation| violation.severity == crate::invariant::Severity::Error)
+        .map(|violation| format!("{}: {}", violation.code, violation.message))
+        .collect();
+    if !errors.is_empty() {
+        return Err(crate::error::CompileFailure::Invariant(errors));
+    }
+    Ok(result)
 }
