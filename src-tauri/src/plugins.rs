@@ -174,9 +174,26 @@ fn read_removed_plugins(base: &Path) -> Result<HashSet<String>, String> {
         return Ok(HashSet::new());
     }
     let bytes = fs::read(&path).map_err(|error| error.to_string())?;
-    let values: Vec<String> = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Invalid removal registry: {error}"))?;
-    Ok(values.into_iter().collect())
+    // 容忍历史 `{}` 写入（空对象等价空集合），但拒绝其它畸形内容 / Tolerate a
+    // legacy `{}` write (empty object == empty set); reject anything else malformed.
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|error| format!("Invalid removal registry: {error}"))?;
+    match value {
+        serde_json::Value::Array(items) => {
+            let mut removed = HashSet::with_capacity(items.len());
+            for item in items {
+                match item.as_str() {
+                    Some(entry) => {
+                        removed.insert(entry.to_string());
+                    }
+                    None => return Err("Invalid removal registry: entries must be strings".to_string()),
+                }
+            }
+            Ok(removed)
+        }
+        serde_json::Value::Object(map) if map.is_empty() => Ok(HashSet::new()),
+        _ => Err("Invalid removal registry: expected a string array".to_string()),
+    }
 }
 
 fn write_removed_plugins(base: &Path, removed: &HashSet<String>) -> Result<(), String> {
@@ -1025,7 +1042,7 @@ mod tests {
             r#"apiVersion: researchcanvas.dev/v1alpha1
 kind: AnalysisPlugin
 metadata:
-  id: researchcanvas.runtime-smoke
+  id: myc.runtime-smoke
   name: Runtime Smoke
   version: 1.0.0
   publisher: Research Canvas
@@ -1177,23 +1194,23 @@ spec:
         let output = crate::plugin_vm::execute_plugin(
             &root
                 .path()
-                .join("installed/researchcanvas.runtime-smoke@1.0.0/plugin.wasm"),
-            "researchcanvas.runtime-smoke",
+                .join("installed/myc.runtime-smoke@1.0.0/plugin.wasm"),
+            "myc.runtime-smoke",
             "1.0.0",
             &json!({"operation": "self-test"}),
         )
         .expect("execute installed package");
         assert_eq!(output.output, json!({"runtime": "ok"}));
 
-        uninstall_plugin_from(root.path(), "researchcanvas.runtime-smoke", "1.0.0")
+        uninstall_plugin_from(root.path(), "myc.runtime-smoke", "1.0.0")
             .expect("uninstall exact plugin version");
         assert!(!root
             .path()
-            .join("installed/researchcanvas.runtime-smoke@1.0.0")
+            .join("installed/myc.runtime-smoke@1.0.0")
             .exists());
         assert!(read_removed_plugins(root.path())
             .expect("removal tombstones")
-            .contains("researchcanvas.runtime-smoke@1.0.0"));
+            .contains("myc.runtime-smoke@1.0.0"));
     }
 
     #[test]
@@ -1247,7 +1264,7 @@ spec:
                 br#"apiVersion: researchcanvas.dev/v1alpha1
 kind: WorkspacePlugin
 metadata:
-  id: researchcanvas.test-export
+  id: myc.test-export
   name: Test Export
   version: 1.0.0
   publisher: Research Canvas
@@ -1292,7 +1309,7 @@ spec:
         archive.start_file("plugin.yml", options).expect("manifest");
         archive
             .write_all(
-                "apiVersion: researchcanvas.dev/v1alpha1\nkind: LocalePlugin\nmetadata:\n  id: researchcanvas.test-ja\n  name: Test Japanese\n  version: 1.0.0\n  publisher: Research Canvas\n  developer: Locale Tests\n  description: Test declarative community language.\nspec:\n  engine: declarative\n  entry: locales/ja-JP.json\n  capabilities: [i18n.register]\n  permissions: []\n  contributes:\n    locales:\n      - locale: ja-JP\n        name: 日本語\n        path: locales/ja-JP.json\n"
+                "apiVersion: researchcanvas.dev/v1alpha1\nkind: LocalePlugin\nmetadata:\n  id: myc.test-ja\n  name: Test Japanese\n  version: 1.0.0\n  publisher: Research Canvas\n  developer: Locale Tests\n  description: Test declarative community language.\nspec:\n  engine: declarative\n  entry: locales/ja-JP.json\n  capabilities: [i18n.register]\n  permissions: []\n  contributes:\n    locales:\n      - locale: ja-JP\n        name: 日本語\n        path: locales/ja-JP.json\n"
                     .as_bytes(),
             )
             .expect("locale manifest bytes");
