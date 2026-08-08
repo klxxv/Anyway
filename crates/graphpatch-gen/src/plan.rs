@@ -8,7 +8,8 @@
 //!
 //! 审阅通过后，由 workspace_host 的 git diff 管线执行 apply_patch。
 
-use crate::ids::generate_permanent_id;
+use crate::ids::entity_node_id;
+use crate::mapper::build_temp_id_map_from_candidates;
 use crate::types::*;
 use semantic_pipeline::validation::validate_candidates;
 use semantic_pipeline::ir::AgentCandidates;
@@ -45,21 +46,27 @@ pub fn preview_patch(
 
     // 2. 统计新增数量
     let doi = candidates.doi.as_deref().unwrap_or("unknown");
-    let merge_index: std::collections::HashMap<String, String> = candidates
-        .merge_groups
-        .iter()
-        .flat_map(|mg| {
-            mg.merged_temp_ids
-                .iter()
-                .map(|tid| (tid.clone(), mg.canonical_temp_id.clone()))
-        })
-        .collect();
+    // 与 mapper 同一份合并解析:canonical 未知时合并不生效,实体照常计数。
+    // 预演的 ID 必须与写入路径完全一致,否则冲突检测永远对不上实际写入。
+    let mut temp_id_map = build_temp_id_map_from_candidates(candidates, doi);
+    let mut merged_resolved: HashSet<String> = HashSet::new();
+    for group in &candidates.merge_groups {
+        if let Some(canonical_perm) = temp_id_map.get(&group.canonical_temp_id).cloned() {
+            for tid in &group.merged_temp_ids {
+                temp_id_map.insert(tid.clone(), canonical_perm.clone());
+                merged_resolved.insert(tid.clone());
+            }
+        }
+    }
 
     for entity in &candidates.entities {
-        if merge_index.contains_key(&entity.temp_id) {
+        if merged_resolved.contains(&entity.temp_id) {
             continue;
         }
-        let perm_id = generate_permanent_id("entity", &entity.label, doi);
+        let perm_id = temp_id_map
+            .get(&entity.temp_id)
+            .cloned()
+            .unwrap_or_else(|| entity_node_id(&entity.label, &entity.text, doi));
 
         // 检查是否与现有节点冲突
         if existing_node_ids.contains(&perm_id) {
@@ -102,10 +109,10 @@ pub fn preview_patch(
         edges_added += exp.mediators.len();
     }
 
-    // 证据
+    // 证据(evidence 实体以 add-node 形式写入,此处仅统计构成)
     for entity in &candidates.entities {
         if entity.kind == semantic_pipeline::ir::EntityKind::Evidence
-            && !merge_index.contains_key(&entity.temp_id)
+            && !merged_resolved.contains(&entity.temp_id)
         {
             evidence_added += 1;
         }
@@ -124,7 +131,9 @@ pub fn preview_patch(
         warnings.push("未提取到任何实体，补丁将为空".into());
     }
 
-    let valid = warnings.iter().filter(|w| w.starts_with("[error]")).count() == 0;
+    // valid 直接取验证结果:旧实现按 "[error]" 前缀计数,但警告实际以
+    // 类别为前缀,导致任何 Error 级违规都无法使预览失效(valid 恒 true)。
+    let valid = validation.passed;
 
     PatchPreview {
         base_file_hash: base_file_hash.map(String::from),
@@ -192,7 +201,8 @@ mod tests {
     fn preview_detects_id_conflict() {
         let candidates = test_candidates();
         let doi = candidates.doi.as_deref().unwrap_or("unknown");
-        let perm_id = generate_permanent_id("entity", "Test claim", doi);
+        // 与写入路径同一公式:label + text 都参与哈希。
+        let perm_id = entity_node_id("Test claim", "A claim", doi);
 
         let mut existing_nodes: HashSet<String> = HashSet::new();
         existing_nodes.insert(perm_id);

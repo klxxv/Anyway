@@ -4,9 +4,8 @@
 //! NODE_TYPES / EDGE_TYPES 兼容的 GraphPatch 操作序列。
 
 use semantic_pipeline::ir::*;
-use crate::ids::{entity_node_id, edge_id, evidence_id, TempIdMap};
+use crate::ids::{entity_node_id, edge_id, TempIdMap};
 use crate::types::*;
-use std::collections::HashMap;
 
 // ── EntityKind → NodeType 映射表 ──
 
@@ -72,16 +71,26 @@ pub fn build_graph_patch(
     let doi = candidates.doi.as_deref().unwrap_or("unknown");
     let mut operations: Vec<GraphPatchOp> = Vec::new();
 
-    // 构建合并索引：被合并的 tempId → canonical tempId
-    let merge_index = build_merge_index(&candidates.merge_groups);
+    // 构建 tempId → permanent ID 映射(含全部实体,包括将被合并的)
+    let mut temp_id_map = build_temp_id_map_from_candidates(candidates, doi);
 
-    // 构建 tempId → permanent ID 映射
-    let temp_id_map = build_temp_id_map_from_candidates(candidates, doi);
+    // 合并解析:merged tempId → canonical 的永久 ID。
+    // canonical 本身不在映射里(LLM 给出坏组合)时合并无效——实体照常发射,
+    // 否则指向被抑制实体的边会变成悬挂边。
+    let mut merged_resolved: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for group in &candidates.merge_groups {
+        if let Some(canonical_perm) = temp_id_map.get(&group.canonical_temp_id).cloned() {
+            for tid in &group.merged_temp_ids {
+                temp_id_map.insert(tid.clone(), canonical_perm.clone());
+                merged_resolved.insert(tid.clone());
+            }
+        }
+    }
 
     // ── 1. 实体 → Node ──
     for entity in &candidates.entities {
-        // 跳过被合并的实体
-        if merge_index.contains_key(&entity.temp_id) {
+        // 跳过已并入 canonical 的实体(其 tempId 已全部改指 canonical)
+        if merged_resolved.contains(&entity.temp_id) {
             continue;
         }
 
@@ -97,6 +106,20 @@ pub fn build_graph_patch(
             "confidence": entity.confidence,
             "anchorCount": entity.anchors.len(),
         });
+
+        // 证据实体保留首个锚点的定位信息(原 AddEvidence 的 locator 随节点落地)
+        if entity.kind == EntityKind::Evidence {
+            if let Some(anchor) = entity.anchors.first() {
+                node_data["locator"] = serde_json::json!({
+                    "fileName": format!("DOI:{doi}"),
+                    "section": anchor.section_id,
+                    "quote": truncate_str(&anchor.quote, 200),
+                    "startOffset": anchor.start_offset,
+                    "endOffset": anchor.end_offset,
+                });
+            }
+            node_data["sourceId"] = serde_json::Value::String(doi.to_string());
+        }
 
         // 附加 attributes 中的子类型信息
         if let Some(ref ct) = entity.attributes.claim_type {
@@ -435,43 +458,15 @@ pub fn build_graph_patch(
         });
     }
 
-    // ── 7. Evidence Records ──
-    for entity in &candidates.entities {
-        if entity.kind == EntityKind::Evidence && !merge_index.contains_key(&entity.temp_id) {
-            let perm_id = temp_id_map
-                .get(&entity.temp_id)
-                .cloned()
-                .unwrap_or_else(|| evidence_id(&entity.text, doi));
-
-            let locator = entity.anchors.first().map(|a| EvidenceLocatorData {
-                file_name: Some(format!("DOI:{doi}")),
-                page: None,
-                section: Some(a.section_id.clone()),
-                quote: Some(truncate_str(&a.quote, 200)),
-                start_offset: Some(a.start_offset),
-                end_offset: Some(a.end_offset),
-            });
-
-            operations.push(GraphPatchOp::AddEvidence {
-                evidence: EvidenceData {
-                    id: perm_id,
-                    source_type: "paper".into(),
-                    source_id: doi.to_string(),
-                    title: entity.label.clone(),
-                    authors: candidates.authors.first().cloned(),
-                    year: candidates.year,
-                    doi: candidates.doi.clone(),
-                    url: None,
-                    locator,
-                },
-            });
-        }
-    }
+    // 注:Evidence 实体只在第 1 段作为 type="evidence" 节点发射一次。
+    // 前端 GraphPatch 契约只有 add-node/add-edge/update-node/update-edge 四种 op,
+    // 额外的 add-evidence op 会让整个补丁在规范化时被判无效;同 id 双发射也必
+    // 触发编译器 duplicate-id 不变量。证据定位信息已随节点 data.locator 落地。
+    let ev_count = 0usize;
 
     // 构建补丁元数据
     let node_count = operations.iter().filter(|op| matches!(op, GraphPatchOp::AddNode { .. })).count();
     let edge_count = operations.iter().filter(|op| matches!(op, GraphPatchOp::AddEdge { .. })).count();
-    let ev_count = operations.iter().filter(|op| matches!(op, GraphPatchOp::AddEvidence { .. })).count();
 
     PluginGraphPatch {
         api_version: GRAPH_PATCH_API_VERSION.to_string(),
@@ -505,19 +500,8 @@ pub fn build_graph_patch(
 
 // ── 辅助函数 ──
 
-/// 构建合并索引：merged tempId → canonical tempId。
-fn build_merge_index(groups: &[MergeGroup]) -> HashMap<String, String> {
-    let mut index = HashMap::new();
-    for group in groups {
-        for tid in &group.merged_temp_ids {
-            index.insert(tid.clone(), group.canonical_temp_id.clone());
-        }
-    }
-    index
-}
-
 /// 从 AgentCandidates 构建 tempId → permanent ID 映射。
-fn build_temp_id_map_from_candidates(
+pub(crate) fn build_temp_id_map_from_candidates(
     candidates: &AgentCandidates,
     doi: &str,
 ) -> TempIdMap {
@@ -649,11 +633,12 @@ mod tests {
     }
 
     #[test]
-    fn merge_index_excludes_merged_entities() {
+    fn merge_into_existing_canonical_excludes_merged_and_repoints_edges() {
         let mut candidates = make_test_candidates();
+        // v1 并入 h1(canonical 真实存在)→ v1 不发射,其 tempId 改指 h1 的永久 ID。
         candidates.merge_groups.push(MergeGroup {
-            canonical_temp_id: "v10".into(),
-            canonical_name: "Merged Variable".into(),
+            canonical_temp_id: "h1".into(),
+            canonical_name: "Test Hypothesis".into(),
             canonical_description: "desc".into(),
             merged_temp_ids: vec!["v1".into()],
             reason: "alias".into(),
@@ -664,8 +649,64 @@ mod tests {
         let node_ops: Vec<_> = patch.operations.iter()
             .filter(|op| matches!(op, GraphPatchOp::AddNode { .. }))
             .collect();
-        // v1 should be excluded, only h1 and r1 remain
-        assert_eq!(node_ops.len(), 2);
+        assert_eq!(node_ops.len(), 2, "merged v1 is absorbed into h1");
+    }
+
+    #[test]
+    fn merge_with_unknown_canonical_keeps_entity_to_avoid_dangling_edges() {
+        let mut candidates = make_test_candidates();
+        // canonical "v10" 不在实体列表里(LLM 坏组合)→ 合并无效,v1 照常发射,
+        // 否则引用 v1 的边会解析到一个从未发射的节点。
+        candidates.merge_groups.push(MergeGroup {
+            canonical_temp_id: "v10".into(),
+            canonical_name: "Ghost Variable".into(),
+            canonical_description: "desc".into(),
+            merged_temp_ids: vec!["v1".into()],
+            reason: "alias".into(),
+            confidence: 0.9,
+        });
+
+        let patch = build_graph_patch(&candidates, "pdf-agent");
+        let node_ops: Vec<_> = patch.operations.iter()
+            .filter(|op| matches!(op, GraphPatchOp::AddNode { .. }))
+            .collect();
+        assert_eq!(node_ops.len(), 3, "unresolvable merge must not suppress the entity");
+    }
+
+    #[test]
+    fn evidence_entities_emit_once_as_nodes_not_add_evidence() {
+        let mut candidates = make_test_candidates();
+        candidates.entities.push(ExtractedEntity {
+            temp_id: "ev1".into(),
+            kind: EntityKind::Evidence,
+            label: "Supporting quote".into(),
+            text: "the quoted passage".into(),
+            confidence: 0.8,
+            anchors: vec![AnchorRef {
+                section_id: "s4".into(),
+                paragraph_id: "p9".into(),
+                start_offset: 300,
+                end_offset: 340,
+                quote: "supporting quote text".into(),
+            }],
+            attributes: EntityAttributes::default(),
+        });
+
+        let patch = build_graph_patch(&candidates, "pdf-agent");
+        // 不再发射 add-evidence(前端契约只认四种 op,未知 op 使整包无效);
+        // 证据以 evidence 节点形式出现且仅一次,定位信息随节点 data.locator 落地。
+        assert!(
+            !patch.operations.iter().any(|op| matches!(op, GraphPatchOp::AddEvidence { .. })),
+            "add-evidence must not be emitted"
+        );
+        let evidence_nodes: Vec<_> = patch.operations.iter()
+            .filter_map(|op| match op {
+                GraphPatchOp::AddNode { node } if node.node_type == "evidence" => Some(node),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(evidence_nodes.len(), 1, "evidence emits exactly one node");
+        assert!(evidence_nodes[0].data["locator"]["quote"].is_string());
     }
 
     #[test]
