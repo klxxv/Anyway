@@ -114,6 +114,16 @@ function downloadProject(project: ReturnType<typeof useWorkspaceProject>["projec
 export function ResearchWorkspaceApp() {
   const { t } = useI18n();
   const { activePlugins } = usePluginHost();
+
+  // 插件门控：仅在对应插件安装并启用时显示功能按钮
+  const hasPdfAgent = useMemo(
+    () => activePlugins.some((p) => p.manifest.metadata.id === "myc.pdf-canvas-agent"),
+    [activePlugins],
+  );
+  const hasDiffCapability = useMemo(
+    () => activePlugins.some((p) => p.manifest.kind === "AgentPlugin" || p.manifest.kind === "AnalysisPlugin"),
+    [activePlugins],
+  );
   const workspace = useWorkspaceProject();
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -608,13 +618,13 @@ export function ResearchWorkspaceApp() {
           setLayoutMode(mode);
           showNotice(t("toast.layoutApplied", { layout: layoutLabel(mode) }));
         }}
-        onCompare={openDiffPanel}
+        onCompare={hasDiffCapability ? openDiffPanel : undefined}
         onUndo={workspace.undo}
         onRedo={workspace.redo}
         onExport={exportProject}
         exportFormats={exportCommand?.formats}
         onExportFormat={exportCommand ? runPluginExport : undefined}
-        onImportPdf={() => setPdfDialogOpen(true)}
+        onImportPdf={hasPdfAgent ? () => setPdfDialogOpen(true) : undefined}
       />
 
       <div

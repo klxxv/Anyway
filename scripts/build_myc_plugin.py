@@ -12,6 +12,10 @@ ALLOWED_ROOT_FILES = {
     "theme.json",
     "edge-style.json",
     "workspace-plugin.json",
+    "agent-manifest.json",
+    "provider.json",
+    "plugin.wasm",
+    "plugin.wat",
     "README.md",
     "LICENSE",
 }

@@ -146,6 +146,17 @@ export interface ProviderDescriptor {
   provider: ProviderConfig;
 }
 
+/** Agent 描述符 / Agent descriptor (agent-manifest.json). */
+export interface AgentPluginDescriptor {
+  schemaVersion: 1;
+  mode: "agent";
+  agentType?: string;
+  reviewGated: true;
+  capabilities?: string[];
+  securityBoundary?: Record<string, boolean>;
+  pipeline?: Record<string, unknown>;
+}
+
 export interface InstalledMycPlugin {
   manifest: MycPluginManifest;
   installPath: string;
@@ -155,6 +166,7 @@ export interface InstalledMycPlugin {
   locales?: InstalledPluginLocale[];
   workspace?: WorkspacePluginDescriptor;
   provider?: ProviderDescriptor;
+  agent?: AgentPluginDescriptor;
 }
 
 export interface MycPluginRuntime {

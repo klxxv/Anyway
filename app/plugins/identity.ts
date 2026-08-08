@@ -93,6 +93,35 @@ export function pluginCompatibility(plugin: InstalledMycPlugin): PluginCompatibi
     case "WorkspacePlugin":
       validateWorkspacePlugin(plugin, issues);
       break;
+    case "ProviderPlugin":
+      if (plugin.manifest.spec.engine !== "host-mediated") {
+        issues.push("ProviderPlugin engine must be host-mediated");
+      }
+      if (
+        !plugin.manifest.spec.capabilities.some(
+          (capability) => capability === "llm.chat" || capability === "llm.configure",
+        )
+      ) {
+        issues.push("Missing capability: llm.chat or llm.configure");
+      }
+      if (!plugin.provider) issues.push("Provider descriptor is missing");
+      break;
+    case "AgentPlugin":
+      if (plugin.manifest.spec.engine !== "host-mediated") {
+        issues.push("AgentPlugin engine must be host-mediated");
+      }
+      if (
+        !plugin.manifest.spec.capabilities.some(
+          (capability) => capability === "agent.graph.patch.propose",
+        )
+      ) {
+        issues.push("Missing capability: agent.graph.patch.propose");
+      }
+      if (!plugin.agent) issues.push("Agent descriptor is missing");
+      if (plugin.agent && plugin.agent.reviewGated !== true) {
+        issues.push("Agent descriptor must be review-gated");
+      }
+      break;
     default:
       issues.push(`Unsupported plugin kind: ${kind}`);
   }

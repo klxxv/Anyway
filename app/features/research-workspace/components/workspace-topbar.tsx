@@ -63,13 +63,13 @@ type WorkspaceTopbarProps = {
   onFind: () => void;
   activeLayout: LayoutMode | null;
   onLayout: (mode: LayoutMode) => void;
-  onCompare: () => void;
+  onCompare?: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onExport: () => void;
   exportFormats?: Array<"pdf" | "svg" | "png">;
   onExportFormat?: (format: "pdf" | "svg" | "png") => void;
-  onImportPdf: () => void;
+  onImportPdf?: () => void;
 };
 
 type MenuOption<T extends string> = {
@@ -342,25 +342,29 @@ export function WorkspaceTopbar({
           shortcut={shortcuts.layout}
           onLayout={onLayout}
         />
-        <button
-          className={commandClass(commandDensity)}
-          onClick={onCompare}
-          aria-label={t("diff.compare")}
-        >
-          <IconGitCompare size={19} stroke={1.4} />
-          {t("diff.compare")}
-        </button>
+        {onCompare && (
+          <button
+            className={commandClass(commandDensity)}
+            onClick={onCompare}
+            aria-label={t("diff.compare")}
+          >
+            <IconGitCompare size={19} stroke={1.4} />
+            {t("diff.compare")}
+          </button>
+        )}
       </nav>
 
       <nav className="flex h-full items-stretch" aria-label="History and export">
-        <button
-          className={commandClass(commandDensity)}
-          onClick={onImportPdf}
-          aria-label={t("agent.importPdf")}
-        >
-          <IconFileText size={19} stroke={1.4} />
-          {t("agent.importPdf")}
-        </button>
+        {onImportPdf && (
+          <button
+            className={commandClass(commandDensity)}
+            onClick={onImportPdf}
+            aria-label={t("agent.importPdf")}
+          >
+            <IconFileText size={19} stroke={1.4} />
+            {t("agent.importPdf")}
+          </button>
+        )}
         <button
           className={commandClass(commandDensity)}
           onClick={onUndo}

@@ -127,6 +127,7 @@ pub struct InstalledMycPlugin {
     pub(crate) locales: Option<Vec<InstalledPluginLocale>>,
     pub(crate) workspace: Option<serde_json::Value>,
     pub provider: Option<ProviderDescriptor>,
+    pub(crate) agent: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -494,9 +495,37 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 );
             }
         }
+        "AgentPlugin" => {
+            if manifest.spec.engine != "host-mediated" {
+                return Err("AgentPlugin engine must be host-mediated".to_string());
+            }
+            if manifest.spec.entry != "agent-manifest.json" {
+                return Err("AgentPlugin entry must be agent-manifest.json".to_string());
+            }
+            if manifest.spec.language.is_some() {
+                return Err("AgentPlugin must not declare a guest language".to_string());
+            }
+            const AGENT_CAPABILITIES: [&str; 3] = [
+                "agent.pdf.read",
+                "agent.graph.patch.propose",
+                "agent.review.request",
+            ];
+            if manifest.spec.capabilities.is_empty()
+                || !manifest
+                    .spec
+                    .capabilities
+                    .iter()
+                    .all(|capability| AGENT_CAPABILITIES.contains(&capability.as_str()))
+            {
+                return Err(
+                    "AgentPlugin capabilities must be a non-empty subset of agent.pdf.read, agent.graph.patch.propose, agent.review.request"
+                        .to_string(),
+                );
+            }
+        }
         _ => {
             return Err(
-                "Installer accepts ThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, WorkspacePlugin, and ProviderPlugin packages"
+                "Installer accepts ThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, WorkspacePlugin, ProviderPlugin, and AgentPlugin packages"
                     .to_string(),
             );
         }
@@ -560,7 +589,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     validate_manifest(&manifest)?;
 
     let entry_path = directory.join(&manifest.spec.entry);
-    let (theme, edge_style, runtime, workspace, provider) = match manifest.kind.as_str() {
+    let (theme, edge_style, runtime, workspace, provider, agent) = match manifest.kind.as_str() {
         "ThemePlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
                 .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
@@ -573,6 +602,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
                 None,
                 None,
                 None,
+                None,
             )
         }
         "EdgeStylePlugin" => {
@@ -581,6 +611,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             (
                 None,
                 Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+                None,
                 None,
                 None,
                 None,
@@ -607,6 +638,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
                 }),
                 None,
                 None,
+                None,
             )
         }
         "WorkspacePlugin" => {
@@ -625,7 +657,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             {
                 return Err("Invalid workspace-plugin.json descriptor".to_string());
             }
-            (None, None, None, Some(descriptor), None)
+            (None, None, None, Some(descriptor), None, None)
         }
         "ProviderPlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
@@ -633,9 +665,31 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             let descriptor: ProviderDescriptor =
                 serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
             llm_plugin::validate_provider_descriptor(&descriptor)?;
-            (None, None, None, None, Some(descriptor))
+            (None, None, None, None, Some(descriptor), None)
         }
-        _ => (None, None, None, None, None),
+        "AgentPlugin" => {
+            let entry_text = fs::read_to_string(&entry_path)
+                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            let descriptor: serde_json::Value =
+                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+            if descriptor
+                .get("schemaVersion")
+                .and_then(serde_json::Value::as_u64)
+                != Some(1)
+                || descriptor.get("mode").and_then(serde_json::Value::as_str) != Some("agent")
+                || descriptor
+                    .get("reviewGated")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
+            {
+                return Err(
+                    "Invalid agent-manifest.json descriptor: requires schemaVersion 1, mode \"agent\", and reviewGated true"
+                        .to_string(),
+                );
+            }
+            (None, None, None, None, None, Some(descriptor))
+        }
+        _ => (None, None, None, None, None, None),
     };
     let locales = read_locale_bundles(directory, &manifest)?;
 
@@ -648,6 +702,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         locales,
         workspace,
         provider,
+        agent,
     })
 }
 
@@ -1108,6 +1163,7 @@ spec:
             locales: None,
             workspace: None,
             provider: None,
+            agent: None,
         }
     }
 
@@ -1326,6 +1382,123 @@ spec:
         assert_eq!(locales[0].locale, "ja-JP");
         assert_eq!(locales[0].messages["workspace.menu"], "メニュー");
         assert!(installed.runtime.is_none());
+    }
+
+    #[test]
+    fn installs_host_mediated_agent_package() {
+        let root = tempdir().expect("temp root");
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+        let agent_package = root.path().join("agent.myc");
+        let file = File::create(&agent_package).expect("agent archive");
+        let mut archive = ZipWriter::new(file);
+        archive.start_file("plugin.yml", options).expect("manifest");
+        archive
+            .write_all(
+                br#"apiVersion: researchcanvas.dev/v1alpha1
+kind: AgentPlugin
+metadata:
+  id: myc.test-agent
+  name: Test Agent
+  version: 0.1.0
+  publisher: Research Canvas
+  developer: Agent Tests
+  description: Test host-mediated review-gated agent.
+spec:
+  engine: host-mediated
+  entry: agent-manifest.json
+  capabilities: [agent.pdf.read, agent.graph.patch.propose, agent.review.request]
+  permissions: []
+"#,
+            )
+            .expect("manifest bytes");
+        archive
+            .start_file("agent-manifest.json", options)
+            .expect("agent descriptor");
+        archive
+            .write_all(
+                br#"{"schemaVersion":1,"mode":"agent","agentType":"pdf-canvas","reviewGated":true}"#,
+            )
+            .expect("agent descriptor bytes");
+        archive.finish().expect("agent package");
+
+        let installed = install_archive_into(root.path(), &agent_package).expect("install agent");
+        assert_eq!(installed.manifest.kind, "AgentPlugin");
+        assert_eq!(installed.agent.expect("agent descriptor")["mode"], "agent");
+        assert!(installed.runtime.is_none());
+        assert!(installed.workspace.is_none());
+
+        // 非审阅门控的 agent 描述符必须被拒绝 / Non-review-gated descriptors are rejected.
+        let rogue_package = root.path().join("rogue-agent.myc");
+        let file = File::create(&rogue_package).expect("rogue archive");
+        let mut archive = ZipWriter::new(file);
+        archive.start_file("plugin.yml", options).expect("manifest");
+        archive
+            .write_all(
+                br#"apiVersion: researchcanvas.dev/v1alpha1
+kind: AgentPlugin
+metadata:
+  id: myc.rogue-agent
+  name: Rogue Agent
+  version: 0.1.0
+  publisher: Research Canvas
+  developer: Agent Tests
+  description: Agent descriptor that is not review-gated.
+spec:
+  engine: host-mediated
+  entry: agent-manifest.json
+  capabilities: [agent.graph.patch.propose]
+  permissions: []
+"#,
+            )
+            .expect("manifest bytes");
+        archive
+            .start_file("agent-manifest.json", options)
+            .expect("agent descriptor");
+        archive
+            .write_all(br#"{"schemaVersion":1,"mode":"agent","reviewGated":false}"#)
+            .expect("agent descriptor bytes");
+        archive.finish().expect("rogue package");
+
+        let error = install_archive_into(root.path(), &rogue_package)
+            .expect_err("non-review-gated agent must be rejected");
+        assert!(error.contains("reviewGated"), "unexpected error: {error}");
+
+        // 未知 agent 能力也必须被拒绝 / Unknown agent capabilities are rejected.
+        let unknown_package = root.path().join("unknown-agent.myc");
+        let file = File::create(&unknown_package).expect("unknown archive");
+        let mut archive = ZipWriter::new(file);
+        archive.start_file("plugin.yml", options).expect("manifest");
+        archive
+            .write_all(
+                br#"apiVersion: researchcanvas.dev/v1alpha1
+kind: AgentPlugin
+metadata:
+  id: myc.unknown-agent
+  name: Unknown Capability Agent
+  version: 0.1.0
+  publisher: Research Canvas
+  developer: Agent Tests
+  description: Agent declaring an unknown capability.
+spec:
+  engine: host-mediated
+  entry: agent-manifest.json
+  capabilities: [agent.filesystem.write]
+  permissions: []
+"#,
+            )
+            .expect("manifest bytes");
+        archive
+            .start_file("agent-manifest.json", options)
+            .expect("agent descriptor");
+        archive
+            .write_all(br#"{"schemaVersion":1,"mode":"agent","reviewGated":true}"#)
+            .expect("agent descriptor bytes");
+        archive.finish().expect("unknown package");
+
+        let error = install_archive_into(root.path(), &unknown_package)
+            .expect_err("unknown agent capability must be rejected");
+        assert!(error.contains("capabilities"), "unexpected error: {error}");
     }
 
     // ------------------------------------------------------------------

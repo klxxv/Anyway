@@ -432,3 +432,98 @@ test("GraphPatch proposals are review-gated and structurally validated", () => {
     null,
   );
 });
+
+test("AgentPlugin and ProviderPlugin are activatable install kinds", () => {
+  const agent: InstalledMycPlugin = {
+    installPath: "plugins/installed/myc.pdf-canvas-agent@0.1.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "AgentPlugin",
+      metadata: {
+        id: "myc.pdf-canvas-agent",
+        name: "PDF Canvas Agent",
+        version: "0.1.0",
+        publisher: "Research Canvas",
+        developer: "Agent Platform Team",
+        description: "Review-gated PDF canvas agent.",
+      },
+      spec: {
+        engine: "host-mediated",
+        entry: "agent-manifest.json",
+        capabilities: [
+          "agent.pdf.read",
+          "agent.graph.patch.propose",
+          "agent.review.request",
+        ],
+        permissions: [],
+      },
+    },
+    agent: { schemaVersion: 1, mode: "agent", reviewGated: true },
+  };
+  assert.equal(pluginCompatibility(agent).compatible, true);
+  assert.equal(
+    pluginCompatibility({
+      ...agent,
+      agent: { schemaVersion: 1, mode: "agent", reviewGated: false as never },
+    }).compatible,
+    false,
+  );
+  assert.equal(
+    pluginCompatibility({ ...agent, agent: undefined }).compatible,
+    false,
+  );
+
+  const provider: InstalledMycPlugin = {
+    installPath: "plugins/installed/myc.test-provider@1.0.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "ProviderPlugin",
+      metadata: {
+        id: "myc.test-provider",
+        name: "Test Provider",
+        version: "1.0.0",
+        publisher: "Research Canvas",
+        developer: "Provider Tests",
+        description: "Test LLM provider.",
+      },
+      spec: {
+        engine: "host-mediated",
+        entry: "provider.json",
+        capabilities: ["llm.chat"],
+        permissions: [],
+      },
+    },
+    provider: {
+      schemaVersion: 1,
+      provider: {
+        type: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        chatCompletionsPath: "/v1/chat/completions",
+        defaultRouting: {
+          extraction: { model: "m", thinking: false, jsonOutput: true },
+          synthesis: { model: "m", thinking: false, jsonOutput: true },
+          recovery: { model: "m", thinking: false, jsonOutput: false },
+        },
+        requiresApiKey: true,
+      },
+    },
+  };
+  assert.equal(pluginCompatibility(provider).compatible, true);
+  assert.equal(
+    pluginCompatibility({ ...provider, provider: undefined }).compatible,
+    false,
+  );
+
+  // The shipped pdf-canvas-agent source stays review-gated and host-mediated.
+  const descriptor = JSON.parse(
+    readFileSync("plugins/sources/myc.pdf-canvas-agent/agent-manifest.json", "utf8"),
+  ) as { mode?: string; reviewGated?: boolean };
+  assert.equal(descriptor.mode, "agent");
+  assert.equal(descriptor.reviewGated, true);
+  const manifest = readFileSync(
+    "plugins/sources/myc.pdf-canvas-agent/plugin.yml",
+    "utf8",
+  );
+  assert.match(manifest, /kind: AgentPlugin/);
+  assert.match(manifest, /engine: host-mediated/);
+});
