@@ -71,9 +71,9 @@ fn json_report_matches_kernel_api() {
         serde_json::to_value(&compiled.violations).unwrap()
     );
 
-    // 项目摘要：fixture 元数据。
+    // 项目摘要：fixture 元数据(v2 fixture 经 GC-01 迁移后以 v3 编译)。
     assert_eq!(report["project"]["id"], json!("pinn-plugin-architecture"));
-    assert_eq!(report["project"]["schemaVersion"], json!(2));
+    assert_eq!(report["project"]["schemaVersion"], json!(3));
     assert_eq!(report["project"]["counts"]["nodes"], json!(12));
     assert_eq!(report["project"]["counts"]["edges"], json!(11));
 
@@ -268,17 +268,20 @@ fn mermaid_is_deterministic_and_sorted() {
     let compiled = compile_fixture();
     let mermaid = export_mermaid(&compiled.project);
     assert!(mermaid.starts_with("flowchart LR\n"));
-    // 节点行按 id 排序：第一行应为字母序最前的节点。
-    let mut lines: Vec<&str> = mermaid.lines().skip(1).collect();
-    let Some(first) = lines.first() else {
-        panic!("mermaid has no node lines");
-    };
-    assert!(first.contains("auto-weighted-loss"), "first node {first}");
-    let node_lines: Vec<&str> = lines
-        .drain(..)
+    // 节点行按 id 排序(v2 fixture 迁移后为内容派生哈希 id):逐行校验有序。
+    let node_lines: Vec<&str> = mermaid
+        .lines()
+        .skip(1)
         .filter(|line| line.contains("[\""))
         .collect();
     assert_eq!(node_lines.len(), 12);
+    let ids: Vec<String> = node_lines
+        .iter()
+        .filter_map(|line| line.split("[\"").next().map(str::trim).map(str::to_string))
+        .collect();
+    let mut sorted_ids = ids.clone();
+    sorted_ids.sort();
+    assert_eq!(ids, sorted_ids, "node lines must be sorted by id: {ids:?}");
     // 边行引用合法端点。
     assert!(mermaid.lines().any(|line| line.contains("-->|controls|")));
     assert!(mermaid.lines().any(|line| line.contains("-->|derived_from|")));

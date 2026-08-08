@@ -512,6 +512,13 @@ pub fn migrate_v2_to_v3(project: Value) -> Result<(Value, MigrationReport), Pars
             }
         }
     }
+    // 导航区:recentNodeIds/pinnedNodeIds 也是节点引用,漏改会在迁移后
+    // 必报 dangling-node-reference。
+    if let Some(navigation) = migrated.get_mut("navigation").and_then(Value::as_object_mut) {
+        for field in ["recentNodeIds", "pinnedNodeIds"] {
+            rewrite_id_array(navigation, field, &remap);
+        }
+    }
     if let Some(root) = migrated.as_object_mut() {
         root.insert(
             "schemaVersion".to_string(),
