@@ -66,6 +66,40 @@ fn full_pipeline_compiles_factors_and_runs_bp() {
     );
 }
 
+/// hub 变量回归:变量度数(邻接因子数)超过变量总数时 BP 不得越界 panic。
+/// 2 claims + 1 variable + 4 平行 supports 边:变量 v 的度数为 4 > 变量数 3。
+#[test]
+fn hub_variable_with_more_edges_than_variables_does_not_panic() {
+    let project = json!({
+        "schemaVersion": 3,
+        "id": "proj-hub",
+        "title": "Hub variable stress",
+        "nodes": [
+            {"id": "v", "type": "variable", "title": "Hub variable",
+             "data": {"valueType": "bool", "values": [true, false]}},
+            {"id": "a", "type": "claim", "title": "Claim A", "data": {}},
+            {"id": "b", "type": "claim", "title": "Claim B", "data": {}}
+        ],
+        "edges": [
+            {"id": "e1", "type": "supports", "source": "v", "target": "a",
+             "directed": true, "polarity": "positive"},
+            {"id": "e2", "type": "supports", "source": "v", "target": "a",
+             "directed": true, "polarity": "positive"},
+            {"id": "e3", "type": "supports", "source": "v", "target": "b",
+             "directed": true, "polarity": "positive"},
+            {"id": "e4", "type": "supports", "source": "v", "target": "b",
+             "directed": true, "polarity": "positive"}
+        ],
+        "evidence": []
+    });
+    let graph = compile_factor_graph(&project);
+    assert_eq!(graph.factors.len(), 4, "each parallel edge is its own factor");
+    let tree = tree_belief_propagation(&graph);
+    assert_eq!(tree.beliefs.len(), 3);
+    let loopy = loopy_belief_propagation(&graph, &BpOptions::default());
+    assert_eq!(loopy.beliefs.len(), 3);
+}
+
 #[test]
 fn bp_is_deterministic_across_runs() {
     let graph = compile_factor_graph(&residual_attention_project());

@@ -241,8 +241,12 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
     let factor_count = graph.factors.len();
     let adjacency = Adjacency::build(graph);
 
-    // 消息表：msg_vf[u][k] ↔ var_to_factor[u][k]；msg_fv[f][pos]。
-    let mut msg_vf = vec![vec![(0.0, 0.0); graph.variables.len()]; var_count];
+    // 消息表:msg_vf[u][k] ↔ var_to_factor[u][k];msg_fv[f][pos]。
+    // 内层必须按各变量度数分配——hub 变量的度数可以超过变量总数,
+    // 按变量数分配会在 2 claims + 4 平行边时越界 panic。
+    let mut msg_vf: Vec<Vec<(f64, f64)>> = (0..var_count)
+        .map(|u| vec![(0.0, 0.0); adjacency.var_to_factor[u].len()])
+        .collect();
     let mut msg_fv: Vec<Vec<(f64, f64)>> = graph
         .factors
         .iter()
@@ -312,7 +316,13 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
                         if w == v {
                             0.0 // 父变量消息未算；factor_messages 不用目标自身 net
                         } else {
-                            let (sup, rfu) = msg_vf[w][pos_in(&adjacency, w, f)];
+                            // msg_vf[w] 按 var_to_factor[w] 的槽位布局,
+                            // 必须查变量侧位置(因子侧位置是另一个索引空间)。
+                            let k = adjacency.var_to_factor[w]
+                                .iter()
+                                .position(|&(g, _)| g == f)
+                                .unwrap_or(0);
+                            let (sup, rfu) = msg_vf[w][k];
                             sigmoid(sup - rfu)
                         }
                     })
@@ -359,7 +369,12 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
                 let nets: Vec<f64> = adjacency.factor_to_var[f]
                     .iter()
                     .map(|&x| {
-                        let (sup, rfu) = msg_vf[x][pos_in(&adjacency, x, f)];
+                        // 同上:msg_vf 必须按变量侧槽位索引。
+                        let k = adjacency.var_to_factor[x]
+                            .iter()
+                            .position(|&(g, _)| g == f)
+                            .unwrap_or(0);
+                        let (sup, rfu) = msg_vf[x][k];
                         sigmoid(sup - rfu)
                     })
                     .collect();
@@ -391,7 +406,10 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
     let var_count = graph.variables.len();
     let adjacency = Adjacency::build(graph);
 
-    let msg_vf = vec![vec![(0.0, 0.0); graph.variables.len()]; var_count];
+    // 同树形 BP:内层按各变量度数分配,而不是变量总数(见上方注释)。
+    let msg_vf: Vec<Vec<(f64, f64)>> = (0..var_count)
+        .map(|u| vec![(0.0, 0.0); adjacency.var_to_factor[u].len()])
+        .collect();
     let mut msg_fv: Vec<Vec<(f64, f64)>> = graph
         .factors
         .iter()
@@ -430,7 +448,12 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
             let nets: Vec<f64> = adjacency.factor_to_var[f]
                 .iter()
                 .map(|&w| {
-                    let (sup, rfu) = snapshot[w][pos_in(&adjacency, w, f)];
+                    // snapshot 与 msg_vf 同布局:按变量侧槽位索引。
+                    let k = adjacency.var_to_factor[w]
+                        .iter()
+                        .position(|&(g, _)| g == f)
+                        .unwrap_or(0);
+                    let (sup, rfu) = snapshot[w][k];
                     sigmoid(sup - rfu)
                 })
                 .collect();
@@ -529,13 +552,6 @@ fn compute_beliefs(
 }
 
 /// 变量 w 在因子 f 的邻接中的消息槽位置。
-fn pos_in(adjacency: &Adjacency, w: usize, f: usize) -> usize {
-    adjacency.factor_to_var[f]
-        .iter()
-        .position(|&x| x == w)
-        .unwrap_or(0)
-}
-
 /// 统一入口：树图走精确树 BP，环图走阻尼 Loopy BP（GC08-12 语义图环 → loopy）。
 pub fn belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpResult {
     if graph.has_cycle() {
