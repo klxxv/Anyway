@@ -63,3 +63,16 @@ export async function listenForMycDrops(
     }
   });
 }
+
+/** 打开原生文件对话框，让用户选择一个或多个 .myc 插件包 / Opens native file dialog for picking .myc packages. */
+export async function pickMycFiles(): Promise<string[] | null> {
+  if (!hasTauriRuntime()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: true,
+    filters: [{ name: "Myc Plugin", extensions: ["myc"] }],
+  });
+  if (!selected) return null;
+  const paths = Array.isArray(selected) ? selected : [selected];
+  return paths.length > 0 ? paths : null;
+}

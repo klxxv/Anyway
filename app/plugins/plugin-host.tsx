@@ -127,10 +127,22 @@ export function PluginHostProvider({ children }: { children: ReactNode }) {
   const install = useCallback(
     async (path: string) => {
       const plugin = await installMycPlugin(path);
-      await refresh();
+      const newKey = pluginKey(plugin);
+      // 刷新安装列表
+      const plugins = await listInstalledMycPlugins();
+      setInstalledPlugins(plugins);
+      // 自动启用新安装的兼容插件，不影响用户已禁用的其他插件
+      setEnabledPluginKeys((prev) => {
+        if (prev.has(newKey)) return prev; // 无需变更
+        if (!pluginCompatibility(plugin).compatible) return prev; // 不兼容，不启用
+        const next = new Set(prev);
+        next.add(newKey);
+        writeEnabledPluginKeys(next);
+        return next;
+      });
       return plugin;
     },
-    [refresh],
+    [],
   );
 
   const removeIncompatible = useCallback(async () => {

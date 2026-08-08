@@ -11,10 +11,11 @@ import {
   IconRefresh,
   IconShieldCheck,
   IconTrash,
+  IconUpload,
   IconWorld,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../i18n/provider";
 import { builtInPluginCatalog } from "../../../plugins/catalog";
 import {
@@ -26,6 +27,7 @@ import { usePluginHost } from "../../../plugins/plugin-host";
 import { pluginReference } from "../../../plugins/contracts";
 import {
   listenForMycDrops,
+  pickMycFiles,
   runAnalysisPlugin,
 } from "../../../plugins/tauri-client";
 
@@ -64,20 +66,47 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
     [installed],
   );
 
+  // ── 拖放状态 / Drag-drop state ──
+  const [dragOver, setDragOver] = useState(false);
+  const dragCounter = useRef(0);
+
+  const installPaths = useCallback(
+    async (paths: string[]) => {
+      const mycPaths = paths.filter((p) => p.toLowerCase().endsWith(".myc"));
+      if (mycPaths.length === 0) return;
+      setBusy(true);
+      setMessage("");
+      let ok = 0;
+      const errors: string[] = [];
+      for (const path of mycPaths) {
+        try {
+          await install(path);
+          ok++;
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      if (errors.length === 0) {
+        setMessage(t("plugins.installedToast", { count: ok }));
+      } else {
+        setMessage(
+          ok > 0
+            ? `${t("plugins.installedToast", { count: ok })} · ${errors.join("; ")}`
+            : errors.join("; "),
+        );
+      }
+      setBusy(false);
+    },
+    [install, t],
+  );
+
+  // ── Tauri 原生拖放监听 (webview 级别) / Tauri native drop listener (webview-level) ──
   useEffect(() => {
     let cancelled = false;
     let stop: () => void = () => undefined;
     void listenForMycDrops(async (paths) => {
       if (paths.length === 0) return;
-      setBusy(true);
-      try {
-        for (const path of paths) await install(path);
-        setMessage(t("plugins.installedToast"));
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : String(error));
-      } finally {
-        setBusy(false);
-      }
+      await installPaths(paths);
     }).then((unlisten) => {
       if (cancelled) unlisten();
       else stop = unlisten;
@@ -86,7 +115,68 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
       cancelled = true;
       stop();
     };
-  }, [install, t]);
+  }, [installPaths]);
+
+  // ── 点击浏览按钮 / Browse button handler ──
+  const handleBrowse = useCallback(async () => {
+    const paths = await pickMycFiles();
+    if (paths && paths.length > 0) {
+      await installPaths(paths);
+    }
+  }, [installPaths]);
+
+  // ── HTML5 拖放事件处理 / HTML5 drag-drop event handlers ──
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    setDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter.current = 0;
+      setDragOver(false);
+
+      // 尝试从 Tauri 原生事件中提取路径；回退到 HTML5 File API
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+
+      const paths: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // Tauri v2 在 File 对象上暴露 path 属性
+        const filePath = (file as unknown as { path?: string }).path;
+        if (filePath) {
+          paths.push(filePath);
+        }
+      }
+
+      if (paths.length > 0) {
+        await installPaths(paths);
+      } else {
+        setMessage(t("plugins.dropNoPaths"));
+      }
+    },
+    [installPaths, t],
+  );
 
   const visibleInstalled = useMemo(
     () =>
@@ -191,15 +281,55 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
           </aside>
 
           <div className="min-h-0 overflow-y-auto p-6">
-            <div className="rounded-[6px] border border-dashed border-ink/25 bg-canvas px-5 py-4">
+            <div
+              className={`rounded-[6px] border-2 border-dashed px-5 py-5 transition-colors ${
+                dragOver
+                  ? "border-blue bg-blue/5"
+                  : hostBusy
+                    ? "border-ink/15 bg-canvas opacity-60"
+                    : "border-ink/25 bg-canvas hover:border-ink/40"
+              }`}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              role="button"
+              tabIndex={0}
+              aria-label={t("plugins.dropTitle")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") handleBrowse();
+              }}
+            >
               <div className="flex items-center gap-3">
-                <IconDatabaseImport size={22} stroke={1.25} className="text-blue" />
-                <div>
-                  <p className="font-serif text-[13px]">{t("plugins.dropTitle")}</p>
+                <IconDatabaseImport
+                  size={24}
+                  stroke={1.25}
+                  className={dragOver ? "text-blue" : "text-blue/70"}
+                />
+                <div className="flex-1">
+                  <p className="font-serif text-[13px]">
+                    {dragOver ? t("plugins.dropActive") : t("plugins.dropTitle")}
+                  </p>
                   <p className="mt-0.5 font-serif text-[9px] text-ink/50">
                     {t("plugins.dropHint")}
                   </p>
                 </div>
+                <button
+                  type="button"
+                  className={`flex items-center gap-1.5 rounded-[5px] border px-3.5 py-2 font-serif text-[11px] transition ${
+                    hostBusy
+                      ? "cursor-not-allowed border-ink/15 text-ink/30"
+                      : "border-blue/40 bg-blue-soft text-blue hover:bg-blue/15"
+                  }`}
+                  disabled={hostBusy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleBrowse();
+                  }}
+                >
+                  <IconUpload size={15} stroke={1.4} />
+                  {t("plugins.browseFiles")}
+                </button>
               </div>
             </div>
 
