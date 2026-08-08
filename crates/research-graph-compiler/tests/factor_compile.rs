@@ -19,6 +19,28 @@ fn project_with_edges(edges: Vec<Value>) -> Value {
     })
 }
 
+/// 回归:未知边类型不得静默编译为 Supports(自有文档声明不生成因子)。
+#[test]
+fn unknown_edge_type_is_skipped_with_diagnostic_not_supports() {
+    let project = project_with_edges(vec![json!({
+        "id": "e1", "type": "causes", "source": "a", "target": "b",
+        "directed": true, "polarity": "positive"
+    })]);
+    let graph = compile_factor_graph(&project);
+    assert!(
+        graph.factors.is_empty(),
+        "causes has no factor semantics and must not silently become Supports"
+    );
+    assert!(
+        graph
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "unsupported-edge-factor"),
+        "{:?}",
+        graph.diagnostics
+    );
+}
+
 /// 回归:无 data 字段的 claim 不得从因子图静默消失(按默认布尔变量编译)。
 #[test]
 fn claim_without_data_still_enters_factor_graph() {
