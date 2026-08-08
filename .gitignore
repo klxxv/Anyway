@@ -99,3 +99,6 @@ yarn-error.log*
 
 # rust workspace crates build output
 crates/*/target/
+
+# opencode session handoff (local context, never published)
+/OPENCODE_HANDOFF.md
