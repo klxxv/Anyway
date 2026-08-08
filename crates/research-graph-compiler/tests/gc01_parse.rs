@@ -197,6 +197,15 @@ fn gc01_06_future_schema_version_rejected() {
     )
     .unwrap_err();
     assert_eq!(error.code, "unsupported-schema-version");
+
+    // 回归:2³²+3 必须按"未来版本"拒绝,不得 as u32 截断成 v3 蒙混过关。
+    let error = parse_project(
+        br#"{"schemaVersion":4294967299,"nodes":[]}"#,
+        &ParseOptions::defaults(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "unsupported-schema-version");
+    assert!(error.detail.contains("4294967299"), "{}", error.detail);
 }
 
 /// GC01-07 未知字段：宽松模式保留（opaque）；严格模式拒绝，模式差异稳定。

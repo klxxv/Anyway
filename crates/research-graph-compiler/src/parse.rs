@@ -267,14 +267,25 @@ pub fn check_schema(project: &Value, options: &ParseOptions) -> Result<(), Parse
         ));
     };
     let version = match root.get("schemaVersion") {
-        Some(Value::Number(number)) => number.as_u64().ok_or_else(|| {
-            ParseError::new(
-                "type-mismatch",
-                None,
-                Some("/schemaVersion".to_string()),
-                "schemaVersion must be an integer",
-            )
-        })? as u32,
+        Some(Value::Number(number)) => {
+            let raw = number.as_u64().ok_or_else(|| {
+                ParseError::new(
+                    "type-mismatch",
+                    None,
+                    Some("/schemaVersion".to_string()),
+                    "schemaVersion must be an integer",
+                )
+            })?;
+            // 不得 `as u32` 截断:2³²+3 会被当成 v3 绕过版本闸门。
+            u32::try_from(raw).map_err(|_| {
+                ParseError::new(
+                    "unsupported-schema-version",
+                    None,
+                    Some("/schemaVersion".to_string()),
+                    format!("schema version {raw} is newer than supported v{SCHEMA_VERSION}"),
+                )
+            })?
+        }
         Some(_) => {
             return Err(ParseError::new(
                 "type-mismatch",
