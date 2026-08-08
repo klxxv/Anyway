@@ -143,7 +143,10 @@ fn analysis_sections_match_kernel_output() {
     );
     let contradictions = research_graph_compiler::factor::contradiction::find_contradictions(
         &compiled.project,
-        16,
+        &research_graph_compiler::factor::contradiction::ContradictionOptions {
+            max_depth: 16,
+            ..Default::default()
+        },
     );
     let beliefs = research_graph_compiler::factor::bp::tree_belief_propagation(&factor_graph);
     let layout = research_graph_compiler::layout::compute_layout(

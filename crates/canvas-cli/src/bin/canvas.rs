@@ -443,7 +443,10 @@ fn build_report(options: &Options, input: &Path, compiled: &CompileResult) -> Co
         let contradictions =
             research_graph_compiler::factor::contradiction::find_contradictions(
                 &compiled.project,
-                DEFAULT_MAX_DEPTH,
+                &research_graph_compiler::factor::contradiction::ContradictionOptions {
+                    max_depth: DEFAULT_MAX_DEPTH,
+                    ..Default::default()
+                },
             );
         contradiction_chains = serde_json::to_value(&contradictions).ok();
     }
