@@ -454,8 +454,10 @@ fn build_report(options: &Options, input: &Path, compiled: &CompileResult) -> Co
         let factor_graph = research_graph_compiler::factor::compile::compile_factor_graph(
             &compiled.project,
         );
-        let beliefs =
-            research_graph_compiler::factor::bp::tree_belief_propagation(&factor_graph);
+        let beliefs = research_graph_compiler::factor::bp::belief_propagation(
+            &factor_graph,
+            &research_graph_compiler::factor::bp::BpOptions::default(),
+        );
         bp = serde_json::to_value(&beliefs).ok();
     }
     if options.layout {

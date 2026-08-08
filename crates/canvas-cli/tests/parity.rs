@@ -148,7 +148,10 @@ fn analysis_sections_match_kernel_output() {
             ..Default::default()
         },
     );
-    let beliefs = research_graph_compiler::factor::bp::tree_belief_propagation(&factor_graph);
+    let beliefs = research_graph_compiler::factor::bp::belief_propagation(
+        &factor_graph,
+        &research_graph_compiler::factor::bp::BpOptions::default(),
+    );
     let layout = research_graph_compiler::layout::compute_layout(
         &compiled.project,
         research_graph_compiler::layout::LayoutMode::Hierarchical,
