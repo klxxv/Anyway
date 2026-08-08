@@ -71,56 +71,98 @@ impl From<&AgentJob> for PdfJobStatus {
 /// Start a PDF processing job. Automatically runs the full pipeline:
 /// validate → extract text → OCR fallback → build DocumentMap → extract semantics →
 /// generate GraphPatch → await review.
+///
+/// 并发模型:异步命令 + 每阶段短锁 + 重活进线程池。状态锁只在 create/advance
+/// 时短暂持有,PDF 解析在 spawn_blocking 里跑 — UI 不冻结,cancel_job 能在
+/// 阶段边界介入(下一阶段推进时撞终态而干净退出)。
 #[tauri::command]
-pub fn start_pdf_job(
+pub async fn start_pdf_job(
     state: State<'_, AgentHostState>,
     request: StartPdfJobRequest,
 ) -> Result<PdfJobStatus, String> {
-    let mut host = state.0.lock().map_err(|e| format!("Lock error: {e}"))?;
     let pdf_path = Path::new(&request.pdf_path);
     let abs_path = pdf_path
         .canonicalize()
         .map_err(|e| format!("Cannot resolve path: {e}"))?;
 
-    // 创建 job（含文件校验）
+    // 创建 job（含文件校验）——短锁,拿到 id 即释放。
     let job_id = {
-        let job = host.create_job(&abs_path)?;
-        job.job_id.clone()
+        let mut host = state.0.lock().map_err(|e| format!("Lock error: {e}"))?;
+        host.create_job(&abs_path)?.job_id.clone()
     };
 
-    let outcome = run_pdf_stages(&mut host, &job_id, &abs_path);
+    let outcome = run_pdf_stages(&state.0, &job_id, &abs_path).await;
     if let Err(error) = outcome {
         // 管线失败必须落 Failed 终态,否则 job 永久卡死在非终态;
         // 若 job 已被并发取消/裁决,保持既有终态。
+        let mut host = state.0.lock().map_err(|e| format!("Lock error: {e}"))?;
         let _ = host.advance_job(&job_id, JobState::Failed, None, None, Some(&error));
         return Err(error);
     }
 
+    let host = state.0.lock().map_err(|e| format!("Lock error: {e}"))?;
     let job = host.get_job(&job_id).ok_or_else(|| "Job vanished".to_string())?;
     Ok(PdfJobStatus::from(job))
 }
 
-/// 管线主体:任一阶段失败即返回错误,由调用方落 Failed 终态。
-/// Pipeline body: any stage failure bubbles up so the caller can land Failed.
-fn run_pdf_stages(host: &mut AgentHost, job_id: &str, abs_path: &Path) -> Result<(), String> {
+/// 短锁推进一个阶段;并发取消/失败导致转换非法时,若已是终态则返回干净的并发终止错误。
+fn advance_stage(
+    hosts: &Mutex<AgentHost>,
+    job_id: &str,
+    next: JobState,
+    output_hash: Option<&str>,
+    data: Option<Value>,
+) -> Result<(), String> {
+    let mut host = hosts.lock().map_err(|e| format!("Lock error: {e}"))?;
+    match host.advance_job(job_id, next, output_hash, data, None) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            let terminated = host
+                .get_job(job_id)
+                .map(|job| job.state.is_terminal())
+                .unwrap_or(false);
+            if terminated {
+                Err("Job was cancelled or failed concurrently".to_string())
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+/// 管线主体:阶段推进用短锁,重计算进线程池,失败即返回由调用方落 Failed。
+async fn run_pdf_stages(
+    hosts: &Mutex<AgentHost>,
+    job_id: &str,
+    abs_path: &Path,
+) -> Result<(), String> {
     // ── 阶段 1：ValidatingFile ──
-    host.advance_job(&job_id, JobState::ValidatingFile, Some("v1"), None, None)?;
+    advance_stage(hosts, job_id, JobState::ValidatingFile, Some("v1"), None)?;
 
     // ── 阶段 2：ExtractingText ──
-    let extracted = PdfPipeline::extract_text(&abs_path)?;
+    let extracted = {
+        let path = abs_path.to_path_buf();
+        tauri::async_runtime::spawn_blocking(move || PdfPipeline::extract_text(&path))
+            .await
+            .map_err(|e| format!("Pipeline task join error: {e}"))??
+    };
     let text_hash = format!("{:x}", sha2::Sha256::digest(extracted.full_text.as_bytes()));
-    host.advance_job(
-        &job_id,
+    advance_stage(
+        hosts,
+        job_id,
         JobState::ExtractingText,
         Some(&text_hash),
         Some(serde_json::to_value(&extracted).map_err(|e| e.to_string())?),
-        None,
     )?;
 
     // ── 阶段 3：OcrOptional ──
     let ocr_triggered = PdfPipeline::needs_ocr(&extracted);
     let (final_text, ocr_confidence) = if ocr_triggered {
-        match PdfPipeline::ocr_fallback(&abs_path) {
+        let path = abs_path.to_path_buf();
+        match tauri::async_runtime::spawn_blocking(move || PdfPipeline::ocr_fallback(&path))
+            .await
+            .map_err(|e| format!("Pipeline task join error: {e}"))?
+        {
             Ok(ocr_text) => {
                 let ocr_hash = format!("{:x}", sha2::Sha256::digest(ocr_text.full_text.as_bytes()));
                 (Some(ocr_hash), Some(1.0_f64))
@@ -133,57 +175,62 @@ fn run_pdf_stages(host: &mut AgentHost, job_id: &str, abs_path: &Path) -> Result
     } else {
         (None, None)
     };
-    host.advance_job(
-        &job_id,
+    advance_stage(
+        hosts,
+        job_id,
         JobState::OcrOptional,
         final_text.as_deref(),
         Some(serde_json::json!({ "ocrTriggered": ocr_triggered, "ocrConfidence": ocr_confidence })),
-        None,
     )?;
 
     // ── 阶段 4：BuildingDocumentMap ──
-    let doc = PdfPipeline::run(&abs_path)?;
+    let doc = {
+        let path = abs_path.to_path_buf();
+        tauri::async_runtime::spawn_blocking(move || PdfPipeline::run(&path))
+            .await
+            .map_err(|e| format!("Pipeline task join error: {e}"))??
+    };
     let doc_hash = format!("{:x}", sha2::Sha256::digest(
         serde_json::to_string(&doc).unwrap_or_default().as_bytes()
     ));
-    host.advance_job(
-        &job_id,
+    advance_stage(
+        hosts,
+        job_id,
         JobState::BuildingDocumentMap,
         Some(&doc_hash),
         Some(serde_json::to_value(&doc).map_err(|e| e.to_string())?),
-        None,
     )?;
 
     // ── 阶段 5：ExtractingSemantics ──
     // 从 StructuredDocument 提取语义节点/边作为 GraphPatch 待审阅 operations
-    let patch = build_graph_patch_from_document(&doc, &job_id);
+    let patch = build_graph_patch_from_document(&doc, job_id);
     let semantic_hash = format!("{:x}", sha2::Sha256::digest(
         serde_json::to_string(&patch).unwrap_or_default().as_bytes()
     ));
-    host.advance_job(
-        &job_id,
+    advance_stage(
+        hosts,
+        job_id,
         JobState::ExtractingSemantics,
         Some(&semantic_hash),
         Some(patch.clone()),
-        None,
     )?;
 
     // ── 阶段 6：GeneratingPatch ──
-    host.advance_job(
-        &job_id,
+    advance_stage(
+        hosts,
+        job_id,
         JobState::GeneratingPatch,
         Some(&semantic_hash),
         Some(patch.clone()),
-        None,
     )?;
 
     // ── 阶段 7:AwaitingReview(data 即审阅载荷,advance_job 写入 job.result)──
-    host.advance_job(
-        &job_id,
+    advance_stage(
+        hosts,
+        job_id,
         JobState::AwaitingReview,
         Some(&semantic_hash),
         Some(patch),
-        None,
     )?;
     Ok(())
 }
