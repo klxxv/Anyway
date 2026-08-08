@@ -105,7 +105,10 @@ fn canonicalize_mode(value: &Value, sort_arrays: bool) -> Vec<u8> {
                 }
                 out.extend_from_slice(&quoted_string(key));
                 out.push(b':');
-                out.extend_from_slice(&canonicalize(entry));
+                // 字段感知:SEQUENCE_FIELDS(pathSteps 等)保序,其余按集合语义。
+                // 之前统一走 canonicalize,canonicalize_field 成了死代码,
+                // 步骤顺序不同的链会撞 hash。
+                out.extend_from_slice(&canonicalize_field(key, entry));
             }
             out.push(b'}');
             out
