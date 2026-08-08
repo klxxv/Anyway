@@ -421,7 +421,9 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
     let mut iterations = 0;
     let mut prev_residual = f64::INFINITY;
     let mut rising_streak = 0;
-    // period-2 振荡检测（GC10-09）：消息与两轮前重合但残差未收敛。
+    // period-2 振荡检测(GC10-09):消息与"两轮前"重合但残差未收敛。
+    // 需要 prev1/prev2 双快照;单快照在每轮末更新,实际比较的是一轮前,差一拍。
+    let mut prev1_msg = msg_fv.clone();
     let mut prev2_msg = msg_fv.clone();
 
     for round in 0..options.max_iterations {
@@ -505,7 +507,7 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
                 break;
             }
         }
-        prev2_msg = msg_fv.clone();
+        prev2_msg = std::mem::replace(&mut prev1_msg, msg_fv.clone());
     }
 
     let beliefs = compute_beliefs(graph, &adjacency, &msg_fv);
