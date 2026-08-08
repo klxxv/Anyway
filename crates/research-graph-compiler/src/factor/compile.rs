@@ -86,9 +86,13 @@ pub fn compile_factor_graph(project: &Value) -> FactorGraph {
         if !CLAIM_NODE_TYPES.contains(&node_type) {
             continue; // paper/dataset/experiment 等不是主张变量。
         }
-        let Some(data) = node.get("data").and_then(Value::as_object) else {
-            continue;
-        };
+        // 无 data(或非对象)的主张节点按空 data 处理:默认布尔变量。
+        // 之前直接 continue,导致这类 claim 从 BP 静默消失。
+        let empty_data = serde_json::Map::new();
+        let data = node
+            .get("data")
+            .and_then(Value::as_object)
+            .unwrap_or(&empty_data);
         // 注入检测：data 中不得携带哈希/后验/布局（MUST 拒绝）。
         for key in INJECTED_TRUST_KEYS {
             if data.contains_key(*key) {
