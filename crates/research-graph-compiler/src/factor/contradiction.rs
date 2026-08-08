@@ -191,12 +191,13 @@ fn parity_bfs(
             parent.insert(next.clone(), ((node.clone(), parity), edge_idx));
             queue.push_back((next.clone(), d + 1));
             if next.0 == goal && next_parity == goal_parity {
-                // 重建路径。
+                // 重建路径:parent 键是 (node, parity) 且 parity ∈ {+1,−1},
+                // 游标必须携带真实 parity——写成 0 一跳就退出,见证被截断。
                 let mut path = Vec::new();
                 let mut cursor = next;
-                while let Some(((prev, _), edge_idx)) = parent.get(&cursor) {
+                while let Some(((prev, prev_parity), edge_idx)) = parent.get(&cursor) {
                     path.push(edges[*edge_idx].id.clone());
-                    cursor = (prev.clone(), 0);
+                    cursor = (prev.clone(), *prev_parity);
                 }
                 path.reverse();
                 return Some(path);

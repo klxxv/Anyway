@@ -52,6 +52,31 @@ fn gc11_02_positive_and_negative_path_pair() {
     assert_eq!(pair.paths[1], vec!["e1"]); // 负边
 }
 
+/// 回归:多边正路径必须完整进入见证(parent 键带 ±1 parity,
+/// 重建游标若把 parity 写成 0,路径会被截断成最后一条边)。
+#[test]
+fn multi_edge_positive_path_witness_is_complete() {
+    let report = find_contradictions(
+        &project(vec![
+            edge("e1", "supports", "a", "b"),
+            edge("e2", "supports", "b", "c"),
+            edge("e3", "contradicts", "a", "c"),
+        ]),
+        &ContradictionOptions::default(),
+    );
+    let pair = report
+        .witnesses
+        .iter()
+        .find(|w| w.kind == "path-pair")
+        .expect("path-pair witness");
+    assert_eq!(
+        pair.paths[0],
+        vec!["e1", "e2"],
+        "the two-hop positive path must be witnessed in full, not truncated to its last edge"
+    );
+    assert_eq!(pair.paths[1], vec!["e3"]);
+}
+
 #[test]
 fn gc11_03_negative_path_alone_is_not_conflict() {
     let report = find_contradictions(
