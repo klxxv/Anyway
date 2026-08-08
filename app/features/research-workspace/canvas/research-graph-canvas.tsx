@@ -81,6 +81,7 @@ import { ResearchEdgeLine } from "./research-edge-line";
 import { ResearchNodeCard } from "./research-node-card";
 import { computeEdgeRoutes } from "./edge-routing";
 import { isExpandableVariable, variableBranchValues } from "./variable-branches";
+import { setCursorLongPress } from "../../../components/CustomCursor";
 
 const nodeTypes = { researchNode: ResearchNodeCard };
 const edgeTypes = { researchEdge: ResearchEdgeLine };
@@ -142,7 +143,7 @@ function buildNodes(
   expandedNodeIds: ReadonlySet<string>,
   onToggleExpanded: (nodeId: string) => void,
   highlightedNodeIds?: ReadonlySet<string>,
-  diffOverlay: DiffOverlayState | null | undefined,
+  diffOverlay?: DiffOverlayState | null,
 ): WorkspaceNode[] {
   const projected = projectForLegendFilter(project, filter);
   const nodes: WorkspaceNode[] = projected.nodes.map((record) => {
@@ -203,7 +204,7 @@ function buildEdges(
   edgeTypeLabel: (type: ResearchEdgeType) => string,
   edgeStyle: EdgeStyleManifest,
   highlightedEdgeIds?: ReadonlySet<string>,
-  diffOverlay: DiffOverlayState | null | undefined,
+  diffOverlay?: DiffOverlayState | null,
 ): WorkspaceEdge[] {
   const projected = projectForLegendFilter(project, filter);
   const routes = computeEdgeRoutes(projected);
@@ -742,6 +743,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
             runRadialActionRef.current(radial.selectedItem, radial.flowX, radial.flowY);
           }
           radialMenuRef.current?.updateGesture(null, false);
+          setCursorLongPress(false);
           setPieMenu(null);
           reset();
           return;
@@ -757,6 +759,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
             window.cancelAnimationFrame(nativePinch.animationFrame);
           }
           radialMenuRef.current?.updateGesture(null, false);
+          setCursorLongPress(false);
           setPieMenu(null);
           reset();
           return;
@@ -804,6 +807,7 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
           flowY: flow.y,
           gestureActive: true,
         });
+        setCursorLongPress(true);
         return;
       }
       nativePinch.latestFrame = frame;
@@ -1186,12 +1190,14 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
     [contextPoint],
   );
   const closePieMenu = useCallback(() => {
+    setCursorLongPress(false);
     radialMenuRef.current?.updateGesture(null, false);
     setPieMenu(null);
   }, []);
   const choosePieItem = useCallback(
     (item: RadialMenuItem) => {
       if (!pieMenu) return;
+      setCursorLongPress(false);
       runRadialAction(item, pieMenu.flowX, pieMenu.flowY);
       radialMenuRef.current?.updateGesture(null, false);
       setPieMenu(null);

@@ -499,6 +499,102 @@
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Custom Cursor                                                        */
+/* ------------------------------------------------------------------ */
+
+/* Hide the native cursor everywhere when our custom cursor is active. */
+html.custom-cursor-active,
+html.custom-cursor-active * {
+  cursor: none !important;
+}
+
+.custom-cursor-ring {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 9999;
+  will-change: transform, opacity, scale;
+  width: 36px;
+  height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(36, 39, 43, 0.28);
+  scale: 1;
+  transition:
+    scale 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.35s ease,
+    background-color 0.35s ease,
+    opacity 0.3s ease;
+}
+
+.custom-cursor-ring.is-hover {
+  scale: calc(56 / 36);
+  border-color: var(--color-blue, #2457d6);
+  background-color: color-mix(in srgb, var(--color-blue, #2457d6) 8%, transparent);
+}
+
+.custom-cursor-ring.is-longpress {
+  opacity: 0;
+  scale: 1;
+  transition:
+    scale 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.5s ease,
+    opacity 0.5s ease;
+}
+
+/* The central dot – marks absolute cursor position. */
+.custom-cursor-dot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 9999;
+  will-change: transform, opacity, width, height, margin;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--color-blue, #2457d6);
+  transition:
+    opacity 0.3s ease,
+    width 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    height 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    margin-left 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    margin-top 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.35s ease;
+}
+
+/* Long-press: the dot swells to fill the ring (36px) and adopts its border. */
+.custom-cursor-dot.is-longpress {
+  width: 36px;
+  height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
+  background: color-mix(in srgb, var(--color-blue, #2457d6) 12%, transparent);
+  border: 1.5px solid var(--color-blue, #2457d6);
+}
+
+/* Restore native cursor on touch / coarse-pointer devices. */
+@media (hover: none), (pointer: coarse) {
+  .custom-cursor-ring,
+  .custom-cursor-dot {
+    display: none;
+  }
+
+  html.custom-cursor-active,
+  html.custom-cursor-active * {
+    cursor: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion                                                      */
+/* ------------------------------------------------------------------ */
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
