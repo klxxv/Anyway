@@ -1,7 +1,7 @@
 apiVersion: researchcanvas.dev/v1alpha1
 kind: AnalysisPlugin
 metadata:
-  id: researchcanvas.runtime-smoke
+  id: myc.runtime-smoke
   name: Runtime Smoke
   version: 1.1.0
   publisher: Research Canvas

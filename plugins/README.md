@@ -27,8 +27,8 @@ Build a package:
 
 ```bash
 python scripts/build_myc_plugin.py \
-  plugins/sources/researchcanvas.onedarkpro \
-  plugins/packages/researchcanvas.onedarkpro@1.3.0.myc
+  plugins/sources/myc.onedarkpro \
+  plugins/packages/myc.onedarkpro@1.3.0.myc
 ```
 
 In development, the Tauri client scans `plugins/packages`, extracts verified
@@ -70,8 +70,8 @@ The current bounded capabilities are:
 | `git.ssh.upload` | Upload an explicitly selected `.pub` key through GitHub CLI |
 | `graph.patch.propose` | Describe a review-required graph proposal |
 
-The reference packages are `researchcanvas.export-suite`,
-`researchcanvas.folder-workspaces`, and `researchcanvas.git-workspace`. All
+The reference packages are `myc.export-suite`,
+`myc.folder-workspaces`, and `myc.git-workspace`. All
 three use `tests/fixtures/pinn-architecture.mycproj`, which covers Fourier
 embedding, widths 32/64/128, depths 8/10/12, residual links, cos/sin hard
 constraints, PDE/separated/auto-weighted losses, and a Git-linked ablation.

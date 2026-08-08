@@ -1,7 +1,7 @@
 apiVersion: researchcanvas.dev/v1alpha1
 kind: WorkspacePlugin
 metadata:
-  id: researchcanvas.folder-workspaces
+  id: myc.folder-workspaces
   name: Folder Workspaces
   version: 1.0.0
   publisher: Research Canvas

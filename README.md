@@ -50,8 +50,8 @@ Build a plugin:
 
 ```bash
 python scripts/build_myc_plugin.py \
-  plugins/sources/researchcanvas.onedarkpro \
-  plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+  plugins/sources/myc.onedarkpro \
+  plugins/packages/myc.onedarkpro@1.3.0.myc
 ```
 
 Plugin kinds:

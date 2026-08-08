@@ -10,13 +10,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .expect("repository root")
         .to_path_buf();
-    let source = repository.join("plugins/sources/researchcanvas.runtime-smoke");
+    let source = repository.join("plugins/sources/myc.runtime-smoke");
     let packages = repository.join("plugins/packages");
     fs::create_dir_all(&packages)?;
 
     let manifest = fs::read(source.join("plugin.yml"))?;
     let wasm = wat::parse_file(source.join("plugin.wat"))?;
-    let output = packages.join("researchcanvas.runtime-smoke@1.1.0.myc");
+    let output = packages.join("myc.runtime-smoke@1.1.0.myc");
     let file = File::create(&output)?;
     let mut archive = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);

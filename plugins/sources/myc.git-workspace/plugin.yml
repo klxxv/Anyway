@@ -1,7 +1,7 @@
 apiVersion: researchcanvas.dev/v1alpha1
 kind: WorkspacePlugin
 metadata:
-  id: researchcanvas.git-workspace
+  id: myc.git-workspace
   name: Git Workspace
   version: 1.2.0
   publisher: Research Canvas

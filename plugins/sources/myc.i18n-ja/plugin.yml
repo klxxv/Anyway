@@ -1,7 +1,7 @@
 apiVersion: researchcanvas.dev/v1alpha1
 kind: LocalePlugin
 metadata:
-  id: researchcanvas.i18n-ja
+  id: myc.i18n-ja
   name: Japanese UI
   version: 1.0.1
   publisher: Research Canvas Community

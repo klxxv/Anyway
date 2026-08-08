@@ -28,7 +28,7 @@ spec:
         path: locales/ja-JP.json
 ```
 
-The reference package is `plugins/sources/researchcanvas.i18n-ja`. A partial
+The reference package is `plugins/sources/myc.i18n-ja`. A partial
 community catalog is valid: unresolved keys deliberately fall back to English.
 
 Project content and plugin-authored metadata are never translated implicitly.

@@ -1,7 +1,7 @@
 apiVersion: researchcanvas.dev/v1alpha1
 kind: AgentPlugin
 metadata:
-  id: pdf-canvas-agent
+  id: myc.pdf-canvas-agent
   name: PDF Canvas Agent
   version: 0.1.0
   publisher: Research Canvas

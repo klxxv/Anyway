@@ -55,12 +55,12 @@ test("locale normalization and Simplified Chinese catalog are deterministic", ()
 
 test("installed EdgeStylePlugin metadata owns the registered style identity", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.circuit-orthogonal@1.0.0",
+    installPath: "plugins/installed/myc.circuit-orthogonal@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "EdgeStylePlugin",
       metadata: {
-        id: "researchcanvas.circuit-orthogonal",
+        id: "myc.circuit-orthogonal",
         name: "Circuit Orthogonal",
         version: "1.0.0",
         publisher: "Research Canvas Community",
@@ -95,7 +95,7 @@ test("installed EdgeStylePlugin metadata owns the registered style identity", ()
   };
 
   const edgeStyle = normalizeInstalledEdgeStyle(plugin);
-  assert.equal(edgeStyle?.id, "researchcanvas.circuit-orthogonal");
+  assert.equal(edgeStyle?.id, "myc.circuit-orthogonal");
   assert.equal(edgeStyle?.name, "Circuit Orthogonal");
   assert.equal(edgeStyle?.version, "1.0.0");
   assert.equal(edgeStyle?.routing, "orthogonal");
@@ -103,26 +103,26 @@ test("installed EdgeStylePlugin metadata owns the registered style identity", ()
   assert.equal(pluginCompatibility(plugin).compatible, true);
   assert.equal(
     resolveEdgeStyle([plugin]).id,
-    "researchcanvas.circuit-orthogonal",
+    "myc.circuit-orthogonal",
   );
   assert.equal(resolveEdgeStyle([]).id, "research-orthogonal");
   assert.equal(resolveEdgeStyle([]).stroke.cornerRadius, 12);
 });
 
 test(".myc filenames are recognized case-insensitively", () => {
-  assert.equal(isMycFileName("researchcanvas.onedarkpro@1.0.0.myc"), true);
+  assert.equal(isMycFileName("myc.onedarkpro@1.0.0.myc"), true);
   assert.equal(isMycFileName("THEME.MYC"), true);
   assert.equal(isMycFileName("theme.zip"), false);
 });
 
 test("installed ThemePlugin metadata owns the registered theme identity", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.onedarkpro@1.0.0",
+    installPath: "plugins/installed/myc.onedarkpro@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "ThemePlugin",
       metadata: {
-        id: "researchcanvas.onedarkpro",
+        id: "myc.onedarkpro",
         name: "One Dark Pro",
         version: "1.0.0",
         publisher: "Research Canvas Community",
@@ -170,12 +170,12 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   };
 
   const theme = normalizeInstalledTheme(plugin);
-  assert.equal(theme?.id, "researchcanvas.onedarkpro");
+  assert.equal(theme?.id, "myc.onedarkpro");
   assert.equal(theme?.name, "One Dark Pro");
   assert.equal(theme?.version, "1.0.0");
   assert.equal(theme?.source, "myc");
   assert.equal(pluginCompatibility(plugin).compatible, true);
-  assert.equal(resolveTheme([plugin])?.id, "researchcanvas.onedarkpro");
+  assert.equal(resolveTheme([plugin])?.id, "myc.onedarkpro");
   assert.equal(themeCssVariables(theme)?.["--color-blue"], "#61afef");
   assert.equal(themeCssVariables(theme)?.["--toast-background"], "#20242c");
   assert.equal(themeCssVariables(theme)?.["--minimap-relation"], "#596170");
@@ -207,12 +207,12 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
 
 test("runtime plugin metadata exposes only the verified wasm boundary", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.runtime-smoke@1.0.0",
+    installPath: "plugins/installed/myc.runtime-smoke@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "AnalysisPlugin",
       metadata: {
-        id: "researchcanvas.runtime-smoke",
+        id: "myc.runtime-smoke",
         name: "Runtime Smoke",
         version: "1.0.0",
         publisher: "Research Canvas",
@@ -248,12 +248,12 @@ test("active plugin context menus require runtime and an explicit capability", (
     icon: "sparkles",
   };
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.context@1.0.0",
+    installPath: "plugins/installed/myc.context@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "AnalysisPlugin",
       metadata: {
-        id: "researchcanvas.context",
+        id: "myc.context",
         name: "Context analyst",
         version: "1.0.0",
         publisher: "Research Canvas",
@@ -280,17 +280,17 @@ test("active plugin context menus require runtime and an explicit capability", (
   assert.equal(actions.length, 1);
   assert.equal(actions[0]?.contributionId, "inspect-context");
   assert.equal(actions[0]?.scope, "node");
-  assert.equal(actions[0]?.plugin.id, "researchcanvas.context");
+  assert.equal(actions[0]?.plugin.id, "myc.context");
 });
 
 test("community locale plugins extend the UI without changing the built-in language set", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.i18n-ja@1.0.0",
+    installPath: "plugins/installed/myc.i18n-ja@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "LocalePlugin",
       metadata: {
-        id: "researchcanvas.i18n-ja",
+        id: "myc.i18n-ja",
         name: "Japanese UI",
         version: "1.0.0",
         publisher: "Research Canvas Community",
@@ -319,12 +319,12 @@ test("community locale plugins extend the UI without changing the built-in langu
 
 test("active workspace commands require their matching declared capability", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.export-suite@1.0.0",
+    installPath: "plugins/installed/myc.export-suite@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "WorkspacePlugin",
       metadata: {
-        id: "researchcanvas.export-suite",
+        id: "myc.export-suite",
         name: "Export Suite",
         version: "1.0.0",
         publisher: "Research Canvas",
@@ -386,9 +386,9 @@ test("the three workspace plugins share a complete PINN architecture fixture", (
   assert.equal(nodes.get("pinn-backbone")?.data.framework, "torch");
 
   for (const pluginId of [
-    "researchcanvas.export-suite",
-    "researchcanvas.folder-workspaces",
-    "researchcanvas.git-workspace",
+    "myc.export-suite",
+    "myc.folder-workspaces",
+    "myc.git-workspace",
   ]) {
     const descriptor = JSON.parse(
       readFileSync(`plugins/sources/${pluginId}/workspace-plugin.json`, "utf8"),

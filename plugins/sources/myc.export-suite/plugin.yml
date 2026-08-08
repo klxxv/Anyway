@@ -1,7 +1,7 @@
 apiVersion: researchcanvas.dev/v1alpha1
 kind: WorkspacePlugin
 metadata:
-  id: researchcanvas.export-suite
+  id: myc.export-suite
   name: Export Suite
   version: 1.0.0
   publisher: Research Canvas

@@ -1002,7 +1002,7 @@ mod tests {
             ],
         );
         git(root.path(), &["tag", "research/pinn-fourier-off"]);
-        let snapshot = git_snapshot("researchcanvas.git-workspace", root.path())
+        let snapshot = git_snapshot("myc.git-workspace", root.path())
             .expect("read git research snapshot");
         assert!(snapshot.is_repository);
         assert_eq!(snapshot.commits.len(), 1);
@@ -1066,7 +1066,7 @@ mod tests {
         git(root.path(), &["add", ".research-canvas/pinn.mycproj"]);
         git(root.path(), &["commit", "-m", "refactor: extend the PINN graph"]);
 
-        let snapshot = git_snapshot("researchcanvas.git-workspace", root.path())
+        let snapshot = git_snapshot("myc.git-workspace", root.path())
             .expect("read git research snapshot");
         let operations = snapshot.graph_patch["operations"]
             .as_array()
@@ -1099,7 +1099,7 @@ mod tests {
         assert!(placeholder.graph_patch.is_null());
 
         let repository = initialize_git_repository(root.path()).expect("initialize repository");
-        let snapshot = git_snapshot("researchcanvas.git-workspace", &repository)
+        let snapshot = git_snapshot("myc.git-workspace", &repository)
             .expect("empty repository snapshot");
         assert!(snapshot.is_repository);
         assert!(snapshot.commits.is_empty());

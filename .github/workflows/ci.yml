@@ -190,10 +190,10 @@ jobs:
       - run: npm ci
 
       - name: Build One Dark Pro theme plugin
-        run: python scripts/build_myc_plugin.py plugins/sources/researchcanvas.onedarkpro plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+        run: python scripts/build_myc_plugin.py plugins/sources/myc.onedarkpro plugins/packages/myc.onedarkpro@1.0.0.myc
 
       - name: Verify .myc package exists
-        run: test -f plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+        run: test -f plugins/packages/myc.onedarkpro@1.0.0.myc
 
   # ── Performance Smoke (main push only) ─────────────────────────────
   perf-smoke:
