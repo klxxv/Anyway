@@ -257,9 +257,10 @@ pub fn find_contradictions(project: &Value, options: &ContradictionOptions) -> C
         let Some(path) = path else {
             continue;
         };
-        if !path.is_empty() && path.first().map(String::as_str) != Some(edge.id.as_str()) {
-            // 正路径不得经过该 contradicts 边本身（乘积为正 ⇒ 不可能含负边，
-            // 但显式排除源==边起点即可）。加入见证。
+        // 正路径不得经过该 contradicts 边本身(自指见证无效)。
+        // 注意:只看首边是数学错误——偶数条负边的乘积仍是 +1,
+        // 被查边可以出现在路径中段;必须全路径排除。
+        if !path.is_empty() && !path.iter().any(|id| id == &edge.id) {
             witnesses.push(ContradictionWitness {
                 kind: "path-pair",
                 paths: vec![path, vec![edge.id.clone()]],
@@ -286,7 +287,8 @@ pub fn find_contradictions(project: &Value, options: &ContradictionOptions) -> C
         let Some(path) = path else {
             continue;
         };
-        if !path.is_empty() && path.first().map(String::as_str) != Some(edge.id.as_str()) {
+        // 同上:被查边不得在路径任何位置重现(不只首边)。
+        if !path.is_empty() && !path.iter().any(|id| id == &edge.id) {
             let mut cycle = vec![edge.id.clone()];
             cycle.extend(path);
             witnesses.push(ContradictionWitness {
