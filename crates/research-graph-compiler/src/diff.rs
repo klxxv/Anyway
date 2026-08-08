@@ -7,7 +7,7 @@
 use crate::hash::{block_hash, edge_claim, evidence_claim, node_claim};
 use serde::Serialize;
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// 比较粒度控制 / Diff granularity.
@@ -66,7 +66,8 @@ pub struct CanvasDiffResult {
     pub modified_evidence: Vec<ModifiedEntity>,
     /// changedBlockHashes：entityId → (oldHash, newHash)。
     /// 覆盖 added（old=""）、removed（new=""）、modified（两者不同）。
-    pub changed_block_hashes: HashMap<String, (String, String)>,
+    /// BTreeMap:序列化字节级确定(D4 确定性头)。
+    pub changed_block_hashes: BTreeMap<String, (String, String)>,
     /// Diff 计算耗时（毫秒）/ Elapsed time in milliseconds.
     pub duration_ms: u64,
 }
@@ -134,7 +135,7 @@ fn diff_zone(
     v2: &Value,
     kind: &str,
     granularity: DiffGranularity,
-    changed: &mut HashMap<String, (String, String)>,
+    changed: &mut BTreeMap<String, (String, String)>,
 ) -> (Vec<String>, Vec<String>, Vec<ModifiedEntity>) {
     let entities1 = entities(v1, kind);
     let entities2 = entities(v2, kind);

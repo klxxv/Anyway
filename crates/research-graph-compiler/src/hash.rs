@@ -6,7 +6,7 @@
 use crate::canonical::canonicalize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 /// sha256 → 64 位小写 hex / sha256 → 64 lowercase hex chars.
@@ -134,8 +134,8 @@ pub fn evidence_claim(evidence: &Value) -> Value {
 
 /// 计算全部 ① 区实体的 blockHash（entityId → 12 hex）。
 /// Computes block hashes for every ①-zone entity (entityId → 12 hex).
-pub fn compute_block_hashes(project: &Value) -> HashMap<String, String> {
-    let mut hashes = HashMap::new();
+pub fn compute_block_hashes(project: &Value) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
     for (collection, claim) in [
         ("nodes", node_claim as fn(&Value) -> Value),
         ("edges", edge_claim),
@@ -154,7 +154,7 @@ pub fn compute_block_hashes(project: &Value) -> HashMap<String, String> {
 
 /// `contentRootHash`（64 hex）= sha256(sorted(所有 ① 区实体 blockHash) 拼接)。
 /// Content root hash = sha256 over the concatenation of the sorted block hashes.
-pub fn content_root_hash_from_hashes(block_hashes: &HashMap<String, String>) -> String {
+pub fn content_root_hash_from_hashes(block_hashes: &BTreeMap<String, String>) -> String {
     let mut sorted: Vec<&String> = block_hashes.values().collect();
     sorted.sort();
     let mut input = String::with_capacity(sorted.len() * 12);

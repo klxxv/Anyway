@@ -7,7 +7,7 @@ use crate::hash::{compute_block_hashes, content_root_hash_from_hashes, file_hash
 use crate::invariant::{check_invariants, InvariantViolation};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// 编译产物：注入哈希后的项目 + 哈希明细 + 不变式违规。
 /// Compile output: the project with hashes injected, hash details, and
@@ -17,8 +17,8 @@ use std::collections::HashMap;
 pub struct CompileResult {
     /// 注入 blockHash / contentRootHash / fileHash 后的项目。
     pub project: Value,
-    /// entityId → blockHash(12 hex)。
-    pub block_hashes: HashMap<String, String>,
+    /// entityId → blockHash(12 hex)。BTreeMap:序列化字节级确定(D4)。
+    pub block_hashes: BTreeMap<String, String>,
     /// 语义区根哈希（64 hex）/ Semantic zone root hash (64 hex).
     pub content_root_hash: String,
     /// 全文件哈希（64 hex）/ Whole-file hash (64 hex).
@@ -27,7 +27,7 @@ pub struct CompileResult {
 }
 
 /// 把 blockHash 注入每个 ① 区实体 / Inject blockHash into every ①-zone entity.
-fn inject_block_hashes(project: &mut Value, block_hashes: &HashMap<String, String>) {
+fn inject_block_hashes(project: &mut Value, block_hashes: &BTreeMap<String, String>) {
     for key in ["nodes", "edges", "evidence"] {
         if let Some(entities) = project.get_mut(key).and_then(Value::as_array_mut) {
             for entity in entities {
