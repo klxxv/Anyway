@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import pathlib
 import zipfile
 
@@ -40,6 +41,21 @@ def build(source: pathlib.Path, destination: pathlib.Path) -> None:
         if root not in ALLOWED_ROOT_FILES:
             raise SystemExit(f"unsupported package entry: {relative.as_posix()}")
 
+    # Every payload file (all but plugin.yml) is sha256-hashed into a top-level
+    # `payloads:` block appended to the archived manifest, so a manifest
+    # signature covers every payload byte in the package.
+    manifest_text = manifest.read_text(encoding="utf-8").rstrip() + "\n"
+    if "\npayloads:" in f"\n{manifest_text}":
+        raise SystemExit("plugin.yml must not declare payloads; they are build-generated")
+    payload_lines = ["payloads:"]
+    for path in files:
+        relative = path.relative_to(source).as_posix()
+        if relative == "plugin.yml":
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        payload_lines.append(f"  {relative}: {digest}")
+    archived_manifest = manifest_text + "\n".join(payload_lines) + "\n"
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(
         destination, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
@@ -49,7 +65,10 @@ def build(source: pathlib.Path, destination: pathlib.Path) -> None:
             info = zipfile.ZipInfo(relative, date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
-            archive.writestr(info, path.read_bytes())
+            if relative == "plugin.yml":
+                archive.writestr(info, archived_manifest.encode("utf-8"))
+            else:
+                archive.writestr(info, path.read_bytes())
 
     print(destination)
 

@@ -115,6 +115,10 @@ export interface MycPluginManifest {
   kind: MycPluginKind;
   metadata: MycPluginMetadata;
   spec: MycPluginSpec;
+  /** 包内载荷文件的 sha256(构建期注入;签名经此覆盖全部载荷)/ Build-injected payload sha256 map; signatures cover payloads through it. */
+  payloads?: Record<string, string>;
+  /** 发布者签名(覆盖含 payloads 的清单 JSON)/ Publisher signature over the manifest JSON including payloads. */
+  signature?: string;
 }
 
 /** Provider 模型路由条目 / Provider model route entry. */

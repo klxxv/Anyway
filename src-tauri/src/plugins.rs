@@ -94,6 +94,14 @@ pub struct MycPluginManifest {
     pub kind: String,
     pub metadata: MycPluginMetadata,
     pub spec: MycPluginSpec,
+    /// 包内每个载荷文件(plugin.yml 除外)的 sha256:相对路径 → 64 位小写十六进制。
+    /// 签名覆盖清单 JSON,清单携带 payloads 后签名即覆盖全部载荷。
+    /// sha256 of every payload file in the package (except plugin.yml itself):
+    /// relative path → 64 lowercase hex chars. Since the signature covers the
+    /// manifest JSON, a manifest carrying payloads extends the signature to
+    /// every payload byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payloads: Option<std::collections::BTreeMap<String, String>>,
     /// 发布者对清单内容的 Ed25519 签名（base64 编码，覆盖不含本字段的 JSON 序列化的 SHA-256）。
     /// Ed25519 signature (base64) over SHA-256 of the JSON-serialized manifest without this field.
     #[serde(default)]
@@ -536,6 +544,35 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 .to_string(),
         );
     }
+    if let Some(payloads) = manifest.payloads.as_ref() {
+        if payloads.is_empty() {
+            return Err("Payloads map must not be empty".to_string());
+        }
+        for (path, digest) in payloads {
+            let relative = Path::new(path);
+            if path == "plugin.yml"
+                || relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
+                || path.contains('\\')
+            {
+                return Err(format!("Invalid payload path: {path}"));
+            }
+            if digest.len() != 64
+                || !digest.chars().all(|character| character.is_ascii_hexdigit())
+                || digest != &digest.to_lowercase()
+            {
+                return Err(format!("Invalid payload sha256 for {path}"));
+            }
+        }
+    }
+    if manifest.signature.is_some() && manifest.payloads.is_none() {
+        return Err(
+            "Signed packages must declare payloads so the signature covers every payload byte"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -717,6 +754,25 @@ fn manifest_to_json_without_signature(manifest: &MycPluginManifest) -> serde_jso
 }
 
 /// 原子移动到 `installed` 前校验并暂存归档 / Validates and stages an archive before atomically renaming it into `installed`.
+/// 递归收集目录下全部文件路径(载荷校验用,不引外部 walkdir 依赖)。
+/// Recursively collects every file under a directory for payload verification.
+fn walkdir_payloads(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 /// 仅读取归档中的 plugin.yml(含签名校验),供发现与安装共用。
 /// Reads only plugin.yml from an archive (with signature verification), shared by discovery and install.
 fn read_archive_manifest(base: &Path, archive_path: &Path) -> Result<MycPluginManifest, String> {
@@ -818,6 +874,48 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
     if let Err(error) = extraction {
         let _ = fs::remove_dir_all(&staging);
         return Err(error);
+    }
+
+    // 载荷完整性:声明了 payloads 的包,每个暂存文件必须与清单哈希一致,
+    // 未列出的文件一律拒绝 — 签名因此覆盖包内每一字节。
+    // Payload integrity: when the manifest declares payloads, every staged
+    // file must hash to the declared value and unlisted files are rejected —
+    // the manifest signature then covers every byte in the package.
+    if let Some(payloads) = manifest.payloads.as_ref() {
+        let verification = (|| -> Result<(), String> {
+            let mut seen = std::collections::HashSet::new();
+            for entry in walkdir_payloads(&staging)? {
+                let relative = entry
+                    .strip_prefix(&staging)
+                    .map_err(|error| error.to_string())?
+                    .iter()
+                    .map(|part| part.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                if relative == "plugin.yml" {
+                    continue;
+                }
+                let Some(expected) = payloads.get(&relative) else {
+                    return Err(format!("Unlisted payload file in signed package: {relative}"));
+                };
+                let bytes = fs::read(&entry).map_err(|error| error.to_string())?;
+                let actual = format!("{:x}", Sha256::digest(&bytes));
+                if &actual != expected {
+                    return Err(format!("Payload hash mismatch: {relative}"));
+                }
+                seen.insert(relative);
+            }
+            for listed in payloads.keys() {
+                if !seen.contains(listed) {
+                    return Err(format!("Declared payload missing from package: {listed}"));
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = verification {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
     }
 
     let staged = read_installed_plugin(&staging)?;
@@ -1624,6 +1722,23 @@ spec:
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
     use ed25519_dalek::{Signature, Signer, SigningKey};
 
+    /// A minimal valid theme.json that satisfies ThemeManifest deserialization.
+    fn valid_theme_json() -> serde_json::Value {
+        serde_json::json!({
+            "id": "test.theme",
+            "name": "Test Theme",
+            "publisher": "test-publisher",
+            "colors": {}
+        })
+    }
+
+    fn theme_payload_hash() -> String {
+        format!(
+            "{:x}",
+            Sha256::digest(valid_theme_json().to_string().as_bytes())
+        )
+    }
+
     fn signed_theme_manifest(publisher: &str, sign_fn: Option<&dyn Fn(&str) -> String>) -> String {
         let mut yaml = format!(
             r#"apiVersion: researchcanvas.dev/v1alpha1
@@ -1641,9 +1756,12 @@ spec:
   capabilities:
     - theme.register
   permissions: []
-"#,
+"#
         );
         if let Some(sign) = sign_fn {
+            // Signed manifests must declare payloads; the hash matches valid_theme_json().
+            let theme_hash = theme_payload_hash();
+            yaml.push_str(&format!("payloads:\n  theme.json: {theme_hash}\n"));
             // Must match the exact JSON shape produced by serde_json::to_value(MycPluginManifest),
             // including Option fields that serialize as null.
             let manifest_value = serde_json::json!({
@@ -1666,6 +1784,9 @@ spec:
                     "capabilities": ["theme.register"],
                     "permissions": [],
                     "contributes": null
+                },
+                "payloads": {
+                    "theme.json": theme_hash
                 }
             });
             let payload = crate::signing::manifest_payload(&manifest_value);
@@ -1673,16 +1794,6 @@ spec:
             yaml.push_str(&format!("signature: {signature_b64}\n"));
         }
         yaml
-    }
-
-    /// A minimal valid theme.json that satisfies ThemeManifest deserialization.
-    fn valid_theme_json() -> serde_json::Value {
-        serde_json::json!({
-            "id": "test.theme",
-            "name": "Test Theme",
-            "publisher": "test-publisher",
-            "colors": {}
-        })
     }
 
     #[test]
@@ -1896,6 +2007,7 @@ spec:
         let payload = crate::signing::manifest_payload(&original_value);
         let signature: Signature = signing_key.sign(&payload);
         let signature_b64 = BASE64.encode(signature.to_bytes());
+        let theme_hash = theme_payload_hash();
 
         let tampered_yaml = format!(
             r#"apiVersion: researchcanvas.dev/v1alpha1
@@ -1913,6 +2025,8 @@ spec:
   capabilities:
     - theme.register
   permissions: []
+payloads:
+  theme.json: {theme_hash}
 signature: {signature_b64}
 "#
         );
@@ -1947,5 +2061,192 @@ signature: {signature_b64}
                 .contains("signature verification failed"),
             "error should mention signature verification failure"
         );
+    }
+
+    fn theme_package_with_payloads(
+        root: &Path,
+        name: &str,
+        payloads_yaml: &str,
+        theme_bytes: &[u8],
+        extra_file: Option<(&str, &[u8])>,
+    ) -> PathBuf {
+        let package = root.join(name);
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let manifest = format!(
+            r#"apiVersion: researchcanvas.dev/v1alpha1
+kind: ThemePlugin
+metadata:
+  id: myc.payload-theme
+  name: Payload Theme
+  version: 1.0.0
+  publisher: Research Canvas
+  developer: Tests
+  description: Theme with declared payloads.
+spec:
+  engine: declarative
+  entry: theme.json
+  capabilities: [theme.register]
+  permissions: []
+{payloads_yaml}"#
+        );
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(manifest.as_bytes())
+            .expect("manifest bytes");
+        archive
+            .start_file("theme.json", options)
+            .expect("theme entry");
+        archive.write_all(theme_bytes).expect("theme bytes");
+        if let Some((path, bytes)) = extra_file {
+            archive.start_file(path, options).expect("extra entry");
+            archive.write_all(bytes).expect("extra bytes");
+        }
+        archive.finish().expect("finish archive");
+        package
+    }
+
+    #[test]
+    fn declared_payloads_are_hash_verified_at_install() {
+        let root = tempdir().expect("temp root");
+        let theme_json = valid_theme_json().to_string();
+        let good = format!("payloads:\n  theme.json: {}\n", theme_payload_hash());
+        let package = theme_package_with_payloads(
+            root.path(),
+            "good.myc",
+            &good,
+            theme_json.as_bytes(),
+            None,
+        );
+        install_archive_into(root.path(), &package).expect("matching payloads install");
+
+        // 载荷被替换 → 哈希不符 → 拒绝 / Swapped payload → hash mismatch → reject.
+        let root2 = tempdir().expect("second root");
+        let package = theme_package_with_payloads(
+            root2.path(),
+            "tampered.myc",
+            &good,
+            br#"{"id":"evil","name":"Evil","publisher":"x","colors":{}}"#,
+            None,
+        );
+        let error = install_archive_into(root2.path(), &package)
+            .expect_err("tampered payload must be rejected");
+        assert!(error.contains("hash mismatch"), "unexpected error: {error}");
+
+        // 未列出的额外文件 → 拒绝 / Unlisted extra file → reject.
+        let root3 = tempdir().expect("third root");
+        let package = theme_package_with_payloads(
+            root3.path(),
+            "extra.myc",
+            &good,
+            theme_json.as_bytes(),
+            Some(("extra.txt", b"surprise")),
+        );
+        let error = install_archive_into(root3.path(), &package)
+            .expect_err("unlisted payload must be rejected");
+        assert!(error.contains("Unlisted payload"), "unexpected error: {error}");
+
+        // 清单列出但包内缺失 → 拒绝 / Listed but missing → reject.
+        let root4 = tempdir().expect("fourth root");
+        let missing = format!(
+            "payloads:\n  theme.json: {}\n  missing.txt: {}\n",
+            theme_payload_hash(),
+            "0".repeat(64)
+        );
+        let package = theme_package_with_payloads(
+            root4.path(),
+            "missing.myc",
+            &missing,
+            theme_json.as_bytes(),
+            None,
+        );
+        let error = install_archive_into(root4.path(), &package)
+            .expect_err("missing declared payload must be rejected");
+        assert!(
+            error.contains("missing from package"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn signed_manifest_without_payloads_is_rejected() {
+        let root = tempdir().expect("temp root");
+        let signing_key = SigningKey::generate(&mut rand_core::OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let publisher = "payloadless-publisher";
+        let trusted_json = serde_json::json!({ publisher: BASE64.encode(verifying_key.as_bytes()) })
+            .to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json)
+            .expect("write trusted keys");
+
+        // 手工构造:有签名但无 payloads(攻击者换掉 wasm 后老方案仍过签)。
+        // Hand-built: signature present, payloads absent — the old gap where a
+        // swapped plugin.wasm still verified.
+        let manifest_value = serde_json::json!({
+            "apiVersion": "researchcanvas.dev/v1alpha1",
+            "kind": "ThemePlugin",
+            "metadata": {
+                "id": format!("{publisher}.test-theme"),
+                "name": "Payloadless Theme",
+                "version": "1.0.0",
+                "publisher": publisher,
+                "developer": "Test",
+                "description": "Signed but payloadless.",
+                "homepage": null,
+                "license": null
+            },
+            "spec": {
+                "engine": "declarative",
+                "entry": "theme.json",
+                "language": null,
+                "capabilities": ["theme.register"],
+                "permissions": [],
+                "contributes": null
+            }
+        });
+        let payload = crate::signing::manifest_payload(&manifest_value);
+        let signature: Signature = signing_key.sign(&payload);
+        let yaml = format!(
+            r#"apiVersion: researchcanvas.dev/v1alpha1
+kind: ThemePlugin
+metadata:
+  id: {publisher}.test-theme
+  name: Payloadless Theme
+  version: 1.0.0
+  publisher: {publisher}
+  developer: Test
+  description: Signed but payloadless.
+spec:
+  engine: declarative
+  entry: theme.json
+  capabilities: [theme.register]
+  permissions: []
+signature: {}
+"#,
+            BASE64.encode(signature.to_bytes())
+        );
+
+        let package = root.path().join("payloadless.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive.write_all(yaml.as_bytes()).expect("manifest bytes");
+        archive
+            .start_file("theme.json", options)
+            .expect("theme entry");
+        archive
+            .write_all(valid_theme_json().to_string().as_bytes())
+            .expect("theme bytes");
+        archive.finish().expect("finish archive");
+
+        let error = install_archive_into(root.path(), &package)
+            .expect_err("signed package without payloads must be rejected");
+        assert!(error.contains("payloads"), "unexpected error: {error}");
     }
 }
