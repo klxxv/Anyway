@@ -10,6 +10,7 @@
 //! The API key is never hard-coded, never merged into prompts, and never logged.
 
 use async_trait::async_trait;
+use rand::Rng as _;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,6 +25,10 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 120;
 pub const MAX_RETRIES: u32 = 3;
 pub const INITIAL_BACKOFF_MS: u64 = 1000;
 pub const MAX_BACKOFF_MS: u64 = 16_000;
+/// 最大允许的 HTTP 响应体大小（1 MiB）。LLM 响应再大即视为畸形/攻击载荷。
+pub const MAX_RESPONSE_BODY_BYTES: usize = 1 * 1024 * 1024;
+/// 单个客户端实例的推理缓存条目上限。防止长会话无界增长。
+pub const MAX_REASONING_CACHE_ENTRIES: usize = 256;
 
 // ── 模型路由 / Model routing ──────────────────────────────────────────────
 
@@ -447,13 +452,13 @@ pub fn merge_truncated_output(partial: &str, continuation: &str) -> String {
 
 // ── 重试工具 / Retry utilities ────────────────────────────────────────────
 
-/// 计算第 n 次重试的退避时间（指数退避 + 随机抖动）。
+/// 计算第 n 次重试的退避时间（指数退避 + 真随机抖动）。
 pub fn backoff_duration(attempt: u32) -> Duration {
     let base = INITIAL_BACKOFF_MS * 2u64.pow(attempt.saturating_sub(1));
     let capped = base.min(MAX_BACKOFF_MS);
-    let jitter = capped / 4;
-    let jittered = capped + (jitter.min((capped as f64 * 0.25) as u64));
-    Duration::from_millis(jittered)
+    // 抖动范围 [0, capped/4]；使用 rand::thread_rng 提供真随机性。
+    let jitter = rand::thread_rng().gen_range(0..=capped / 4);
+    Duration::from_millis(capped.saturating_add(jitter))
 }
 
 /// 判断错误是否应终止重试。
@@ -826,6 +831,17 @@ impl OpenAiCompatibleClient {
         })
     }
 
+    /// 读取响应文本并限制最大长度，避免 OOM 与把攻击载荷嵌进错误串。
+    async fn bounded_response_text(response: reqwest::Response) -> String {
+        match response.bytes().await {
+            Ok(bytes) => {
+                let truncated = bytes.iter().take(MAX_RESPONSE_BODY_BYTES).copied().collect::<Vec<u8>>();
+                String::from_utf8_lossy(&truncated).into_owned()
+            }
+            Err(error) => format!("(failed to read response body: {})", error),
+        }
+    }
+
     /// 执行单次 HTTP 请求（不包含重试逻辑）。
     async fn execute_request(
         &self,
@@ -847,15 +863,30 @@ impl OpenAiCompatibleClient {
         let status = response.status().as_u16();
 
         if status == 200 {
-            let full_body: Value = response.json().await?;
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| LlmError::HttpError(error.to_string()))?;
+            if bytes.len() > MAX_RESPONSE_BODY_BYTES {
+                return Err(LlmError::ServerError {
+                    status,
+                    body: format!(
+                        "response body exceeds {} bytes (got {})",
+                        MAX_RESPONSE_BODY_BYTES,
+                        bytes.len()
+                    ),
+                });
+            }
+            let full_body: Value = serde_json::from_slice(&bytes)
+                .map_err(|error| LlmError::ParseError(error.to_string()))?;
             let parsed: ChatCompletionResponse = serde_json::from_value(full_body)
                 .map_err(|error| LlmError::ParseError(error.to_string()))?;
             Ok(parsed)
         } else if is_terminal_http_status(status) {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::bounded_response_text(response).await;
             Err(LlmError::ClientError { status, body })
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::bounded_response_text(response).await;
             Err(LlmError::ServerError { status, body })
         }
     }
@@ -948,6 +979,13 @@ impl OpenAiCompatibleClient {
 
     fn cache_reasoning(&self, key: &str, reasoning: &str) {
         if let Ok(mut cache) = self.reasoning_cache.lock() {
+            if cache.len() >= MAX_REASONING_CACHE_ENTRIES {
+                // Evict oldest entry deterministically to cap memory.
+                let oldest = cache.keys().next().cloned();
+                if let Some(oldest) = oldest {
+                    cache.remove(&oldest);
+                }
+            }
             cache.insert(key.to_string(), reasoning.to_string());
         }
     }
