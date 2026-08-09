@@ -451,6 +451,43 @@ test("GraphPatch proposals are review-gated and structurally validated", () => {
     }),
     null,
   );
+
+  // 文本字段有界；超长 body/note 应被拒绝。
+  assert.equal(
+    normalizePluginGraphPatch({
+      ...patch,
+      operations: [
+        {
+          op: "add-node",
+          node: {
+            id: "long-body",
+            type: "note",
+            title: "Long body",
+            body: "x".repeat(10_001),
+          },
+        },
+      ],
+    }),
+    null,
+  );
+  assert.equal(
+    normalizePluginGraphPatch({
+      ...patch,
+      operations: [
+        {
+          op: "add-edge",
+          edge: {
+            id: "long-note",
+            source: "a",
+            target: "b",
+            type: "causes",
+            note: "x".repeat(2_001),
+          },
+        },
+      ],
+    }),
+    null,
+  );
 });
 
 test("AgentPlugin and ProviderPlugin are activatable install kinds", () => {

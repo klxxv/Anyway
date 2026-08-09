@@ -203,7 +203,7 @@ export function normalizePluginGraphPatch(value: unknown): PluginGraphPatch | nu
         isText(node.id, 160) &&
         isText(node.type, 40) &&
         isText(node.title) &&
-        (node.body === undefined || typeof node.body === "string") &&
+        (node.body === undefined || isText(node.body, 10_000)) &&
         (node.tags === undefined ||
           (Array.isArray(node.tags) && node.tags.every((tag) => isText(tag, 80)))) &&
         (node.data === undefined || isRecord(node.data))
@@ -217,7 +217,7 @@ export function normalizePluginGraphPatch(value: unknown): PluginGraphPatch | nu
         isText(edge.source, 160) &&
         isText(edge.target, 160) &&
         isText(edge.type, 40) &&
-        (edge.note === undefined || typeof edge.note === "string") &&
+        (edge.note === undefined || isText(edge.note, 2_000)) &&
         (edge.data === undefined || isRecord(edge.data))
       );
     }
