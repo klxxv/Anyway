@@ -260,6 +260,9 @@ pub fn combine_related_evidence(weights: &[f64], correlation: f64) -> Result<f64
     if weights.is_empty() {
         return Ok(0.0);
     }
+    if weights.iter().any(|w| !w.is_finite()) {
+        return Err("invalid-weight: weights must be finite (NaN rejected)".to_string());
+    }
     if !correlation.is_finite() || !(0.0..=1.0).contains(&correlation) {
         return Err(format!(
             "invalid-correlation: ρ={correlation} must be in [0,1]"
@@ -267,8 +270,13 @@ pub fn combine_related_evidence(weights: &[f64], correlation: f64) -> Result<f64
     }
     let n = weights.len() as f64;
     if correlation >= 1.0 {
-        // 完全相关：信息不随数量增加，取最大单条（保守合并）。
-        let strongest = weights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        // 完全相关：信息不随数量增加，取绝对值最大者（保留符号）。
+        // 对负权重而言，-5.0 比 -1.0 更强，原 max 会错选 -1.0。
+        let strongest = weights
+            .iter()
+            .cloned()
+            .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+            .unwrap_or(0.0);
         return Ok(strongest);
     }
     // 有效样本缩放：n_eff = n / (1 + (n-1)ρ)。
@@ -455,6 +463,18 @@ mod tests {
         // 0<ρ<1：按有效样本缩放。
         let scaled = combine_related_evidence(&[1.0, 1.0], 0.5).unwrap();
         assert!((scaled - 4.0 / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rho_one_negative_weights_pick_strongest_magnitude() {
+        let merged = combine_related_evidence(&[-1.0, -5.0], 1.0).unwrap();
+        assert_eq!(merged, -5.0, "ρ=1 with negative weights must pick the strongest (most negative)");
+    }
+
+    #[test]
+    fn nan_weights_are_rejected() {
+        let err = combine_related_evidence(&[1.0, f64::NAN], 0.5).unwrap_err();
+        assert!(err.starts_with("invalid-weight"), "{err}");
     }
 
     #[test]
