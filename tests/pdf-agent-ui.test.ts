@@ -188,3 +188,10 @@ test("AgentJobStatus 序列化契约与 Rust PdfJobStatus 对齐（camelCase）"
   // 阶段名与 AgentJobStage 标签表一致
   assert.ok(AGENT_STAGE_LABELS.awaiting_review.includes(" / "));
 });
+
+test("buildAcceptedPatch 全部拒绝返回 null，applySelected 应据此发送 reject", () => {
+  assert.equal(
+    buildAcceptedPatch(samplePatch, { 0: { accept: false }, 1: { accept: false }, 2: { accept: false } }),
+    null,
+  );
+});

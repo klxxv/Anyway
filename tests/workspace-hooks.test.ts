@@ -24,6 +24,7 @@ import {
 } from "../app/features/research-workspace/hooks/commit-logic";
 import {
   applyGraphPatchToDraft,
+  sanitizePluginActorId,
   sortGraphPatchOperations,
 } from "../app/features/research-workspace/hooks/patch-apply";
 import {
@@ -399,12 +400,75 @@ test("update-node and update-edge ops respect type and range guards", () => {
 
 test("patch application records one import activity entry", () => {
   const draft = cloneFixture();
-  applyGraphPatchToDraft(draft, patch([{ op: "add-node", node: { id: "n1", type: "note", title: "A" } }]), now);
+  const result = applyGraphPatchToDraft(
+    draft,
+    patch([{ op: "add-node", node: { id: "n1", type: "note", title: "A" } }]),
+    now,
+  );
+  assert.equal(result.applied, 1);
+  assert.equal(result.skipped, 0);
   const activity = draft.activity.at(-1)!;
-  assert.equal(activity.label, "测试补丁 · 1 proposed operations");
+  assert.equal(activity.label, "测试补丁 · 1 applied · 0 skipped");
   assert.equal(activity.origin, "import");
   assert.equal(activity.createdAt, now);
   assert.ok(activity.id.startsWith("activity-"));
+});
+
+test("patch apply reports skipped operations and records accurate activity", () => {
+  const draft = cloneFixture();
+  const result = applyGraphPatchToDraft(
+    draft,
+    patch([
+      { op: "add-node", node: { id: "n1", type: "note", title: "A" } },
+      { op: "add-node", node: { id: "n1", type: "note", title: "Duplicate" } },
+      { op: "add-edge", edge: { id: "e1", source: "n1", target: "missing", type: "causes" } },
+    ]),
+    now,
+  );
+  assert.equal(result.applied, 1);
+  assert.equal(result.skipped, 2);
+  assert.equal(result.byOp["add-node"]?.applied, 1);
+  assert.equal(result.byOp["add-node"]?.skipped, 1);
+  assert.equal(result.byOp["add-edge"]?.skipped, 1);
+  const activity = draft.activity.at(-1)!;
+  assert.equal(activity.label, "测试补丁 · 1 applied · 2 skipped");
+});
+
+test("patch apply with zero effective operations records skipped activity", () => {
+  const draft = cloneFixture();
+  const result = applyGraphPatchToDraft(
+    draft,
+    patch([
+      { op: "add-node", node: { id: "question-tree", type: "note", title: "Duplicate" } },
+      { op: "add-edge", edge: { id: "e1", source: "missing", target: "missing", type: "causes" } },
+    ]),
+    now,
+  );
+  assert.equal(result.applied, 0);
+  assert.equal(result.skipped, 2);
+  const activity = draft.activity.at(-1)!;
+  assert.match(activity.label, /no effective operations/);
+});
+
+test("sanitizePluginActorId rejects unsafe plugin ids and keeps safe ones", () => {
+  assert.equal(sanitizePluginActorId("myc.pdf-canvas-agent"), "myc.pdf-canvas-agent");
+  assert.equal(sanitizePluginActorId("plugin@v1"), null);
+  assert.equal(sanitizePluginActorId("../../evil"), null);
+  assert.equal(sanitizePluginActorId("a".repeat(161)), null);
+});
+
+test("patch provenance actorId is sanitized to unknown-plugin when unsafe", () => {
+  const draft = cloneFixture();
+  applyGraphPatchToDraft(
+    draft,
+    {
+      ...patch([{ op: "add-node", node: { id: "n2", type: "note", title: "B" } }]),
+      source: { pluginId: "plugin@v1", operation: "bad" },
+    },
+    now,
+  );
+  const added = draft.nodes.find((node) => node.id === "n2")!;
+  assert.equal(added.provenance.actorId, "unknown-plugin");
 });
 
 // ---------------------------------------------------------------------------
@@ -432,7 +496,73 @@ test("corrupt persisted JSON loads as null instead of throwing", () => {
   const storage = createLocalStorageProjectStorage("key", memoryStorage({ key: "{oops" }));
   assert.equal(storage.load(), null);
   assert.equal(parseStoredProject("not json"), null);
-  assert.ok(parseStoredProject('{"schemaVersion":2}'));
+  // 仅含 schemaVersion 的 JSON 不满足结构校验，应返回 null。
+  assert.equal(parseStoredProject('{"schemaVersion":2}'), null);
+});
+
+test("structurally invalid project is rejected during hydration", () => {
+  const bad = {
+    schemaVersion: 2,
+    id: "bad",
+    title: "Bad",
+    discipline: "test",
+    updatedAt: now,
+    revision: 1,
+    nodes: [{ id: "n1", type: "note" }], // missing required fields
+    edges: [],
+    evidence: [],
+    placements: [],
+    scenarios: [],
+    activity: [],
+  };
+  const storage = createLocalStorageProjectStorage("bad-key", memoryStorage({ "bad-key": JSON.stringify(bad) }));
+  assert.equal(storage.load(), null);
+});
+
+test("minimal structurally valid project hydrates successfully", () => {
+  const minimal = {
+    schemaVersion: 2,
+    id: "minimal",
+    title: "Minimal",
+    discipline: "test",
+    updatedAt: now,
+    revision: 1,
+    nodes: [
+      {
+        id: "n1",
+        type: "note",
+        title: "Note",
+        body: "body",
+        tags: [],
+        status: "draft",
+        evidenceIds: [],
+        data: {},
+        provenance: { origin: "human" },
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    edges: [],
+    evidence: [],
+    placements: [
+      {
+        id: "p1",
+        viewId: "view-main",
+        nodeId: "n1",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      },
+    ],
+    scenarios: [],
+    activity: [],
+  };
+  const storage = createLocalStorageProjectStorage("min-key", memoryStorage({ "min-key": JSON.stringify(minimal) }));
+  const loaded = storage.load();
+  assert.ok(loaded);
+  assert.equal(loaded?.id, "minimal");
+  assert.equal(loaded?.nodes[0]?.id, "n1");
 });
 
 test("resolveHydratedProject migrates only the bundled example under schemaVersion 2", () => {
