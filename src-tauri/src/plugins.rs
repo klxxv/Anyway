@@ -28,6 +28,17 @@ const MAX_UNPACKED_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 128;
 const REMOVED_PLUGINS_FILE: &str = "removed-plugins.json";
 
+fn manifest_cache() -> &'static Mutex<HashMap<PathBuf, InstalledMycPlugin>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, InstalledMycPlugin>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn invalidate_manifest_cache(directory: &Path) {
+    if let Ok(mut cache) = manifest_cache().lock() {
+        cache.remove(directory);
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MycPluginMetadata {
@@ -234,6 +245,7 @@ fn uninstall_plugin_from(base: &Path, plugin_id: &str, plugin_version: &str) -> 
         return Err("Installed plugin identity does not match its directory".to_string());
     }
     fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+    invalidate_manifest_cache(&directory);
     let mut removed = read_removed_plugins(base)?;
     removed.insert(key);
     write_removed_plugins(base, &removed)
@@ -619,6 +631,13 @@ fn read_locale_bundles(
 }
 
 fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String> {
+    {
+        if let Ok(cache) = manifest_cache().lock() {
+            if let Some(installed) = cache.get(directory) {
+                return Ok(installed.clone());
+            }
+        }
+    }
     let manifest_path = directory.join("plugin.yml");
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("Could not read {}: {error}", manifest_path.display()))?;
@@ -731,7 +750,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     };
     let locales = read_locale_bundles(directory, &manifest)?;
 
-    Ok(InstalledMycPlugin {
+    let installed = InstalledMycPlugin {
         manifest,
         install_path: directory.to_string_lossy().into_owned(),
         theme,
@@ -741,7 +760,11 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         workspace,
         provider,
         agent,
-    })
+    };
+    if let Ok(mut cache) = manifest_cache().lock() {
+        cache.insert(directory.to_path_buf(), installed.clone());
+    }
+    Ok(installed)
 }
 
 /// 将清单序列化为 JSON 并移除 signature 字段，用于签名验证。
@@ -944,6 +967,7 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
     // 只有真正完成安装时才清除墓碑；重复安装 no-op 必须保留墓碑。
     // Only clear the removal tombstone when a fresh install completes.
     let _ = clear_removed_plugin(base, &manifest.metadata.id, &manifest.metadata.version);
+    invalidate_manifest_cache(&destination);
     read_installed_plugin(&destination)
 }
 

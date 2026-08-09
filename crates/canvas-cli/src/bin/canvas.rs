@@ -498,8 +498,19 @@ fn render_report(options: &Options, report: &CompileReport, compiled: Option<&Co
         OutputFormat::Mermaid => {
             if let Some(compiled) = compiled {
                 print!("{}", export_mermaid(&compiled.project));
+            } else {
+                // 解析失败时不应静默输出空 mermaid：把诊断打印到 stderr，
+                // 让调用方明确知道失败原因。
+                eprintln!("canvas compile: parse failed; mermaid output not available");
+                for violation in &report.diagnostics {
+                    eprintln!(
+                        "  [{}] {} — {}",
+                        severity_name(violation.severity),
+                        violation.code,
+                        violation.message
+                    );
+                }
             }
-            // 解析失败时 mermaid 无图可导，诊断已由调用方输出到报告；这里不再输出。
         }
     }
 }

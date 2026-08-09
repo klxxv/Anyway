@@ -232,19 +232,38 @@ fn strict_mode_fails_on_warning_fixture() {
     assert_eq!(strict_code, 1, "--strict fails on any diagnostic");
 }
 
-#[test]
-fn parse_failure_reports_diagnostic_and_exits_one() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("broken.mycproj");
-    std::fs::write(&path, b"{ not valid json").unwrap();
+    #[test]
+    fn parse_failure_reports_diagnostic_and_exits_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken.mycproj");
+        std::fs::write(&path, b"{ not valid json").unwrap();
 
-    let (stdout, _, code) = run_compile(&[path.to_str().unwrap()]);
-    assert_eq!(code, 1);
-    let report: Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(report["ok"], json!(false));
-    assert_eq!(report["diagnostics"][0]["code"], json!("parse-error"));
-    assert_eq!(report["diagnostics"][0]["severity"], json!("error"));
-}
+        let (stdout, _, code) = run_compile(&[path.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        let report: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(report["ok"], json!(false));
+        assert_eq!(report["diagnostics"][0]["code"], json!("parse-error"));
+        assert_eq!(report["diagnostics"][0]["severity"], json!("error"));
+    }
+
+    #[test]
+    fn parse_failure_with_mermaid_output_is_not_silent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken.mycproj");
+        std::fs::write(&path, b"{ not valid json").unwrap();
+
+        let (stdout, stderr, code) = run_compile(&[
+            path.to_str().unwrap(),
+            "--output",
+            "mermaid",
+        ]);
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty(), "mermaid output must be empty on parse failure");
+        assert!(
+            stderr.contains("parse failed") || stderr.contains("parse-error"),
+            "stderr must propagate parse failure: {stderr}"
+        );
+    }
 
 #[test]
 fn io_error_exits_three() {
