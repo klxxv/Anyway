@@ -7,11 +7,12 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     fs::File,
     io::{self, Read},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 use tauri::AppHandle;
 #[cfg(not(debug_assertions))]
