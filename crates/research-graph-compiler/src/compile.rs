@@ -86,6 +86,12 @@ pub struct VerifyResult {
 /// self-check that catches edit cascades (§3.5).
 pub fn verify_hashes(project: &Value) -> VerifyResult {
     let mut mismatches = Vec::new();
+
+    if !project.is_object() {
+        mismatches.push("project root is not a JSON object".to_string());
+        // 根非对象时后续字段均不可信，但继续校验以收集更多诊断。
+    }
+
     let block_hashes = compute_block_hashes(project);
 
     for (kind, collection) in [
@@ -119,7 +125,8 @@ pub fn verify_hashes(project: &Value) -> VerifyResult {
     let expected_file = file_hash(project);
     match project.get("fileHash").and_then(Value::as_str) {
         Some(embedded) if embedded == expected_file => {}
-        _ => mismatches.push("fileHash mismatch".to_string()),
+        Some(_) => mismatches.push("fileHash mismatch".to_string()),
+        None => mismatches.push("fileHash missing".to_string()),
     }
 
     VerifyResult {
@@ -186,4 +193,55 @@ pub fn compile_project_with_options(
         return Err(crate::error::CompileFailure::Invariant(errors));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn file_hash_of_non_object_is_empty() {
+        let value = json!("not an object");
+        assert_eq!(file_hash(&value), "");
+    }
+
+    #[test]
+    fn verify_hashes_reports_non_object_root() {
+        let value = json!([]);
+        let result = verify_hashes(&value);
+        assert!(!result.valid);
+        assert!(result.mismatches.iter().any(|m| m.contains("root is not a JSON object")));
+        assert!(result.mismatches.iter().any(|m| m == "fileHash missing"));
+    }
+
+    #[test]
+    fn verify_hashes_reports_missing_file_hash() {
+        let value = json!({
+            "schemaVersion": 3,
+            "nodes": [{"id": "a", "type": "note", "title": "A"}],
+            "edges": [],
+            "evidence": []
+        });
+        let result = verify_hashes(&value);
+        assert!(!result.valid);
+        assert!(result.mismatches.iter().any(|m| m == "fileHash missing"));
+    }
+
+    #[test]
+    fn verify_hashes_reports_file_hash_mismatch() {
+        let mut value = json!({
+            "schemaVersion": 3,
+            "nodes": [{"id": "a", "type": "note", "title": "A"}],
+            "edges": [],
+            "evidence": [],
+            "fileHash": "0000000000000000000000000000000000000000000000000000000000000000"
+        });
+        // 注入正确的 blockHash 以免 blockHash 分支干扰。
+        let hashes = compute_block_hashes(&value);
+        value["nodes"][0]["blockHash"] = json!(hashes["a"]);
+        let result = verify_hashes(&value);
+        assert!(!result.valid);
+        assert!(result.mismatches.iter().any(|m| m == "fileHash mismatch"));
+    }
 }

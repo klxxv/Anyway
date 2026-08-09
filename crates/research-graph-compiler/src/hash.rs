@@ -180,7 +180,12 @@ pub fn content_root_hash(project: &Value) -> String {
 /// File hash (64 hex) = sha256 over the canonical bytes of the whole file with
 /// the `fileHash` field blanked — git-style self-encoding. Hashing the canonical
 /// form keeps the hash stable across formatting and key order (§3.4).
+///
+/// 非对象根不进入哈希：返回空字符串，避免把非法输入当合法文件处理。
 pub fn file_hash(project: &Value) -> String {
+    if !project.is_object() {
+        return String::new();
+    }
     let mut blanked = project.clone();
     if let Some(root) = blanked.as_object_mut() {
         root.insert("fileHash".to_string(), Value::String(String::new()));

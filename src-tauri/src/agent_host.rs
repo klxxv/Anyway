@@ -144,6 +144,10 @@ impl AgentHost {
     pub fn compute_file_hash(path: &Path) -> Result<String, String> {
         let bytes = fs::read(path)
             .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+        Self::hash_pdf_bytes(&bytes)
+    }
+
+    fn hash_pdf_bytes(bytes: &[u8]) -> Result<String, String> {
         if bytes.len() as u64 > MAX_PDF_BYTES {
             return Err(format!(
                 "File exceeds {}MB limit ({} bytes)",
@@ -151,23 +155,21 @@ impl AgentHost {
                 bytes.len()
             ));
         }
-        Ok(format!("{:x}", Sha256::digest(&bytes)))
+        Ok(format!("{:x}", Sha256::digest(bytes)))
     }
 
     /// PDF 文件安全校验：扩展名 + PDF 魔数 + SHA-256。
+    /// 只读一次文件，避免 TOCTOU 与双倍内存占用。
     pub fn validate_pdf_file(path: &Path) -> Result<String, String> {
-        if !path.is_file() {
-            return Err(format!("Not a regular file: {}", path.display()));
-        }
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if !ext.eq_ignore_ascii_case("pdf") {
             return Err("File must have a .pdf extension".to_string());
         }
-        let header = fs::read(path).map_err(|e| format!("Cannot read file: {e}"))?;
-        if header.len() < 5 || &header[..5] != b"%PDF-" {
+        let bytes = fs::read(path).map_err(|e| format!("Cannot read file: {e}"))?;
+        if bytes.len() < 5 || &bytes[..5] != b"%PDF-" {
             return Err("Invalid PDF: missing %PDF- header".to_string());
         }
-        Self::compute_file_hash(path)
+        Self::hash_pdf_bytes(&bytes)
     }
 
     // ── Job 生命周期 ──
