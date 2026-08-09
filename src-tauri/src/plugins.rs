@@ -964,9 +964,6 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
     }
 
     fs::rename(&staging, &destination).map_err(|error| error.to_string())?;
-    // 只有真正完成安装时才清除墓碑；重复安装 no-op 必须保留墓碑。
-    // Only clear the removal tombstone when a fresh install completes.
-    let _ = clear_removed_plugin(base, &manifest.metadata.id, &manifest.metadata.version);
     invalidate_manifest_cache(&destination);
     read_installed_plugin(&destination)
 }
@@ -1061,8 +1058,14 @@ fn resolve_package_path(base: &Path, path: &Path) -> Result<PathBuf, String> {
 pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPlugin, String> {
     let base = plugin_base(&app)?;
     let input = resolve_package_path(&base, Path::new(&path))?;
-    // install_archive_into 仅在真正完成安装时清除墓碑；重复安装 no-op 保留墓碑。
-    install_archive(&app, &input)
+    let installed = install_archive(&app, &input)?;
+    // 显式安装视为用户重新启用该插件，清除移除墓碑。
+    clear_removed_plugin(
+        &base,
+        &installed.manifest.metadata.id,
+        &installed.manifest.metadata.version,
+    )?;
+    Ok(installed)
 }
 
 #[tauri::command]
@@ -1467,13 +1470,14 @@ spec:
         archive.finish().expect("finish archive");
 
         install_archive_into(root.path(), &package).expect("first install");
-        uninstall_plugin_from(root.path(), "myc.runtime-smoke", "1.0.0")
-            .expect("uninstall creates tombstone");
-        assert!(read_removed_plugins(root.path())
-            .expect("removal tombstones")
-            .contains("myc.runtime-smoke@1.0.0"));
 
-        // 重复安装已存在的包是 no-op，但不得清除墓碑。
+        // 模拟已安装包同时存在墓碑的异常状态；重复安装 no-op 不得清除它。
+        // Simulate a tombstone for an already-installed package; a no-op repeat
+        // install must not clear it.
+        let mut removed = HashSet::new();
+        removed.insert("myc.runtime-smoke@1.0.0".to_string());
+        write_removed_plugins(root.path(), &removed).expect("write tombstone");
+
         install_archive_into(root.path(), &package).expect("repeat install is no-op");
         assert!(read_removed_plugins(root.path())
             .expect("removal tombstones")
