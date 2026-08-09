@@ -308,17 +308,17 @@ pub fn detect_truncation(
     finish_reason: Option<&str>,
 ) -> Result<TruncationStatus, LlmError> {
     if finish_reason != Some("length") {
-        match serde_json::from_str::<Value>(content.trim()) {
-            Ok(_) => return Ok(TruncationStatus::Complete),
-            Err(_) => {
-                if let Some(extracted) = extract_json_substring(content) {
-                    if serde_json::from_str::<Value>(&extracted).is_ok() {
-                        return Ok(TruncationStatus::Complete);
-                    }
-                }
+        if serde_json::from_str::<Value>(content.trim()).is_ok() {
+            return Ok(TruncationStatus::Complete);
+        }
+        if let Some(extracted) = extract_json_substring(content) {
+            if serde_json::from_str::<Value>(&extracted).is_ok() {
                 return Ok(TruncationStatus::Complete);
             }
         }
+        return Err(LlmError::ParseError(
+            "JSON output is invalid and was not truncated".to_string(),
+        ));
     }
 
     let content = content.trim();
@@ -1080,6 +1080,12 @@ mod tests {
     fn detect_truncation_when_length_and_invalid_json() {
         let result = detect_truncation(r#"{"a": 1, "b": ["#, Some("length")).unwrap();
         assert!(matches!(result, TruncationStatus::Truncated { .. }));
+    }
+
+    #[test]
+    fn detect_truncation_rejects_invalid_json_when_not_truncated() {
+        let result = detect_truncation(r#"{"a": 1, "b": ["#, None);
+        assert!(result.is_err(), "obviously broken JSON should be rejected");
     }
 
     #[test]
