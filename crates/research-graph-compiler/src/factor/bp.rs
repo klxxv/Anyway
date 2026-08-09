@@ -38,8 +38,11 @@ const PROB_EPSILON: f64 = 1e-15;
 
 /// 稳定 sigmoid（输入先限幅到 ±LOGIT_CLAMP；+inf→1，−inf→0，NaN→0.5 中性）。
 pub fn sigmoid(x: f64) -> f64 {
-    if !x.is_finite() {
-        return if x > 0.0 { 1.0 } else { 0.5 };
+    if x.is_nan() {
+        return 0.5;
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { 1.0 } else { 0.0 };
     }
     1.0 / (1.0 + (-x.clamp(-LOGIT_CLAMP, LOGIT_CLAMP)).exp())
 }
@@ -385,7 +388,8 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
     }
 
     // ---- 信念 ----
-    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv);
+    let options = BpOptions::default();
+    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv, &options);
 
     let status = if cyclic {
         BpStatus::TreeOnCyclicGraph
@@ -510,7 +514,7 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
         prev2_msg = std::mem::replace(&mut prev1_msg, msg_fv.clone());
     }
 
-    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv);
+    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv, options);
     BpResult {
         converged: status == BpStatus::Converged,
         iterations,
@@ -525,6 +529,7 @@ fn compute_beliefs(
     graph: &FactorGraph,
     adjacency: &Adjacency,
     msg_fv: &[Vec<(f64, f64)>],
+    options: &BpOptions,
 ) -> Vec<BeliefState> {
     graph
         .variables
@@ -537,8 +542,9 @@ fn compute_beliefs(
                 support_logit += msg_fv[f][pos].0;
                 refutation_logit += msg_fv[f][pos].1;
             }
-            let support_logit = support_logit.clamp(-LOGIT_CLAMP, LOGIT_CLAMP);
-            let refutation_logit = refutation_logit.clamp(-LOGIT_CLAMP, LOGIT_CLAMP);
+            let clamp = options.logit_clamp;
+            let support_logit = support_logit.clamp(-clamp, clamp);
+            let refutation_logit = refutation_logit.clamp(-clamp, clamp);
             let support = sigmoid(support_logit);
             let refutation = sigmoid(refutation_logit);
             BeliefState {
