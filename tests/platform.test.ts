@@ -6,6 +6,7 @@ import {
   normalizeLocale,
   translate,
 } from "../app/i18n/catalog";
+import { builtInPluginCatalog } from "../app/plugins/catalog";
 import {
   MYC_API_VERSION,
   isMycFileName,
@@ -488,6 +489,14 @@ test("GraphPatch proposals are review-gated and structurally validated", () => {
     }),
     null,
   );
+});
+
+test("built-in plugin catalog only advertises implemented or clearly reserved packages", () => {
+  const ids = builtInPluginCatalog.map((plugin) => plugin.id);
+  assert.ok(ids.includes("pdf-canvas-agent"));
+  assert.ok(!ids.includes("zotero-source"));
+  assert.ok(!ids.includes("mcp-bridge"));
+  assert.ok(!ids.includes("agent-runtime"));
 });
 
 test("AgentPlugin and ProviderPlugin are activatable install kinds", () => {

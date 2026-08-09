@@ -70,6 +70,10 @@ pub struct CanvasDiffResult {
     pub changed_block_hashes: BTreeMap<String, (String, String)>,
     /// Diff 计算耗时（毫秒）/ Elapsed time in milliseconds.
     pub duration_ms: u64,
+    /// 实体总数超过预算上限，结果为空（B7）。
+    pub overflow: bool,
+    /// 两个项目之间没有任何语义区变化。
+    pub empty: bool,
 }
 
 /// 差异块（git-diff-hunk 风格，供前端渲染器 / For the renderer).
@@ -216,6 +220,8 @@ pub fn canvas_diff_with_granularity(
         .sum::<usize>();
     if entity_count > MAX_DIFF_ENTITIES {
         // B7：超限返回空结果，不 panic；command 层另行报错。
+        result.overflow = true;
+        result.empty = true;
         return result;
     }
 
@@ -236,6 +242,15 @@ pub fn canvas_diff_with_granularity(
     result.removed_evidence = removed_evidence;
     result.modified_evidence = modified_evidence;
     result.duration_ms = started.elapsed().as_millis() as u64;
+    result.empty = result.added_nodes.is_empty()
+        && result.removed_nodes.is_empty()
+        && result.modified_nodes.is_empty()
+        && result.added_edges.is_empty()
+        && result.removed_edges.is_empty()
+        && result.modified_edges.is_empty()
+        && result.added_evidence.is_empty()
+        && result.removed_evidence.is_empty()
+        && result.modified_evidence.is_empty();
     result
 }
 
@@ -262,7 +277,7 @@ pub fn diff_hunks(v1: &Value, v2: &Value, result: &CanvasDiffResult) -> Vec<Diff
             });
         }
         for entity in modified {
-            let fields = if entity.changed_fields.is_empty() && kind != "evidence" {
+            let fields = {
                 let zone1 = entities(v1, kind);
                 let zone2 = entities(v2, kind);
                 let e1 = zone1
@@ -292,8 +307,6 @@ pub fn diff_hunks(v1: &Value, v2: &Value, result: &CanvasDiffResult) -> Vec<Diff
                         .collect(),
                     _ => Vec::new(),
                 }
-            } else {
-                Vec::new()
             };
             hunks.push(DiffHunk {
                 entity_id: entity.entity_id.clone(),
@@ -413,6 +426,44 @@ mod tests {
         let fields = &result.modified_nodes[0].changed_fields;
         assert!(fields.contains(&"title".to_string()));
         assert!(fields.contains(&"data".to_string()));
+    }
+
+    #[test]
+    fn empty_diff_is_marked() {
+        let project = project();
+        let result = canvas_diff(&project, &project);
+        assert!(result.empty);
+        assert!(!result.overflow);
+    }
+
+    #[test]
+    fn overflow_diff_is_marked() {
+        let huge = json!({
+            "schemaVersion": 3,
+            "nodes": (0..60_001).map(|i| json!({"id": format!("n{i}"), "type": "note", "title": "N"})).collect::<Vec<_>>()
+        });
+        let result = canvas_diff(&huge, &huge);
+        assert!(result.overflow);
+        assert!(result.empty);
+    }
+
+    #[test]
+    fn evidence_modifications_report_field_details() {
+        let mut v1 = project();
+        let mut v2 = project();
+        v2["evidence"][0]["title"] = json!("Study 1 renamed");
+        let result = canvas_diff_with_granularity(&v1, &v2, DiffGranularity::FieldLevel);
+        assert_eq!(result.modified_evidence.len(), 1);
+        assert!(
+            result.modified_evidence[0].changed_fields.contains(&"title".to_string()),
+            "evidence diff should include field-level details"
+        );
+        let hunks = diff_hunks(&v1, &v2, &result);
+        let evidence_hunk = hunks.iter().find(|h| h.entity_kind == "evidence").expect("evidence hunk");
+        assert!(
+            evidence_hunk.changed_fields.iter().any(|f| f.field == "title"),
+            "evidence hunk should carry field changes"
+        );
     }
 
     #[test]
