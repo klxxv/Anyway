@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_PDF_BYTES: u64 = 50 * 1024 * 1024;
 const JOB_ID_PREFIX_LEN: usize = 16;
+const MAX_CHECKPOINT_BYTES: usize = 50 * 1024 * 1024;
 
 // ── Job 状态机 ──
 
@@ -284,6 +285,13 @@ impl AgentHost {
 
         let bytes = fs::read(&path)
             .map_err(|e| format!("Checkpoint read error: {e}"))?;
+        if bytes.len() > MAX_CHECKPOINT_BYTES {
+            return Err(format!(
+                "Checkpoint exceeds size limit: {} > {}",
+                bytes.len(),
+                MAX_CHECKPOINT_BYTES
+            ));
+        }
         let persisted: Vec<StageCheckpoint> = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Checkpoint deserialize error: {e}"))?;
 
@@ -310,6 +318,14 @@ impl AgentHost {
         for job in self.jobs.values() {
             let json = serde_json::to_vec_pretty(&job.checkpoints)
                 .map_err(|e| format!("Serialize error: {e}"))?;
+            if json.len() > MAX_CHECKPOINT_BYTES {
+                return Err(format!(
+                    "Checkpoint for job {} exceeds size limit: {} > {}",
+                    job.job_id,
+                    json.len(),
+                    MAX_CHECKPOINT_BYTES
+                ));
+            }
             fs::write(self.checkpoint_path(&job.job_id), json)
                 .map_err(|e| format!("Write checkpoint error: {e}"))?;
         }
