@@ -116,7 +116,7 @@ export function validateProjectState(value: unknown): ProjectState | null {
     if (!isStringArray(navigation.pinnedNodeIds)) return null;
   }
 
-  return value as ProjectState;
+  return value as unknown as ProjectState;
 }
 
 /** 解析原始 JSON；损坏数据返回 null 而非抛出 / Parses raw JSON; corrupt data yields null. */
