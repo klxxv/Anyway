@@ -240,30 +240,6 @@ export interface PluginGraphPatch {
   operations: GraphPatchOperation[];
 }
 
-/**
- * 运行时向插件暴露的窄能力面，禁止直接访问应用状态。
- * Narrow runtime capability surface; plugins cannot access application state directly.
- */
-export interface PluginContext {
-  readonly projectId: string;
-  readonly locale: string;
-  readonly capabilities: ReadonlySet<string>;
-  registerTheme(theme: ThemeManifest): void;
-  registerEdgeStyle(edgeStyle: EdgeStyleManifest): void;
-  notify(message: string): void;
-}
-
-/**
- * A deliberately small, Pythonic lifecycle: one object, explicit capabilities,
- * setup returns nothing, and teardown is optional. Plugins receive a narrow
- * context instead of importing application stores.
- */
-export interface ResearchCanvasPlugin<TConfig = unknown> {
-  readonly manifest: PluginManifest;
-  setup(context: PluginContext, config?: TConfig): void | Promise<void>;
-  teardown?(): void | Promise<void>;
-}
-
 /** 宽松的文件名预过滤，安全验证仍在 Rust 安装器完成 / Lenient filename prefilter; Rust installer performs security validation. */
 export function isMycFileName(name: string): boolean {
   return name.toLowerCase().endsWith(".myc");

@@ -105,30 +105,4 @@ class NetworkBlockExtractor(Protocol):
     def extract(self, model: Any, *, external_id: str | None = None) -> GraphPatch: ...
 
 
-@runtime_checkable
-class PluginContext(Protocol):
-    """The only interface a plugin receives from the host."""
 
-    @property
-    def project_id(self) -> str: ...
-
-    @property
-    def locale(self) -> str: ...
-
-    def has_capability(self, capability: str) -> bool: ...
-
-    def propose_graph_patch(self, patch: Mapping[str, Any]) -> str: ...
-
-    def notify(self, message: str) -> None: ...
-
-
-class ResearchCanvasPlugin(Protocol):
-    """One object with explicit setup and optional teardown."""
-
-    manifest: PluginManifest
-
-    def setup(
-        self, context: PluginContext, config: Mapping[str, Any] | None = None
-    ) -> None: ...
-
-    def teardown(self) -> None: ...
