@@ -10,8 +10,8 @@ import {
 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../../../i18n/provider";
-import type { AgentJobStatus } from "../../../plugins/agent-contracts";
-import { AGENT_STAGE_LABELS, isJobTerminal } from "../../../plugins/agent-contracts";
+import type { AgentJobStage, AgentJobStatus } from "../../../plugins/agent-contracts";
+import { isJobTerminal } from "../../../plugins/agent-contracts";
 import type { GraphPatchOperation, PluginGraphPatch } from "../../../plugins/contracts";
 import { normalizePluginGraphPatch } from "../../../plugins/workspace";
 import type { PdfCompileResult } from "../../../platform/agent-client";
@@ -426,7 +426,7 @@ export function AgentReviewPanel({
           )}
 
           <p className="mt-auto pt-5 font-serif text-[8px] text-ink/35">
-            {status ? AGENT_STAGE_LABELS[status.state] : ""}
+            {status ? t(`agent.stage.${status.state}` as `agent.stage.${AgentJobStage}`) : ""}
           </p>
         </aside>
       </section>

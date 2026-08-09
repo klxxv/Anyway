@@ -458,10 +458,17 @@ mod tests {
     fn validates_pdf_magic_and_rejects_non_pdfs() {
         let dir = tempdir().expect("tempdir");
         let pdf = dummy_pdf(dir.path());
-        assert!(AgentHost::validate_pdf_file(&pdf).is_ok());
+        let hash = AgentHost::validate_pdf_file(&pdf).expect("valid pdf");
+        let expected = format!("{:x}", Sha256::digest(b"%PDF-1.4\n%%EOF"));
+        assert_eq!(hash, expected, "validate_pdf_file must return SHA-256 of the file");
+
         let txt = dir.path().join("notes.txt");
         fs::write(&txt, b"not a pdf").expect("write txt");
         assert!(AgentHost::validate_pdf_file(&txt).is_err());
+
+        let bad_magic = dir.path().join("bad-magic.pdf");
+        fs::write(&bad_magic, b"%NOTPDF\n").expect("write bad pdf");
+        assert!(AgentHost::validate_pdf_file(&bad_magic).is_err());
     }
 
     #[test]

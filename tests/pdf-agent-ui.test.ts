@@ -15,7 +15,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AgentJobStatus } from "../app/plugins/agent-contracts";
-import { AGENT_STAGE_LABELS } from "../app/plugins/agent-contracts";
 import type { PluginGraphPatch } from "../app/plugins/contracts";
 import { patchOperationsOf } from "../app/platform/agent-client";
 import {
@@ -188,8 +187,8 @@ test("AgentJobStatus 序列化契约与 Rust PdfJobStatus 对齐（camelCase）"
   assert.deepEqual(status.progress, [7, 7]);
   assert.equal(patchOperationsOf(status).length, 1);
 
-  // 阶段名与 AgentJobStage 标签表一致
-  assert.ok(AGENT_STAGE_LABELS.awaiting_review.includes(" / "));
+  // 阶段名在 i18n catalog 中有对应键
+  assert.ok((await import("../app/i18n/catalog")).localeCatalog.en["agent.stage.awaiting_review"]);
 });
 
 test("buildAcceptedPatch 全部拒绝返回 null，applySelected 应据此发送 reject", () => {

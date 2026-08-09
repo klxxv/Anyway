@@ -1012,11 +1012,12 @@ fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPlugin, String> {
-    let base = plugin_base(&app)?;
+/// 将用户传入的插件路径解析为允许的 packages 目录下的真实路径。
+/// Resolves a caller-supplied plugin path to a real path inside the configured
+/// `packages` directory. Rejects paths that escape the directory.
+fn resolve_package_path(base: &Path, path: &Path) -> Result<PathBuf, String> {
     let allowed = base.join("packages");
-    let input = Path::new(&path)
+    let input = path
         .canonicalize()
         .map_err(|error| format!("Cannot resolve plugin path: {error}"))?;
     let normalized_allowed = allowed.canonicalize().unwrap_or(allowed);
@@ -1025,6 +1026,13 @@ pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPl
             "Plugin path must be inside the configured packages directory".to_string(),
         );
     }
+    Ok(input)
+}
+
+#[tauri::command]
+pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPlugin, String> {
+    let base = plugin_base(&app)?;
+    let input = resolve_package_path(&base, Path::new(&path))?;
     let installed = install_archive(&app, &input)?;
     clear_removed_plugin(
         &base,
@@ -2271,5 +2279,38 @@ signature: {}
         let error = install_archive_into(root.path(), &package)
             .expect_err("signed package without payloads must be rejected");
         assert!(error.contains("payloads"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn resolve_package_path_restricts_to_packages_directory() {
+        let base = tempdir().expect("temp base").path().to_path_buf();
+        let packages = base.join("packages");
+        fs::create_dir_all(&packages).expect("create packages");
+        let inside = packages.join("inside.myc");
+        fs::write(&inside, b"dummy").expect("write inside");
+
+        assert!(
+            resolve_package_path(&base, &inside).is_ok(),
+            "path inside packages must be allowed"
+        );
+
+        let outside = base.join("outside.myc");
+        fs::write(&outside, b"dummy").expect("write outside");
+        let result = resolve_package_path(&base, &outside);
+        assert!(
+            result.is_err(),
+            "path outside packages must be rejected: {result:?}"
+        );
+        assert!(
+            result.unwrap_err().contains("packages directory"),
+            "error should mention packages directory"
+        );
+
+        let escaped = packages.join("..").join("escaped.myc");
+        let result = resolve_package_path(&base, &escaped);
+        assert!(
+            result.is_err(),
+            "path escaping packages via .. must be rejected: {result:?}"
+        );
     }
 }

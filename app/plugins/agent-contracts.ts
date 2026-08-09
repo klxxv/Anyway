@@ -1,5 +1,7 @@
 import type { PluginGraphPatch } from "./contracts";
 
+export type { PluginGraphPatch };
+
 // ── LLM Provider 类型 / LLM Provider types ──
 
 /** 前端可用的 provider 摘要信息 / Provider summary info for frontend. */
@@ -164,17 +166,4 @@ export function isJobAwaitingReview(state: AgentJobStage): boolean {
   return state === "awaiting_review";
 }
 
-/** AgentJobStage 的人类可读标签 / Human-readable labels for agent job stages. */
-export const AGENT_STAGE_LABELS: Record<AgentJobStage, string> = {
-  created: "已创建 / Created",
-  validating_file: "校验文件 / Validating file",
-  extracting_text: "提取文本 / Extracting text",
-  ocr_optional: "OCR 检测 / OCR check",
-  building_document_map: "构建文档映射 / Building document map",
-  extracting_semantics: "提取语义 / Extracting semantics",
-  generating_patch: "生成补丁 / Generating patch",
-  awaiting_review: "等待审阅 / Awaiting review",
-  accepted: "已接受 / Accepted",
-  rejected: "已拒绝 / Rejected",
-  failed: "失败 / Failed",
-};
+

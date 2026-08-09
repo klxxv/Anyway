@@ -107,8 +107,8 @@ fn validate_schema(candidates: &AgentCandidates) -> Vec<ValidationCheck> {
                 detail: Some("无 anchor 的实体无法验证其来源".into()),
             });
         }
-        // confidence 范围校验
-        if entity.confidence < 0.0 || entity.confidence > 1.0 {
+        // confidence 范围校验（NaN 也会失败，因为 NaN 与任何值比较都为 false）。
+        if !entity.confidence.is_finite() || !(0.0..=1.0).contains(&entity.confidence) {
             checks.push(ValidationCheck {
                 check_id: "schema-004".into(),
                 category: "schema".into(),
@@ -154,6 +154,27 @@ fn validate_quote_references(candidates: &AgentCandidates, full_text: &str) -> V
     for entity in &candidates.entities {
         for anchor in &entity.anchors {
             total_quotes += 1;
+
+            // 偏移量基本一致性校验：start 必须 <= end。
+            if anchor.start_offset > anchor.end_offset {
+                quote_mismatches += 1;
+                checks.push(ValidationCheck {
+                    check_id: format!("quote-{:03}", quote_mismatches),
+                    category: "quote".into(),
+                    passed: false,
+                    severity: ValidationSeverity::Error,
+                    message: format!(
+                        "实体 {} 的 anchor offset 非法: start={} > end={}",
+                        entity.temp_id, anchor.start_offset, anchor.end_offset
+                    ),
+                    detail: Some(format!(
+                        "section={}, paragraph={}",
+                        anchor.section_id, anchor.paragraph_id
+                    )),
+                });
+                continue;
+            }
+
             if !anchor.quote.is_empty() && !full_text.contains(&anchor.quote) {
                 // 尝试宽松匹配（忽略前后空白）
                 let trimmed = anchor.quote.trim();
@@ -248,72 +269,206 @@ fn validate_temp_id_closure(candidates: &AgentCandidates) -> Vec<ValidationCheck
         defined.insert(v.temp_id.clone());
     }
 
-    // 检查 merge_groups 中的引用
+    let mut report = |check_id: &str, severity: ValidationSeverity, message: String| {
+        checks.push(ValidationCheck {
+            check_id: check_id.into(),
+            category: "closure".into(),
+            passed: false,
+            severity,
+            message,
+            detail: None,
+        });
+    };
+
+    // merge_groups
     for mg in &candidates.merge_groups {
+        if !defined.contains(&mg.canonical_temp_id) {
+            report(
+                "closure-merge-canonical",
+                ValidationSeverity::Error,
+                format!("mergeGroup canonical={} 未定义", mg.canonical_temp_id),
+            );
+        }
         for tid in &mg.merged_temp_ids {
             if !defined.contains(tid) {
-                checks.push(ValidationCheck {
-                    check_id: "closure-merge".into(),
-                    category: "closure".into(),
-                    passed: false,
-                    severity: ValidationSeverity::Error,
-                    message: format!("mergeGroup canonical={} 引用了未定义的 tempId: {tid}", mg.canonical_temp_id),
-                    detail: None,
-                });
+                report(
+                    "closure-merge",
+                    ValidationSeverity::Error,
+                    format!("mergeGroup canonical={} 引用了未定义的 tempId: {tid}", mg.canonical_temp_id),
+                );
             }
         }
     }
 
-    // 检查 experiment_matrix 中的变量引用
+    // experiment_matrix
     for exp in &candidates.experiment_matrix {
+        if !defined.contains(&exp.experiment_temp_id) {
+            report(
+                "closure-exp-id",
+                ValidationSeverity::Warning,
+                format!("experiment {} 自身 tempId 未定义", exp.experiment_temp_id),
+            );
+        }
         for iv in &exp.ivs {
             if !defined.contains(&iv.variable_temp_id) {
-                checks.push(ValidationCheck {
-                    check_id: "closure-exp-iv".into(),
-                    category: "closure".into(),
-                    passed: false,
-                    severity: ValidationSeverity::Warning,
-                    message: format!("experiment {} IV 引用了未定义的 tempId: {}", exp.experiment_temp_id, iv.variable_temp_id),
-                    detail: None,
-                });
+                report(
+                    "closure-exp-iv",
+                    ValidationSeverity::Warning,
+                    format!("experiment {} IV 引用了未定义的 tempId: {}", exp.experiment_temp_id, iv.variable_temp_id),
+                );
             }
         }
         for dv in &exp.dvs {
             if !defined.contains(&dv.variable_temp_id) {
-                checks.push(ValidationCheck {
-                    check_id: "closure-exp-dv".into(),
-                    category: "closure".into(),
-                    passed: false,
-                    severity: ValidationSeverity::Warning,
-                    message: format!("experiment {} DV 引用了未定义的 tempId: {}", exp.experiment_temp_id, dv.variable_temp_id),
-                    detail: None,
-                });
+                report(
+                    "closure-exp-dv",
+                    ValidationSeverity::Warning,
+                    format!("experiment {} DV 引用了未定义的 tempId: {}", exp.experiment_temp_id, dv.variable_temp_id),
+                );
+            }
+        }
+        for ctrl in &exp.controls {
+            if !defined.contains(&ctrl.variable_temp_id) {
+                report(
+                    "closure-exp-control",
+                    ValidationSeverity::Warning,
+                    format!("experiment {} control 引用了未定义的 tempId: {}", exp.experiment_temp_id, ctrl.variable_temp_id),
+                );
+            }
+        }
+        for moderator in &exp.moderators {
+            if !defined.contains(&moderator.variable_temp_id) {
+                report(
+                    "closure-exp-moderator",
+                    ValidationSeverity::Warning,
+                    format!("experiment {} moderator 引用了未定义的 tempId: {}", exp.experiment_temp_id, moderator.variable_temp_id),
+                );
+            }
+            if let Some(ref iv_tid) = moderator.interaction_with {
+                if !defined.contains(iv_tid) {
+                    report(
+                        "closure-exp-moderator-interaction",
+                        ValidationSeverity::Warning,
+                        format!("experiment {} moderator 的 interactionWith 未定义: {iv_tid}", exp.experiment_temp_id),
+                    );
+                }
+            }
+        }
+        for mediator in &exp.mediators {
+            if !defined.contains(&mediator.variable_temp_id) {
+                report(
+                    "closure-exp-mediator",
+                    ValidationSeverity::Warning,
+                    format!("experiment {} mediator 引用了未定义的 tempId: {}", exp.experiment_temp_id, mediator.variable_temp_id),
+                );
             }
         }
     }
 
-    // 检查 claim_evidence_bundles 中的引用
+    // claim_evidence_bundles
     for bundle in &candidates.claim_evidence_bundles {
         if !defined.contains(&bundle.claim_temp_id) {
-            checks.push(ValidationCheck {
-                check_id: "closure-bundle-claim".into(),
-                category: "closure".into(),
-                passed: false,
-                severity: ValidationSeverity::Error,
-                message: format!("claimEvidenceBundle 引用了未定义的 claim tempId: {}", bundle.claim_temp_id),
-                detail: None,
-            });
+            report(
+                "closure-bundle-claim",
+                ValidationSeverity::Error,
+                format!("claimEvidenceBundle 引用了未定义的 claim tempId: {}", bundle.claim_temp_id),
+            );
         }
         for etid in &bundle.evidence_temp_ids {
             if !defined.contains(etid) {
-                checks.push(ValidationCheck {
-                    check_id: "closure-bundle-ev".into(),
-                    category: "closure".into(),
-                    passed: false,
-                    severity: ValidationSeverity::Warning,
-                    message: format!("claimEvidenceBundle {} 引用了未定义的 evidence tempId: {etid}", bundle.claim_temp_id),
-                    detail: None,
-                });
+                report(
+                    "closure-bundle-ev",
+                    ValidationSeverity::Warning,
+                    format!("claimEvidenceBundle {} 引用了未定义的 evidence tempId: {etid}", bundle.claim_temp_id),
+                );
+            }
+        }
+    }
+
+    // main_conclusions
+    for conclusion in &candidates.main_conclusions {
+        if !defined.contains(&conclusion.temp_id) {
+            report(
+                "closure-conclusion-id",
+                ValidationSeverity::Warning,
+                format!("mainConclusion {} 自身 tempId 未定义", conclusion.temp_id),
+            );
+        }
+        for tid in &conclusion.supported_by {
+            if !defined.contains(tid) {
+                report(
+                    "closure-conclusion-supported-by",
+                    ValidationSeverity::Warning,
+                    format!("mainConclusion {} supportedBy 引用了未定义的 tempId: {tid}", conclusion.temp_id),
+                );
+            }
+        }
+    }
+
+    // ablation_analysis
+    for ablation in &candidates.ablation_analysis {
+        if !defined.contains(&ablation.experiment_temp_id) {
+            report(
+                "closure-ablation-exp",
+                ValidationSeverity::Warning,
+                format!("ablationAnalysis 引用了未定义的 experiment tempId: {}", ablation.experiment_temp_id),
+            );
+        }
+    }
+
+    // interaction_effects
+    for ie in &candidates.interaction_effects {
+        if !defined.contains(&ie.claim_temp_id) {
+            report(
+                "closure-interaction-claim",
+                ValidationSeverity::Warning,
+                format!("interactionEffect 引用了未定义的 claim tempId: {}", ie.claim_temp_id),
+            );
+        }
+        for tid in &ie.variables {
+            if !defined.contains(tid) {
+                report(
+                    "closure-interaction-variable",
+                    ValidationSeverity::Warning,
+                    format!("interactionEffect {} 引用了未定义的 variable tempId: {tid}", ie.claim_temp_id),
+                );
+            }
+        }
+    }
+
+    // confounders
+    for confounder in &candidates.confounders {
+        if !defined.contains(&confounder.variable_temp_id) {
+            report(
+                "closure-confounder",
+                ValidationSeverity::Warning,
+                format!("confounder 引用了未定义的 variable tempId: {}", confounder.variable_temp_id),
+            );
+        }
+    }
+
+    // missing_controls
+    for missing in &candidates.missing_controls {
+        for tid in &missing.affects_claims {
+            if !defined.contains(tid) {
+                report(
+                    "closure-missing-control",
+                    ValidationSeverity::Warning,
+                    format!("missingControl 引用了未定义的 claim tempId: {tid}"),
+                );
+            }
+        }
+    }
+
+    // internal_conflicts
+    for conflict in &candidates.internal_conflicts {
+        for (role, tid) in [("claimA", &conflict.claim_a), ("claimB", &conflict.claim_b)] {
+            if !defined.contains(tid) {
+                report(
+                    "closure-conflict",
+                    ValidationSeverity::Warning,
+                    format!("internalConflict {role} 引用了未定义的 tempId: {tid}"),
+                );
             }
         }
     }
@@ -459,5 +614,68 @@ mod tests {
             .filter(|c| c.category == "closure" && !c.passed)
             .collect();
         assert!(!closure_fails.is_empty(), "应检测到未定义的 tempId 引用");
+    }
+
+    #[test]
+    fn nan_confidence_is_rejected() {
+        let mut candidates = dummy_candidates();
+        candidates.entities[0].confidence = f64::NAN;
+        let report = validate_candidates(&candidates, "");
+        let schema_errors: Vec<_> = report.checks.iter()
+            .filter(|c| c.check_id == "schema-004" && !c.passed)
+            .collect();
+        assert!(!schema_errors.is_empty(), "NaN confidence 必须被 schema-004 拒绝");
+    }
+
+    #[test]
+    fn invalid_quote_offset_is_rejected() {
+        let mut candidates = dummy_candidates();
+        candidates.entities[0].anchors[0].start_offset = 100;
+        candidates.entities[0].anchors[0].end_offset = 50;
+        let report = validate_candidates(&candidates, "");
+        let quote_errors: Vec<_> = report.checks.iter()
+            .filter(|c| c.category == "quote" && !c.passed)
+            .collect();
+        assert!(!quote_errors.is_empty(), "start > end 的 offset 必须被拒绝");
+    }
+
+    #[test]
+    fn closure_checks_moderator_and_mediator_references() {
+        let mut candidates = dummy_candidates();
+        candidates.variable_registry.push(VariableRegistryEntry {
+            temp_id: "iv1".into(),
+            name: "IV".into(),
+            aliases: vec![],
+            domain: VariableDomain { r#type: "continuous".into(), values: None, min: None, max: None, unit: None },
+            role: "independent".into(),
+            measured_as: None,
+            is_new: true,
+        });
+        candidates.experiment_matrix.push(ExperimentMatrixEntry {
+            experiment_temp_id: "exp1".into(),
+            design: None,
+            ivs: vec![],
+            dvs: vec![],
+            controls: vec![],
+            moderators: vec![ModeratorEntry {
+                variable_temp_id: "mod_undefined".into(),
+                name: "Mod".into(),
+                interaction_with: Some("iv_missing".into()),
+            }],
+            mediators: vec![MediatorEntry {
+                variable_temp_id: "med_undefined".into(),
+                name: "Med".into(),
+                pathway: None,
+            }],
+            sample: None,
+            conditions: vec![],
+        });
+        let report = validate_candidates(&candidates, "");
+        let closure_fails: Vec<_> = report.checks.iter()
+            .filter(|c| c.category == "closure" && !c.passed)
+            .collect();
+        assert!(closure_fails.iter().any(|c| c.message.contains("mod_undefined")), "应检测 moderator");
+        assert!(closure_fails.iter().any(|c| c.message.contains("med_undefined")), "应检测 mediator");
+        assert!(closure_fails.iter().any(|c| c.message.contains("iv_missing")), "应检测 interactionWith");
     }
 }
