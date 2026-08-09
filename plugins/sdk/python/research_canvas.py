@@ -8,7 +8,7 @@ artifacts through a file protocol.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol
 
 
 GRAPH_PATCH_API_VERSION = "researchcanvas.dev/graph-patch/v1alpha1"
