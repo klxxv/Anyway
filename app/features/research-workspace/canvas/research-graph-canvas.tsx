@@ -915,16 +915,36 @@ function ResearchGraphInner(props: ResearchGraphCanvasProps) {
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<WorkspaceNode>[]) => {
-      setNodes((current) => applyNodeChanges(changes, current));
+      const nonRemove: NodeChange<WorkspaceNode>[] = [];
+      for (const change of changes) {
+        if (change.type === "remove") {
+          onDeleteNode(change.id);
+        } else {
+          nonRemove.push(change);
+        }
+      }
+      if (nonRemove.length > 0) {
+        setNodes((current) => applyNodeChanges(nonRemove, current));
+      }
     },
-    [],
+    [onDeleteNode],
   );
 
   const handleEdgesChange = useCallback(
     (changes: EdgeChange<WorkspaceEdge>[]) => {
-      setEdges((current) => applyEdgeChanges(changes, current));
+      const nonRemove: EdgeChange<WorkspaceEdge>[] = [];
+      for (const change of changes) {
+        if (change.type === "remove") {
+          onDeleteEdge(change.id);
+        } else {
+          nonRemove.push(change);
+        }
+      }
+      if (nonRemove.length > 0) {
+        setEdges((current) => applyEdgeChanges(nonRemove, current));
+      }
     },
-    [],
+    [onDeleteEdge],
   );
 
   const handleConnect = useCallback(
