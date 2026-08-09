@@ -24,7 +24,7 @@ import {
   pluginKey,
   updateEnabledPluginKeys,
 } from "../app/plugins/identity";
-import { resolveTheme, themeCssVariables } from "../app/plugins/theme";
+import { resolveTheme, sanitizeCssColor, themeCssVariables } from "../app/plugins/theme";
 import { isProjectState } from "../app/lib/project-io";
 import type { ProjectState } from "../app/lib/research-types";
 import {
@@ -184,6 +184,26 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   assert.equal(themeCssVariables(theme)?.["--radial-menu-active"], "#61afef");
   assert.equal(themeCssVariables(theme)?.["--radial-menu-center-background"], "#21252b");
   assert.equal(theme?.components?.miniMap?.showRelations, true);
+
+  const maliciousTheme = {
+    ...theme,
+    colors: {
+      app: "#1e222a",
+      panel: "#282c34; --evil: url(https://example.com/leak)",
+      canvas: "#21252b",
+      text: "#abb2bf",
+      muted: "#7f8797",
+      accent: "#61afef",
+      border: "#3e4451",
+    },
+  };
+  assert.equal(themeCssVariables(maliciousTheme), undefined);
+  assert.equal(sanitizeCssColor("red"), "red");
+  assert.equal(sanitizeCssColor("  #fff  "), "#fff");
+  assert.equal(sanitizeCssColor("rgb(0,0,0)"), "rgb(0,0,0)");
+  assert.equal(sanitizeCssColor("rgb(0, 0, 0); background: red"), undefined);
+  assert.equal(sanitizeCssColor("var(--x)"), undefined);
+  assert.equal(sanitizeCssColor("url(https://x)"), undefined);
 
   const older: InstalledMycPlugin = {
     ...plugin,
