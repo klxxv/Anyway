@@ -2,7 +2,7 @@
 
 use crate::error::PipelineError;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 /// Prompt 清单配置。
@@ -50,9 +50,9 @@ pub struct PromptFile {
     pub version: u32,
     pub pass: String,
     pub name: String,
-    pub description: HashMap<String, String>,
-    pub system: HashMap<String, String>,
-    pub user_template: HashMap<String, String>,
+    pub description: BTreeMap<String, String>,
+    pub system: BTreeMap<String, String>,
+    pub user_template: BTreeMap<String, String>,
 }
 
 impl PipelineConfig {
@@ -70,12 +70,43 @@ impl PipelineConfig {
             let bytes = std::fs::read(&file_path)
                 .map_err(|e| PipelineError::Config(format!("无法读取 {}: {e}", pass_config.file)))?;
             let prompt: PromptFile = serde_yaml::from_slice(&bytes)?;
-            templates.insert(pass_config.name.clone(), {
-                let mut m = HashMap::new();
-                m.insert("zh".to_string(), prompt.clone());
-                m.insert("en".to_string(), prompt);
-                m
-            });
+
+            // 按文件实际包含的 locale 注册，不再把同一文件同时塞进 zh/en。
+            let locales: Vec<String> = prompt
+                .system
+                .keys()
+                .chain(prompt.user_template.keys())
+                .chain(prompt.description.keys())
+                .cloned()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            let mut per_locale: HashMap<String, PromptFile> = HashMap::new();
+            for locale in locales {
+                let localize = |map: &BTreeMap<String, String>| {
+                    map.get(&locale)
+                        .cloned()
+                        .map(|value| {
+                            let mut m = BTreeMap::new();
+                            m.insert(locale.clone(), value);
+                            m
+                        })
+                        .unwrap_or_default()
+                };
+                per_locale.insert(
+                    locale.clone(),
+                    PromptFile {
+                        version: prompt.version,
+                        pass: prompt.pass.clone(),
+                        name: prompt.name.clone(),
+                        description: localize(&prompt.description),
+                        system: localize(&prompt.system),
+                        user_template: localize(&prompt.user_template),
+                    },
+                );
+            }
+            templates.insert(pass_config.name.clone(), per_locale);
         }
 
         Ok(PipelineConfig {
@@ -163,9 +194,28 @@ impl PipelineConfig {
     }
 
     /// 解析语言：若请求的语言不可用，回退到 default_locale → en → 第一个可用。
-    fn resolve_locale(&self, requested: &str) -> &str {
-        // 简单实现：zh 或 en
-        if requested == "zh" { "zh" } else { "en" }
+    fn resolve_locale<'a>(&'a self, requested: &'a str) -> &'a str {
+        // 收集所有 pass 中实际存在的 locale。
+        let available: std::collections::HashSet<&str> = self
+            .templates
+            .values()
+            .flat_map(|m| m.keys().map(String::as_str))
+            .collect();
+
+        if available.contains(requested) {
+            return requested;
+        }
+        let fallback = self.manifest.default_locale.as_str();
+        if available.contains(fallback) {
+            return fallback;
+        }
+        if available.contains("en") {
+            return "en";
+        }
+        // 最后按字典序返回第一个可用 locale（确定性）。
+        let mut sorted: Vec<&str> = available.into_iter().collect();
+        sorted.sort();
+        sorted.into_iter().next().unwrap_or(requested)
     }
 }
 
@@ -174,15 +224,15 @@ mod tests {
     use super::*;
 
     fn test_config(template: &str) -> PipelineConfig {
-        let mut system = HashMap::new();
+        let mut system = BTreeMap::new();
         system.insert("en".to_string(), "sys".to_string());
-        let mut user_template = HashMap::new();
+        let mut user_template = BTreeMap::new();
         user_template.insert("en".to_string(), template.to_string());
         let prompt = PromptFile {
             version: 1,
             pass: "X".to_string(),
             name: "test".to_string(),
-            description: HashMap::new(),
+            description: BTreeMap::new(),
             system,
             user_template,
         };
@@ -224,5 +274,59 @@ mod tests {
             .render_user_template("test", "en", &vars)
             .expect("render");
         assert_eq!(rendered, "{\"key\": 42} and {unknown}");
+    }
+
+    #[test]
+    fn resolve_locale_uses_default_then_en_then_sorted_available() {
+        let mut system = BTreeMap::new();
+        system.insert("fr".to_string(), "sys".to_string());
+        let prompt = PromptFile {
+            version: 1,
+            pass: "X".to_string(),
+            name: "test".to_string(),
+            description: BTreeMap::new(),
+            system,
+            user_template: BTreeMap::new(),
+        };
+        let mut per_pass = HashMap::new();
+        per_pass.insert("fr".to_string(), prompt);
+        let mut templates = HashMap::new();
+        templates.insert("test".to_string(), per_pass);
+        let config = PipelineConfig {
+            prompts_dir: PathBuf::new(),
+            locale: "en".to_string(),
+            manifest: Manifest {
+                version: 1,
+                default_locale: "de".to_string(),
+                passes: vec![],
+            },
+            templates,
+        };
+        // 请求 de 不存在 → 回退到 default_locale de 也不存在 → en 不存在
+        // → 按字典序第一个可用 fr。
+        assert_eq!(config.resolve_locale("de"), "fr");
+        // 请求 fr 直接命中。
+        assert_eq!(config.resolve_locale("fr"), "fr");
+    }
+
+    #[test]
+    fn load_registers_only_locales_present_in_file() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("manifest.yaml");
+        let mut manifest = std::fs::File::create(&manifest_path).unwrap();
+        manifest
+            .write_all(b"version: 1\ndefault_locale: en\npasses: [{pass: X, name: test, file: test.yaml, description: {en: desc}}]\n")
+            .unwrap();
+        let prompt_path = dir.path().join("test.yaml");
+        let mut prompt = std::fs::File::create(&prompt_path).unwrap();
+        prompt
+            .write_all(b"version: 1\npass: X\nname: test\ndescription:\n  en: desc\nsystem:\n  en: sys\nuser_template:\n  en: hi\n")
+            .unwrap();
+
+        let config = PipelineConfig::load(dir.path(), "en").unwrap();
+        let test_templates = config.templates.get("test").unwrap();
+        assert!(test_templates.contains_key("en"));
+        assert!(!test_templates.contains_key("zh"), "should not duplicate-register missing locales");
     }
 }
