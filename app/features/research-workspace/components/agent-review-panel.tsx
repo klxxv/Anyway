@@ -46,8 +46,8 @@ export function buildAcceptedPatch(
   const operations = patch.operations
     .map((operation, index) => {
       const decision = decisions[index];
-      if (decision && !decision.accept) return null;
-      if (!decision?.edits) return operation;
+      if (!decision || !decision.accept) return null;
+      if (!decision.edits) return operation;
       if (operation.op === "add-node" && decision.edits.title !== undefined) {
         return { ...operation, node: { ...operation.node, title: decision.edits.title } };
       }
