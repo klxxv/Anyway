@@ -45,19 +45,47 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
+  const protectedMessageKeys = useMemo(
+    () =>
+      new Set<MessageKey>([
+        "agent.eyebrow",
+        "agent.reviewTitle",
+        "agent.reviewSubtitle",
+        "agent.acceptAll",
+        "agent.rejectAll",
+        "agent.applySelected",
+        "agent.decision.accept",
+        "agent.decision.reject",
+        "agent.patchApplied",
+        "agent.patchRejected",
+        "agent.compileFailed",
+        "workspace.reviewApplyPatch",
+        "workspace.patchApplied",
+        "workspace.noPatch",
+        "menu.close",
+      ]),
+    [],
+  );
+
   const { pluginCatalog, pluginLocaleNames } = useMemo(() => {
     const bundles = localeBundlesFromPlugins(activePlugins);
     const catalog: Record<string, Partial<Record<MessageKey, string>>> = {};
     const names: Record<string, string> = {};
     for (const bundle of bundles) {
+      const messages = { ...(bundle.messages as Partial<Record<MessageKey, string>>) };
+      for (const key of Object.keys(messages)) {
+        if (protectedMessageKeys.has(key as MessageKey)) {
+          delete messages[key as MessageKey];
+        }
+      }
       catalog[bundle.locale] = {
         ...(catalog[bundle.locale] ?? {}),
-        ...(bundle.messages as Partial<Record<MessageKey, string>>),
+        ...messages,
       };
       names[bundle.locale] = bundle.name;
     }
     return { pluginCatalog: catalog, pluginLocaleNames: names };
-  }, [activePlugins]);
+  }, [activePlugins, protectedMessageKeys]);
 
   const resolvedLocale =
     locale === "en" || locale === "zh-CN" || pluginCatalog[locale] ? locale : "en";
