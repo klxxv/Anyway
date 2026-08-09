@@ -56,6 +56,10 @@ function normalizePluginGraphPatch(value: unknown): PluginGraphPatch | null {
     typeof candidate.source.operation !== "string" ||
     candidate.source.operation.length === 0 ||
     candidate.source.operation.length > 160 ||
+    (candidate.source.projectId !== undefined &&
+      (typeof candidate.source.projectId !== "string" ||
+        candidate.source.projectId.length === 0 ||
+        candidate.source.projectId.length > 160)) ||
     typeof candidate.title !== "string" ||
     candidate.title.length === 0 ||
     candidate.title.length > 500 ||

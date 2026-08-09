@@ -283,6 +283,15 @@ export function useWorkspaceProject(options: WorkspaceProjectOptions = {}) {
   /** 插件 GraphPatch 必须经由 commit 管道应用，不绕过撤销栈。 */
   const applyGraphPatch = useCallback(
     (patch: PluginGraphPatch) => {
+      if (patch.reviewRequired !== true) {
+        throw new Error("GraphPatch must be review-gated (reviewRequired=true)");
+      }
+      const targetProjectId = patch.source.projectId;
+      if (targetProjectId && targetProjectId !== projectRef.current.id) {
+        throw new Error(
+          `GraphPatch target project mismatch: expected ${projectRef.current.id}, got ${targetProjectId}`,
+        );
+      }
       commit(`Apply plugin patch: ${patch.title}`, (draft) => {
         applyGraphPatchToDraft(draft, patch, new Date().toISOString());
       });
@@ -292,6 +301,8 @@ export function useWorkspaceProject(options: WorkspaceProjectOptions = {}) {
 
   return {
     project,
+    /** 指向当前 project 的 ref；用于在同步变更后读取最新状态（避免闭包过期）。 */
+    projectRef,
     /** 撤销历史快照（past，按时间旧→新）；供 Canvas Diff 版本选择。 */
     history: past,
     selectedNode,

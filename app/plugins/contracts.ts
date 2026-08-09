@@ -231,6 +231,8 @@ export interface PluginGraphPatch {
     pluginId: string;
     operation: string;
     externalId?: string;
+    /** 可选：补丁生成时针对的项目 ID，用于防止打错内存中的图。 */
+    projectId?: string;
   };
   title: string;
   summary: string;
