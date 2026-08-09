@@ -5,6 +5,8 @@
 //! consistency guarantee.
 
 use serde_json::{Number, Value};
+use std::fmt::Write as _;
+use std::io::Write as _;
 use unicode_normalization::UnicodeNormalization;
 
 /// 文本规范化：NFC 归一化 + 折叠空白（任意 Unicode 空白序列 → 单个空格，并去首尾）。
@@ -118,5 +120,29 @@ fn canonicalize_mode(value: &Value, sort_arrays: bool) -> Vec<u8> {
 
 /// 带 JSON 转义的带引号字符串字节 / Quoted, JSON-escaped string bytes.
 fn quoted_string(text: &str) -> Vec<u8> {
-    serde_json::to_vec(&Value::String(text.to_string())).expect("string serialization cannot fail")
+    // serde_json can only fail here if the input Value contains a map with
+    // non-string keys, which Value::String never does. Unwrap is acceptable.
+    serde_json::to_vec(&Value::String(text.to_string())).unwrap_or_else(|_| {
+        // Fallback: manually quote/escape the string so canonicalization never
+        // panics, even if serde somehow changes its invariants.
+        let mut out = Vec::with_capacity(text.len() + 2);
+        out.push(b'"');
+        for byte in text.bytes() {
+            match byte {
+                b'\\' | b'"' => {
+                    out.push(b'\\');
+                    out.push(byte);
+                }
+                b'\n' => out.extend_from_slice(b"\\n"),
+                b'\r' => out.extend_from_slice(b"\\r"),
+                b'\t' => out.extend_from_slice(b"\\t"),
+                b if b < 0x20 => {
+                    let _ = write!(out, "\\u{byte:04x}");
+                }
+                _ => out.push(byte),
+            }
+        }
+        out.push(b'"');
+        out
+    })
 }
