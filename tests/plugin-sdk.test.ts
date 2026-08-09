@@ -8,7 +8,7 @@ test("Rust and C++ SDKs expose the same MYC guest ABI", () => {
   const rust = read("plugins/sdk/rust/src/lib.rs");
   const cpp = read("plugins/sdk/cpp/research_canvas_plugin.h");
 
-  for (const symbol of ["myc_alloc", "myc_run"]) {
+  for (const symbol of ["myc_alloc", "myc_free", "myc_run"]) {
     assert.match(rust, new RegExp(`extern \\"C\\" fn ${symbol}`));
     assert.match(cpp, new RegExp(`${symbol}\\(`));
   }
