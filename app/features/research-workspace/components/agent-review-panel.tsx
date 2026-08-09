@@ -151,7 +151,8 @@ export function AgentReviewPanel({
     setApplying(true);
     setError("");
     try {
-      await reviewPdfPatch(jobId, true);
+      // 全部拒绝时，向后端记录拒绝而非接受。
+      await reviewPdfPatch(jobId, accepted !== null);
       if (accepted) onApply(accepted);
       else onReject();
     } catch (applyError) {
