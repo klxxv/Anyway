@@ -940,6 +940,9 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
     }
 
     fs::rename(&staging, &destination).map_err(|error| error.to_string())?;
+    // 只有真正完成安装时才清除墓碑；重复安装 no-op 必须保留墓碑。
+    // Only clear the removal tombstone when a fresh install completes.
+    let _ = clear_removed_plugin(base, &manifest.metadata.id, &manifest.metadata.version);
     read_installed_plugin(&destination)
 }
 
@@ -1033,13 +1036,8 @@ fn resolve_package_path(base: &Path, path: &Path) -> Result<PathBuf, String> {
 pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPlugin, String> {
     let base = plugin_base(&app)?;
     let input = resolve_package_path(&base, Path::new(&path))?;
-    let installed = install_archive(&app, &input)?;
-    clear_removed_plugin(
-        &base,
-        &installed.manifest.metadata.id,
-        &installed.manifest.metadata.version,
-    )?;
-    Ok(installed)
+    // install_archive_into 仅在真正完成安装时清除墓碑；重复安装 no-op 保留墓碑。
+    install_archive(&app, &input)
 }
 
 #[tauri::command]
@@ -1419,6 +1417,39 @@ spec:
             .path()
             .join("installed/myc.runtime-smoke@1.0.0")
             .exists());
+        assert!(read_removed_plugins(root.path())
+            .expect("removal tombstones")
+            .contains("myc.runtime-smoke@1.0.0"));
+    }
+
+    #[test]
+    fn repeat_install_no_op_preserves_removal_tombstone() {
+        let root = tempdir().expect("temp root");
+        let package = root.path().join("runtime-smoke.myc");
+        let file = File::create(&package).expect("create archive");
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        archive
+            .start_file("plugin.yml", options)
+            .expect("manifest entry");
+        archive
+            .write_all(runtime_manifest("rust").as_bytes())
+            .expect("manifest bytes");
+        archive
+            .start_file("plugin.wasm", options)
+            .expect("wasm entry");
+        archive.write_all(&smoke_wasm()).expect("wasm bytes");
+        archive.finish().expect("finish archive");
+
+        install_archive_into(root.path(), &package).expect("first install");
+        uninstall_plugin_from(root.path(), "myc.runtime-smoke", "1.0.0")
+            .expect("uninstall creates tombstone");
+        assert!(read_removed_plugins(root.path())
+            .expect("removal tombstones")
+            .contains("myc.runtime-smoke@1.0.0"));
+
+        // 重复安装已存在的包是 no-op，但不得清除墓碑。
+        install_archive_into(root.path(), &package).expect("repeat install is no-op");
         assert!(read_removed_plugins(root.path())
             .expect("removal tombstones")
             .contains("myc.runtime-smoke@1.0.0"));
