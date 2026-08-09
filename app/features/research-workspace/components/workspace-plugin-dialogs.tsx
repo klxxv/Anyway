@@ -13,13 +13,14 @@ import {
   IconUpload,
   IconX,
 } from "@tabler/icons-react";
+import { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../../../i18n/provider";
 import type {
   FolderProjectSummary,
   GitHubAccountStatus,
   GitWorkspaceSnapshot,
 } from "../../../platform/native-project";
-import type { PluginGraphPatch } from "../../../plugins/contracts";
+import type { GraphPatchOperation, PluginGraphPatch } from "../../../plugins/contracts";
 
 export function FolderWorkspaceDialog({
   root,
@@ -111,9 +112,30 @@ export function GitWorkspaceDialog({
   onGenerateSshKey: () => void;
   onUploadSshKey: (path: string) => void;
   onSaveNow: () => void;
-  onApplyPatch: () => void;
+  onApplyPatch: (acceptedPatch: PluginGraphPatch | null) => void;
 }) {
   const { t } = useI18n();
+  const [accepted, setAccepted] = useState<Record<number, boolean>>({});
+
+  const buildAcceptedPatch = useCallback((patch: PluginGraphPatch | null) => {
+    if (!patch) return null;
+    const operations = patch.operations
+      .map((operation, index) => (accepted[index] === false ? null : operation))
+      .filter((operation): operation is GraphPatchOperation => operation !== null);
+    if (operations.length === 0) return null;
+    return { ...patch, operations };
+  }, [accepted]);
+
+  const acceptedCount = useMemo(() => {
+    if (!patch) return 0;
+    return patch.operations.filter((_, index) => accepted[index] !== false).length;
+  }, [accepted, patch]);
+
+  const rejectedCount = useMemo(() => {
+    if (!patch) return 0;
+    return patch.operations.filter((_, index) => accepted[index] === false).length;
+  }, [accepted, patch]);
+
   return (
     <div className="fixed inset-0 z-[97] grid place-items-center bg-ink/10 backdrop-blur-[2px]">
       <section className="grid h-[min(680px,calc(100vh-32px))] w-[min(920px,calc(100vw-32px))] grid-cols-1 overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)] md:grid-cols-[minmax(0,1fr)_300px]">
@@ -307,12 +329,13 @@ export function GitWorkspaceDialog({
             </div>
             <p className="mt-2 font-serif text-[10px] leading-[1.5] text-ink/50">
               {patch
-                ? `${patch.operations.length} ${t("workspace.patchOperations")} · ${patch.summary}`
+                ? `${acceptedCount}/${patch.operations.length} ${t("workspace.patchOperations")} · ${patch.summary}`
                 : t("workspace.noPatch")}
             </p>
             {patch && (
               <div className="mt-3 space-y-1">
-                {patch.operations.slice(0, 6).map((operation, index) => {
+                {patch.operations.map((operation, index) => {
+                  const rejected = accepted[index] === false;
                   const subject = operation.op === "add-node"
                     ? operation.node.title
                     : operation.op === "add-edge"
@@ -321,19 +344,38 @@ export function GitWorkspaceDialog({
                         ? operation.nodeId
                         : operation.edgeId;
                   return (
-                    <p
+                    <button
                       key={`${operation.op}-${index}`}
-                      className="truncate rounded-[3px] border border-ink/10 bg-paper px-2 py-1.5 font-mono text-[7px] text-ink/55"
+                      type="button"
+                      onClick={() => setAccepted((current) => ({ ...current, [index]: !rejected }))}
+                      className={`flex w-full items-center gap-2 truncate rounded-[3px] border px-2 py-1.5 text-left font-mono text-[7px] transition ${
+                        rejected
+                          ? "border-ink/10 bg-canvas text-ink/30 line-through"
+                          : "border-ink/10 bg-paper text-ink/55"
+                      }`}
                       title={subject}
                     >
-                      {operation.op} · {subject}
-                    </p>
+                      <span
+                        className={`grid size-3.5 shrink-0 place-items-center rounded-[3px] border ${
+                          rejected ? "border-ink/15" : "border-blue bg-blue-soft text-blue"
+                        }`}
+                      >
+                        {!rejected && <IconCheck size={9} stroke={2} />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{operation.op} · {subject}</span>
+                    </button>
                   );
                 })}
               </div>
             )}
-            <button className="button-primary mt-4 w-full justify-center" disabled={!patch} onClick={onApplyPatch}>
-              {t("workspace.reviewApplyPatch")}
+            <button
+              className="button-primary mt-4 w-full justify-center"
+              disabled={!patch || acceptedCount === 0}
+              onClick={() => onApplyPatch(buildAcceptedPatch(patch))}
+            >
+              {rejectedCount > 0
+                ? `${t("workspace.reviewApplyPatch")} (${acceptedCount})`
+                : t("workspace.reviewApplyPatch")}
             </button>
           </div>
             </>

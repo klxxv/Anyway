@@ -188,14 +188,14 @@ export function ResearchWorkspaceApp() {
   /** 阶段 3→4：应用 Agent 补丁后自动触发图编译器（不变式 + blockHash + 逻辑链 + BP）。 */
   const applyAgentPatch = useCallback(
     async (patch: PluginGraphPatch) => {
-      setReviewJobId(null);
       setPdfDialogOpen(false);
       workspace.applyGraphPatch(patch);
       setPdfCompileResult(null);
       setPdfCompileError("");
       showNotice(t("agent.patchApplied"));
       try {
-        const result = await compileProject(workspace.project);
+        // 必须在 applyGraphPatch 后读取最新 project，避免闭包持有旧图。
+        const result = await compileProject(workspace.projectRef.current);
         setPdfCompileResult(result);
         setHighlightChain({
           nodeIds: result.logicChain.nodeIds,
@@ -205,7 +205,7 @@ export function ResearchWorkspaceApp() {
       } catch (compileError) {
         const message = compileError instanceof Error ? compileError.message : String(compileError);
         setPdfCompileError(message);
-        console.warn("Graph compile failed", compileError);
+        showNotice(t("agent.compileFailed", { error: message }));
       }
     },
     [showNotice, t, workspace],
@@ -507,7 +507,8 @@ export function ResearchWorkspaceApp() {
         isEditableShortcutTarget(event.target) ||
         settingsOpen ||
         pluginStoreOpen ||
-        composer
+        composer ||
+        reviewJobId
       ) {
         return;
       }
@@ -561,6 +562,7 @@ export function ResearchWorkspaceApp() {
     exportProject,
     pluginStoreOpen,
     preferences.shortcuts,
+    reviewJobId,
     settingsOpen,
     toggleConnectMode,
     workspace,
@@ -881,9 +883,13 @@ export function ResearchWorkspaceApp() {
           onGenerateSshKey={() => void generateGitHubKey()}
           onUploadSshKey={(path) => void uploadGitHubKey(path)}
           onSaveNow={() => void saveGitSnapshot()}
-          onApplyPatch={() => {
-            if (!gitPatch) return;
-            workspace.applyGraphPatch(gitPatch);
+          onApplyPatch={(acceptedPatch) => {
+            if (!acceptedPatch) return;
+            workspace.applyGraphPatch(acceptedPatch);
+            // 消费补丁：应用后从 snapshot 中移除，防止重复应用。
+            setGitSnapshot((current) =>
+              current ? { ...current, graphPatch: undefined } : null,
+            );
             showNotice(t("workspace.patchApplied"));
           }}
         />
