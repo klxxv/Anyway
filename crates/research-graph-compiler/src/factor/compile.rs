@@ -301,6 +301,18 @@ pub fn compile_factor_graph(project: &Value) -> FactorGraph {
             ));
         }
 
+        // 自环非 supports 因子：避免变量邻接表中重复变量 [x,x] 导致 BP
+        // 消息槽位歧义；此等因子对同一变量发送两个消息,语义无意义。
+        if source == target && factor_kind != FactorKind::Supports {
+            graph.diagnostics.push(FactorDiagnostic::new(
+                "self-loop-non-supports",
+                Severity::Error,
+                &location,
+                "self-loop edge must be of type 'supports'",
+            ));
+            continue;
+        }
+
         let kind = factor_kind;
         let mut factor = Factor {
             kind,

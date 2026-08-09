@@ -22,8 +22,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// 被排除出语义哈希的键（§3 边界定案 E4/E5 + 规则 6/7）。
 /// Keys excluded from semantic hashing: review trail, timestamps, status,
 /// layout, evidence locator details, and the hanging `evidenceIds` field.
+///
+/// `blockHash` and `fileHash` are also excluded because they are derived
+/// fields, not part of the semantic claim; otherwise hashing would become
+/// circular/git-style self-encoding would fail.
 const EXCLUDED_KEYS: &[&str] = &[
+    "blockHash",
+    "contentRootHash",
     "derivedFrom",
+    "fileHash",
     "review",
     "status",
     "layout",
