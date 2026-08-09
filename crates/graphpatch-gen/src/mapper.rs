@@ -35,21 +35,24 @@ pub fn map_entity_kind_to_node(kind: EntityKind) -> &'static str {
 }
 
 /// RelationType 到 Research Edge Type 的映射。
-pub fn map_relation_type_to_edge(rt: &str) -> &str {
+///
+/// 未知 relation 不再默认提升为 `supports`，而是返回 `None`，
+/// 由调用方显式处理或拒绝。
+pub fn map_relation_type_to_edge(rt: &str) -> Option<&'static str> {
     match rt {
-        "supports" => "supports",
-        "contradicts" => "contradicts",
-        "causes" => "causes",
-        "measures" => "measures",
-        "uses" => "uses",
-        "derived_from" => "derived_from",
-        "correlates" => "correlates",
-        "depends_on" => "depends_on",
-        "part_of" => "part_of",
-        "controls" => "controls",
-        "mediates" => "mediates",
-        "moderates" => "moderates",
-        _ => "supports",
+        "supports" => Some("supports"),
+        "contradicts" => Some("contradicts"),
+        "causes" => Some("causes"),
+        "measures" => Some("measures"),
+        "uses" => Some("uses"),
+        "derived_from" => Some("derived_from"),
+        "correlates" => Some("correlates"),
+        "depends_on" => Some("depends_on"),
+        "part_of" => Some("part_of"),
+        "controls" => Some("controls"),
+        "mediates" => Some("mediates"),
+        "moderates" => Some("moderates"),
+        _ => None,
     }
 }
 
@@ -726,5 +729,14 @@ mod tests {
         assert_eq!(map_entity_kind_to_node(EntityKind::Experiment), "experiment");
         assert_eq!(map_entity_kind_to_node(EntityKind::Variable), "variable");
         assert_eq!(map_entity_kind_to_node(EntityKind::Evidence), "evidence");
+    }
+
+    #[test]
+    fn unknown_relation_is_rejected() {
+        assert_eq!(map_relation_type_to_edge("supports"), Some("supports"));
+        assert_eq!(map_relation_type_to_edge("contradicts"), Some("contradicts"));
+        assert_eq!(map_relation_type_to_edge("causes"), Some("causes"));
+        assert_eq!(map_relation_type_to_edge("unknown_relation"), None);
+        assert_eq!(map_relation_type_to_edge("supports_not"), None);
     }
 }

@@ -429,6 +429,36 @@ Table 1: Comparison of convergence rates across optimizers.\n\n\
     }
 
     #[test]
+    fn ocr_fallback_reuses_extracted_text_without_re_parsing() {
+        let sufficient = ExtractedText {
+            full_text: "a".repeat(1000),
+            pages: vec![PageText { page_number: 1, text: "a".repeat(1000), char_count: 1000 }],
+            total_chars: 1000,
+        };
+        let result = PdfPipeline::ocr_fallback(&sufficient).expect("sufficient text needs no OCR");
+        assert_eq!(result.total_chars, sufficient.total_chars);
+
+        let sparse = ExtractedText {
+            full_text: "short".into(),
+            pages: vec![PageText { page_number: 1, text: "short".into(), char_count: 5 }],
+            total_chars: 5,
+        };
+        assert!(PdfPipeline::ocr_fallback(&sparse).is_err());
+    }
+
+    #[test]
+    fn build_structured_document_from_extracted_text_preserves_ocr_state() {
+        let extracted = ExtractedText {
+            full_text: "a".repeat(1000),
+            pages: vec![PageText { page_number: 1, text: "a".repeat(1000), char_count: 1000 }],
+            total_chars: 1000,
+        };
+        let doc = PdfPipeline::build_structured_document(extracted, true, Some(0.95));
+        assert!(doc.ocr_triggered);
+        assert_eq!(doc.ocr_confidence, Some(0.95));
+    }
+
+    #[test]
     fn binary_search_correctness() {
         let spans = vec![
             ParagraphSpan { paragraph_id: "p1".into(), section_id: "s1".into(), start_offset: 0, end_offset: 100 },
