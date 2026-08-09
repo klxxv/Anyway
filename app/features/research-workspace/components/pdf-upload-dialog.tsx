@@ -11,7 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../i18n/provider";
 import type { AgentJobStage, AgentJobStatus } from "../../../plugins/agent-contracts";
-import { AGENT_STAGE_LABELS, isJobTerminal } from "../../../plugins/agent-contracts";
+import { isJobTerminal } from "../../../plugins/agent-contracts";
 import {
   cancelPdfJob,
   getPdfJobStatus,
@@ -37,12 +37,12 @@ export function jobStageIndex(state: AgentJobStage): number {
   return PDF_PIPELINE_STAGES.indexOf(state);
 }
 
-/** 纯进度推导：done/total 检查点 + 百分比 + 当前阶段标签 / Pure progress derivation. */
+/** 纯进度推导：done/total 检查点 + 百分比 + 当前阶段键 / Pure progress derivation. */
 export function deriveUploadProgress(status: AgentJobStatus): {
   done: number;
   total: number;
   percent: number;
-  stageLabel: string;
+  stage: AgentJobStage;
 } {
   const [done, total] = status.progress;
   const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
@@ -50,7 +50,7 @@ export function deriveUploadProgress(status: AgentJobStatus): {
     done,
     total,
     percent,
-    stageLabel: AGENT_STAGE_LABELS[status.state] ?? status.state,
+    stage: status.state,
   };
 }
 
@@ -259,7 +259,7 @@ export function PdfUploadDialog({
               <div>
                 <div className="flex items-baseline justify-between">
                   <p className="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">
-                    {t("agent.stage")} · {AGENT_STAGE_LABELS[status.state]}
+                    {t("agent.stage")} · {t(`agent.stage.${status.state}`)}
                   </p>
                   {progress && (
                     <p className="font-serif text-[9px] text-ink/50">
@@ -303,7 +303,7 @@ export function PdfUploadDialog({
                       >
                         {done && !active ? <IconCheck size={9} stroke={2} /> : index + 1}
                       </span>
-                      {AGENT_STAGE_LABELS[stage]}
+                      {t(`agent.stage.${stage}`)}
                     </li>
                   );
                 })}

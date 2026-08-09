@@ -24,7 +24,6 @@ import test from "node:test";
 import {
   AGENT_CAPABILITIES,
   AGENT_PERMISSIONS,
-  AGENT_STAGE_LABELS,
   PDF_CANVAS_AGENT_MANIFEST,
   isJobAwaitingReview,
   isJobTerminal,
@@ -32,6 +31,7 @@ import {
   type AgentJobStatus,
   type ReviewUIContract,
 } from "../app/plugins/agent-contracts";
+import { localeCatalog } from "../app/i18n/catalog";
 
 import type { PluginGraphPatch } from "../app/plugins/contracts";
 
@@ -277,7 +277,7 @@ test("Job 状态机——终态与审阅态检测正确", () => {
   assert.equal(isJobAwaitingReview("created"), false);
 });
 
-test("所有 Agent Job 阶段都有中英文标签", () => {
+test("所有 Agent Job 阶段都在 i18n catalog 中有中英标签", () => {
   const stages: AgentJobStage[] = [
     "created",
     "validating_file",
@@ -293,9 +293,13 @@ test("所有 Agent Job 阶段都有中英文标签", () => {
   ];
 
   for (const stage of stages) {
-    const label = AGENT_STAGE_LABELS[stage];
-    assert.ok(label, `Stage ${stage} must have a label`);
-    assert.ok(label.includes(" / "), `Stage ${stage} label must be bilingual`);
+    const key = `agent.stage.${stage}` as const;
+    const en = localeCatalog.en[key];
+    const zh = localeCatalog["zh-CN"][key];
+    assert.ok(en, `Stage ${stage} must have an English label`);
+    assert.ok(zh, `Stage ${stage} must have a Chinese label`);
+    assert.ok(en.length > 0);
+    assert.ok(zh.length > 0);
   }
 });
 

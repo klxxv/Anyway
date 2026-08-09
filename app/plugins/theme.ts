@@ -34,15 +34,20 @@ export function sanitizeCssColor(value: string): string | undefined {
 /** Maps the portable theme token contract onto the host's semantic CSS layer. */
 export function themeCssVariables(theme: ThemeManifest | null): ThemeVariables | undefined {
   if (!theme) return undefined;
-  const base = {
-    panel: sanitizeCssColor(theme.colors.panel),
-    canvas: sanitizeCssColor(theme.colors.canvas),
-    text: sanitizeCssColor(theme.colors.text),
-    muted: sanitizeCssColor(theme.colors.muted),
-    accent: sanitizeCssColor(theme.colors.accent),
-    border: sanitizeCssColor(theme.colors.border),
-  };
-  if (Object.values(base).some((value) => value === undefined)) {
+  const panel = sanitizeCssColor(theme.colors.panel);
+  const canvas = sanitizeCssColor(theme.colors.canvas);
+  const text = sanitizeCssColor(theme.colors.text);
+  const muted = sanitizeCssColor(theme.colors.muted);
+  const accent = sanitizeCssColor(theme.colors.accent);
+  const border = sanitizeCssColor(theme.colors.border);
+  if (
+    panel === undefined ||
+    canvas === undefined ||
+    text === undefined ||
+    muted === undefined ||
+    accent === undefined ||
+    border === undefined
+  ) {
     return undefined;
   }
   const toast = theme.components?.toast;
@@ -51,33 +56,33 @@ export function themeCssVariables(theme: ThemeManifest | null): ThemeVariables |
   const fallback = (value: string | undefined, defaultValue: string) =>
     value === undefined ? defaultValue : (sanitizeCssColor(value) ?? defaultValue);
   return {
-    "--color-paper": base.panel,
-    "--color-canvas": base.canvas,
-    "--color-ink": base.text,
-    "--color-blue": base.accent,
-    "--color-blue-soft": `color-mix(in srgb, ${base.accent} 16%, ${base.panel})`,
-    "--color-olive": base.muted,
-    "--toast-background": fallback(toast?.background, base.panel),
-    "--toast-border": fallback(toast?.border, base.border),
-    "--toast-text": fallback(toast?.text, base.text),
+    "--color-paper": panel,
+    "--color-canvas": canvas,
+    "--color-ink": text,
+    "--color-blue": accent,
+    "--color-blue-soft": `color-mix(in srgb, ${accent} 16%, ${panel})`,
+    "--color-olive": muted,
+    "--toast-background": fallback(toast?.background, panel),
+    "--toast-border": fallback(toast?.border, border),
+    "--toast-text": fallback(toast?.text, text),
     "--toast-shadow": fallback(toast?.shadow, "0 5px 18px rgb(28 31 35 / 10%)"),
-    "--minimap-background": fallback(miniMap?.background, base.panel),
-    "--minimap-border": fallback(miniMap?.border, base.border),
+    "--minimap-background": fallback(miniMap?.background, panel),
+    "--minimap-border": fallback(miniMap?.border, border),
     "--minimap-mask": fallback(
       miniMap?.mask,
-      `color-mix(in srgb, ${base.canvas} 72%, transparent)`,
+      `color-mix(in srgb, ${canvas} 72%, transparent)`,
     ),
-    "--minimap-selected-node": fallback(miniMap?.selectedNode, base.accent),
-    "--minimap-evidence-node": fallback(miniMap?.evidenceNode, base.muted),
-    "--minimap-node": fallback(miniMap?.node, base.border),
-    "--minimap-relation": fallback(miniMap?.relation, base.muted),
-    "--radial-menu-background": fallback(radialMenu?.background, base.panel),
-    "--radial-menu-border": fallback(radialMenu?.border, base.border),
-    "--radial-menu-divider": fallback(radialMenu?.divider, base.border),
-    "--radial-menu-text": fallback(radialMenu?.text, base.text),
-    "--radial-menu-active": fallback(radialMenu?.active, base.accent),
-    "--radial-menu-center-background": fallback(radialMenu?.centerBackground, base.panel),
-    "--radial-menu-center-text": fallback(radialMenu?.centerText, base.accent),
+    "--minimap-selected-node": fallback(miniMap?.selectedNode, accent),
+    "--minimap-evidence-node": fallback(miniMap?.evidenceNode, muted),
+    "--minimap-node": fallback(miniMap?.node, border),
+    "--minimap-relation": fallback(miniMap?.relation, muted),
+    "--radial-menu-background": fallback(radialMenu?.background, panel),
+    "--radial-menu-border": fallback(radialMenu?.border, border),
+    "--radial-menu-divider": fallback(radialMenu?.divider, border),
+    "--radial-menu-text": fallback(radialMenu?.text, text),
+    "--radial-menu-active": fallback(radialMenu?.active, accent),
+    "--radial-menu-center-background": fallback(radialMenu?.centerBackground, panel),
+    "--radial-menu-center-text": fallback(radialMenu?.centerText, accent),
     "--radial-menu-shadow": fallback(radialMenu?.shadow, "0 9px 34px rgb(28 31 35 / 8%)"),
     "--radial-menu-active-shadow": fallback(radialMenu?.activeShadow, "rgb(40 87 219 / 20%)"),
   };

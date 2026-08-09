@@ -14,6 +14,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { translate } from "../app/i18n/catalog";
 import type { AgentJobStatus } from "../app/plugins/agent-contracts";
 import type { PluginGraphPatch } from "../app/plugins/contracts";
 import { patchOperationsOf } from "../app/platform/agent-client";
@@ -93,7 +94,7 @@ test("deriveUploadProgress 正确推导检查点与百分比", () => {
   assert.equal(progress.done, 2);
   assert.equal(progress.total, 7);
   assert.equal(progress.percent, 29);
-  assert.match(progress.stageLabel, /extracting/i);
+  assert.equal(progress.stage, "extracting_text");
 
   // 完成后 100%
   const done = deriveUploadProgress(
@@ -188,7 +189,7 @@ test("AgentJobStatus 序列化契约与 Rust PdfJobStatus 对齐（camelCase）"
   assert.equal(patchOperationsOf(status).length, 1);
 
   // 阶段名在 i18n catalog 中有对应键
-  assert.ok((await import("../app/i18n/catalog")).localeCatalog.en["agent.stage.awaiting_review"]);
+  assert.ok(translate("en", "agent.stage.awaiting_review").length > 0);
 });
 
 test("buildAcceptedPatch 全部拒绝返回 null，applySelected 应据此发送 reject", () => {
