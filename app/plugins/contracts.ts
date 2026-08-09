@@ -1,7 +1,6 @@
 import type {
   EdgeStyleContent,
   EdgeStyleManifest,
-  PluginManifest,
   ThemeManifest,
 } from "../lib/research-types";
 
