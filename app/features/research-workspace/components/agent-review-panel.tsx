@@ -61,11 +61,11 @@ export function buildAcceptedPatch(
   return { ...patch, operations };
 }
 
-/** 纯函数：统计被接受的操作数 / Count accepted operations. */
+/** 纯函数：统计被明确接受的操作数 / Count explicitly accepted operations. */
 export function countAccepted(decisions: Record<number, ReviewDecision>, total: number): number {
   let count = 0;
   for (let index = 0; index < total; index += 1) {
-    if (!decisions[index] || decisions[index].accept) count += 1;
+    if (decisions[index]?.accept) count += 1;
   }
   return count;
 }
@@ -129,7 +129,7 @@ export function AgentReviewPanel({
 
   const setEdit = useCallback((index: number, field: string, value: string) => {
     setDecisions((current) => {
-      const previous = current[index] ?? { accept: true };
+      const previous = current[index] ?? { accept: false };
       return { ...current, [index]: { ...previous, edits: { ...previous.edits, [field]: value } } };
     });
   }, []);
@@ -207,7 +207,7 @@ export function AgentReviewPanel({
             ) : (
               <div className="space-y-2">
                 {patch.operations.map((operation, index) => {
-                  const decision = decisions[index] ?? { accept: true };
+                  const decision = decisions[index] ?? { accept: false };
                   const editing = decision.accept;
                   const isNode = operation.op === "add-node";
                   const isEdge = operation.op === "add-edge";

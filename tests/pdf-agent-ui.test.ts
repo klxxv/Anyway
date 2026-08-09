@@ -107,25 +107,27 @@ test("deriveUploadProgress 正确推导检查点与百分比", () => {
   assert.equal(empty.percent, 0);
 });
 
-test("buildAcceptedPatch 过滤拒绝项并保留默认接受", () => {
-  // 默认全部接受
-  const all = buildAcceptedPatch(samplePatch, {});
-  assert.ok(all);
-  assert.equal(all!.operations.length, 3);
+test("buildAcceptedPatch 默认拒绝，仅保留明确接受项", () => {
+  // 默认全部拒绝
+  const none = buildAcceptedPatch(samplePatch, {});
+  assert.equal(none, null);
 
-  // 拒绝 index 1
-  const partial = buildAcceptedPatch(samplePatch, { 1: { accept: false } });
+  // 明确接受 index 0 和 2
+  const partial = buildAcceptedPatch(samplePatch, {
+    0: { accept: true },
+    2: { accept: true },
+  });
   assert.ok(partial);
   assert.equal(partial!.operations.length, 2);
   assert.ok(partial!.operations.every((op) => op.op !== "add-node" || op.node.id !== "pdf-p1"));
 
-  // 全部拒绝 → null
-  const none = buildAcceptedPatch(samplePatch, {
+  // 全部明确拒绝 → null
+  const allRejected = buildAcceptedPatch(samplePatch, {
     0: { accept: false },
     1: { accept: false },
     2: { accept: false },
   });
-  assert.equal(none, null);
+  assert.equal(allRejected, null);
 });
 
 test("buildAcceptedPatch 应用就地编辑（标题/备注）", () => {
@@ -142,9 +144,10 @@ test("buildAcceptedPatch 应用就地编辑（标题/备注）", () => {
   if (edge?.op === "add-edge") assert.equal(edge.edge.note, "revised note");
 });
 
-test("countAccepted 统计接受项（缺省视为接受）", () => {
-  assert.equal(countAccepted({}, 3), 3);
-  assert.equal(countAccepted({ 1: { accept: false } }, 3), 2);
+test("countAccepted 只统计明确接受项（缺省视为拒绝）", () => {
+  assert.equal(countAccepted({}, 3), 0);
+  assert.equal(countAccepted({ 1: { accept: true } }, 3), 1);
+  assert.equal(countAccepted({ 0: { accept: true }, 1: { accept: true }, 2: { accept: true } }, 3), 3);
   assert.equal(countAccepted({ 0: { accept: false }, 1: { accept: false }, 2: { accept: false } }, 3), 0);
 });
 
