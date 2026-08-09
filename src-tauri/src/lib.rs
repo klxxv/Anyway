@@ -1,7 +1,6 @@
 pub mod agent_commands;
 pub mod agent_host;
 pub mod deepseek_client;
-pub mod graph_algorithms;
 pub mod graph_compiler;
 pub mod llm_client;
 pub mod llm_plugin;

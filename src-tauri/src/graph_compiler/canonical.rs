@@ -13,6 +13,7 @@ use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::io::Write as _;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::graph_compiler::invariants::check_invariants;
@@ -104,7 +105,30 @@ pub fn canonicalize(value: &Value) -> Vec<u8> {
 
 /// 带 JSON 转义的带引号字符串字节 / Quoted, JSON-escaped string bytes.
 fn quoted_string(text: &str) -> Vec<u8> {
-    serde_json::to_vec(&Value::String(text.to_string())).expect("string serialization cannot fail")
+    serde_json::to_vec(&Value::String(text.to_string())).unwrap_or_else(|_| {
+        // 防御性回退：serde_json 对合法 String 不应失败，但若失败则手动转义，
+        // 避免 panic 路径。
+        let mut out = Vec::with_capacity(text.len() + 2);
+        out.push(b'"');
+        for ch in text.chars() {
+            match ch {
+                '"' => out.extend_from_slice(b"\\\""),
+                '\\' => out.extend_from_slice(b"\\\\"),
+                '\n' => out.extend_from_slice(b"\\n"),
+                '\r' => out.extend_from_slice(b"\\r"),
+                '\t' => out.extend_from_slice(b"\\t"),
+                c if (c as u32) < 0x20 => {
+                    let _ = write!(out, "\\u{:04x}", c as u32);
+                }
+                c => {
+                    let mut buf = [0; 4];
+                    out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                }
+            }
+        }
+        out.push(b'"');
+        out
+    })
 }
 
 // ---------------------------------------------------------------------------

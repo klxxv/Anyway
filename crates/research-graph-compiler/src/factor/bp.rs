@@ -11,7 +11,8 @@
 //! - net_belief = σ(support_logit − refutation_logit)（0.5 = 中性）
 //! - conflict = support × refutation（两通道同时激活程度）
 
-use super::{Factor, FactorGraph, FactorKind};
+use super::{Factor, FactorDiagnostic, FactorGraph, FactorKind};
+use crate::invariant::Severity;
 use serde::Serialize;
 
 /// 信念状态 / Belief state (spec §4).
@@ -120,6 +121,8 @@ pub enum BpStatus {
     Unstable,
     /// 树 BP 收到环图（应改走 loopy，GC08-12）。
     TreeOnCyclicGraph,
+    /// 因子图包含零变量或未知种类因子，无法运行 BP。
+    InvalidFactorGraph,
 }
 
 /// BP 结果 / BP result.
@@ -135,6 +138,8 @@ pub struct BpResult {
     /// 最终残差（max |Δmessage|）。
     pub residual: f64,
     pub status: BpStatus,
+    /// 运行期诊断（如零变量因子）。
+    pub diagnostics: Vec<FactorDiagnostic>,
 }
 
 /// 因子消息权重：证据因子取 w=η·λ；逻辑因子（implies/and/or/等价）取 1；
@@ -162,6 +167,23 @@ fn factor_messages(factor: &Factor, nets: &[f64]) -> Vec<(f64, f64)> {
     let weight = factor_weight(factor);
     let n = factor.variables.len();
     let mut messages = vec![(0.0, 0.0); n];
+    // 防御性 guard：零变量因子或不足二元因子不触发索引 panic。
+    if n == 0 {
+        return messages;
+    }
+    let needs_two = matches!(
+        factor.kind,
+        FactorKind::Supports
+            | FactorKind::StatisticalTest
+            | FactorKind::MetaEvidence
+            | FactorKind::Contradicts
+            | FactorKind::Implies
+            | FactorKind::Equivalent
+            | FactorKind::DependsOn
+    );
+    if needs_two && n < 2 {
+        return messages;
+    }
     // 差值 m → 双通道拆分（m≥0 进支持，m<0 进反驳）。
     let split = |m: f64| if m >= 0.0 { (m, 0.0) } else { (0.0, -m) };
     match factor.kind {
@@ -206,6 +228,38 @@ fn factor_messages(factor: &Factor, nets: &[f64]) -> Vec<(f64, f64)> {
     messages
 }
 
+/// 校验因子是否满足 BP 运行最小元数要求。
+fn validate_factor_for_bp(index: usize, factor: &Factor) -> Option<FactorDiagnostic> {
+    let (required, name) = match factor.kind {
+        FactorKind::And | FactorKind::Or | FactorKind::Interaction => (1, "and/or/interaction"),
+        FactorKind::Supports
+        | FactorKind::StatisticalTest
+        | FactorKind::MetaEvidence
+        | FactorKind::Contradicts
+        | FactorKind::Implies
+        | FactorKind::Equivalent
+        | FactorKind::DependsOn => (2, "binary"),
+    };
+    if factor.variables.len() < required {
+        let entity = factor
+            .source_edge
+            .as_deref()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("factor:{index}"));
+        Some(FactorDiagnostic::new(
+            "bp-invalid-factor",
+            Severity::Error,
+            &entity,
+            format!(
+                "{name} factor has {} variables, needs at least {required}",
+                factor.variables.len()
+            ),
+        ))
+    } else {
+        None
+    }
+}
+
 /// 邻接（确定性构建）：变量 → (因子, 因子内位置)；因子 → 变量索引。
 struct Adjacency {
     var_to_factor: Vec<Vec<(usize, usize)>>,
@@ -243,6 +297,23 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
     let var_count = graph.variables.len();
     let factor_count = graph.factors.len();
     let adjacency = Adjacency::build(graph);
+
+    let diagnostics: Vec<FactorDiagnostic> = graph
+        .factors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| validate_factor_for_bp(i, f))
+        .collect();
+    if !diagnostics.is_empty() {
+        return BpResult {
+            beliefs: Vec::new(),
+            converged: false,
+            iterations: 0,
+            residual: 0.0,
+            status: BpStatus::InvalidFactorGraph,
+            diagnostics,
+        };
+    }
 
     // 消息表:msg_vf[u][k] ↔ var_to_factor[u][k];msg_fv[f][pos]。
     // 内层必须按各变量度数分配——hub 变量的度数可以超过变量总数,
@@ -402,6 +473,7 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
         iterations: 2,
         residual: 0.0,
         status,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -409,6 +481,23 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
 pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpResult {
     let var_count = graph.variables.len();
     let adjacency = Adjacency::build(graph);
+
+    let diagnostics: Vec<FactorDiagnostic> = graph
+        .factors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| validate_factor_for_bp(i, f))
+        .collect();
+    if !diagnostics.is_empty() {
+        return BpResult {
+            beliefs: Vec::new(),
+            converged: false,
+            iterations: 0,
+            residual: 0.0,
+            status: BpStatus::InvalidFactorGraph,
+            diagnostics,
+        };
+    }
 
     // 同树形 BP:内层按各变量度数分配,而不是变量总数(见上方注释)。
     let msg_vf: Vec<Vec<(f64, f64)>> = (0..var_count)
@@ -521,6 +610,7 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
         residual,
         status,
         beliefs,
+        diagnostics: Vec::new(),
     }
 }
 

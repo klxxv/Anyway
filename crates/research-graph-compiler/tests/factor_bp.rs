@@ -664,11 +664,30 @@ fn gc10_12_extreme_llr_stays_finite() {
     }
 }
 
-#[test]
-fn uninformative_and_from_probabilities_agree() {
-    let state = BeliefState::from_probabilities(0.5, 0.5);
-    assert_eq!(state, BeliefState::uninformative());
-}
+    #[test]
+    fn zero_variable_factor_does_not_panic() {
+        let mut graph = FactorGraph::default();
+        graph.variables.push(research_graph_compiler::FactorVariable::boolean("a"));
+        graph.factors.push(research_graph_compiler::Factor::logical(
+            research_graph_compiler::FactorKind::And,
+            vec![],
+            None,
+        ));
+        let result = tree_belief_propagation(&graph);
+        assert!(!result.converged);
+        assert_eq!(result.status, BpStatus::InvalidFactorGraph);
+        assert!(
+            result.diagnostics.iter().any(|d| d.code == "bp-invalid-factor"),
+            "expected diagnostic for zero-variable factor"
+        );
+    }
+
+    #[test]
+    fn uninformative_and_from_probabilities_agree() {
+        let state = BeliefState::from_probabilities(0.5, 0.5);
+        assert_eq!(state, BeliefState::uninformative());
+    }
+
 
 #[test]
 fn sigmoid_is_stable_and_bounded() {

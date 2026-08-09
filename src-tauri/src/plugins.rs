@@ -1014,8 +1014,18 @@ fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPlugin, String> {
-    let installed = install_archive(&app, Path::new(&path))?;
     let base = plugin_base(&app)?;
+    let allowed = base.join("packages");
+    let input = Path::new(&path)
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve plugin path: {error}"))?;
+    let normalized_allowed = allowed.canonicalize().unwrap_or(allowed);
+    if !input.starts_with(&normalized_allowed) {
+        return Err(
+            "Plugin path must be inside the configured packages directory".to_string(),
+        );
+    }
+    let installed = install_archive(&app, &input)?;
     clear_removed_plugin(
         &base,
         &installed.manifest.metadata.id,
@@ -1802,7 +1812,7 @@ spec:
                     "theme.json": theme_hash
                 }
             });
-            let payload = crate::signing::manifest_payload(&manifest_value);
+            let payload = crate::signing::manifest_payload(&manifest_value).expect("manifest payload");
             let signature_b64 = sign(&BASE64.encode(&payload));
             yaml.push_str(&format!("signature: {signature_b64}\n"));
         }
@@ -2017,7 +2027,7 @@ spec:
                 "contributes": null
             }
         });
-        let payload = crate::signing::manifest_payload(&original_value);
+        let payload = crate::signing::manifest_payload(&original_value).expect("manifest payload");
         let signature: Signature = signing_key.sign(&payload);
         let signature_b64 = BASE64.encode(signature.to_bytes());
         let theme_hash = theme_payload_hash();
@@ -2220,7 +2230,7 @@ spec:
                 "contributes": null
             }
         });
-        let payload = crate::signing::manifest_payload(&manifest_value);
+        let payload = crate::signing::manifest_payload(&manifest_value).expect("manifest payload");
         let signature: Signature = signing_key.sign(&payload);
         let yaml = format!(
             r#"apiVersion: researchcanvas.dev/v1alpha1
