@@ -404,7 +404,12 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
                           </p>
                           {!compatibility.compatible && (
                             <p className="mt-1 font-serif text-[8px] text-alert">
-                              {compatibility.issues.join(" · ")}
+                              {compatibility.issues.map((issue, index) => (
+                                <span key={issue.key}>
+                                  {index > 0 && " · "}
+                                  {t(issue.key, issue.params ?? {})}
+                                </span>
+                              ))}
                             </p>
                           )}
                           {superseded && (
