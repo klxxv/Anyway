@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Module-level long-press broadcast so the canvas gesture system can signal
@@ -38,24 +38,20 @@ const INTERACTIVE_SELECTOR = [
 // Component
 // ---------------------------------------------------------------------------
 
+function isTouchDevice() {
+  if (typeof window === "undefined") return false;
+  const mql = window.matchMedia("(hover: none), (pointer: coarse)");
+  return mql.matches;
+}
+
 export function CustomCursor() {
   const [position, setPosition] = useState({ x: -100, y: -100 });
   const [hover, setHover] = useState(false);
   const [visible, setVisible] = useState(false);
   const [longPress, setLongPress] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-
-  // Disable on touch devices
-  useEffect(() => {
-    const mql = window.matchMedia("(hover: none), (pointer: coarse)");
-    if (mql.matches) {
-      setEnabled(false);
-      return;
-    }
-    const onChange = (e: MediaQueryListEvent) => setEnabled(!e.matches);
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, []);
+  // Disable on touch devices at mount time, avoiding a state transition inside
+  // an effect (which the React compiler/eslint flags as set-state-in-effect).
+  const [enabled] = useState(() => !isTouchDevice());
 
   // Add/remove `custom-cursor-active` class on <html> to hide default cursor
   useEffect(() => {
