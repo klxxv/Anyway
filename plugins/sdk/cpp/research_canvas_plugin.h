@@ -13,6 +13,10 @@
 // 主机把 UTF-8 JSON 写入返回的访客内存区间。
 MYC_EXPORT std::int32_t myc_alloc(std::int32_t size);
 
+// Free memory previously returned by `myc_alloc`; `size` must match the allocation.
+// 释放 `myc_alloc` 返回的内存；`size` 必须与分配时一致。
+MYC_EXPORT void myc_free(std::int32_t pointer, std::int32_t size);
+
 // Return `(output_pointer << 32) | output_length`; output must be UTF-8 JSON.
 // 返回 `(输出指针 << 32) | 输出长度`；输出必须是 UTF-8 JSON。
 MYC_EXPORT std::uint64_t myc_run(std::int32_t input_pointer, std::int32_t input_length);
