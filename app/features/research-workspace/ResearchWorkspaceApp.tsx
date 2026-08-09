@@ -931,6 +931,7 @@ export function ResearchWorkspaceApp() {
           onClose={() => setReviewJobId(null)}
           onApply={(patch) => void applyAgentPatch(patch)}
           onReject={rejectAgentPatch}
+          onRollback={workspace.undo}
         />
       )}
       {composer && (
