@@ -16,6 +16,7 @@ export type ResolvedPluginContextMenuAction = {
   label: string;
   icon: PluginContextMenuIcon;
   plugin: PluginReference;
+  capability: string;
 };
 
 /**
@@ -48,6 +49,7 @@ export function contextMenuContributionsFromPlugins(
         label: item.label.trim(),
         icon: item.icon ?? "sparkles",
         plugin: pluginReference(plugin),
+        capability: "context-menu.contribute",
       }));
   });
 }

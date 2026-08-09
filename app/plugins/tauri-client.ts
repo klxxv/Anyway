@@ -37,16 +37,22 @@ export async function uninstallMycPlugin(plugin: PluginReference): Promise<void>
   });
 }
 
-/** Executes an installed WASM plugin inside the native capability sandbox. */
+/**
+ * Executes an installed WASM plugin inside the native capability sandbox.
+ * `capability` is forwarded to the host so it can verify the invoked operation
+ * against the plugin manifest instead of trusting the frontend alone.
+ */
 export async function runAnalysisPlugin<TContext = unknown, TPayload = unknown>(
   plugin: PluginReference,
   request: Omit<PluginCallEnvelope<TContext, TPayload>, "apiVersion">,
+  capability?: string,
 ): Promise<PluginExecutionResult> {
   if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<PluginExecutionResult>("execute_myc_plugin", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
+    capability,
     input: { apiVersion: PLUGIN_CALL_API_VERSION, ...request },
   });
 }

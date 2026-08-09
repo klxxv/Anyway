@@ -723,16 +723,20 @@ export function ResearchWorkspaceApp() {
             onRequestCreate={requestCreate}
             onPluginContextMenuAction={async (action, context: WorkspaceContextMenuState) => {
               try {
-                const result = await runAnalysisPlugin(action.plugin, {
-                  operation: "context-menu",
-                  context: {
-                    actionId: action.contributionId,
-                    scope: context.scope,
-                    targetId: context.targetId,
-                    projectId: workspace.project.id,
-                    position: { x: context.flowX, y: context.flowY },
+                const result = await runAnalysisPlugin(
+                  action.plugin,
+                  {
+                    operation: "context-menu",
+                    context: {
+                      actionId: action.contributionId,
+                      scope: context.scope,
+                      targetId: context.targetId,
+                      projectId: workspace.project.id,
+                      position: { x: context.flowX, y: context.flowY },
+                    },
                   },
-                });
+                  action.capability,
+                );
                 const output = JSON.stringify(result.output);
                 showNotice(
                   t("toast.pluginResult", {

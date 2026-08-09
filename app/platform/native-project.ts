@@ -121,6 +121,7 @@ export async function exportProjectWithPlugin(
   return invoke<string>("save_plugin_artifact", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
     format,
     path,
     data: Array.from(data),
@@ -140,6 +141,7 @@ export async function openFolderWorkspace(command: EnabledWorkspaceCommand) {
   const projects = await invoke<FolderProjectSummary[]>("scan_project_folder", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
     path,
   });
   return { path, projects };
@@ -152,6 +154,7 @@ export async function openGitWorkspace(command: EnabledWorkspaceCommand) {
   return invoke<GitWorkspaceSnapshot>("read_git_workspace", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
     path,
   });
 }
@@ -164,6 +167,7 @@ export async function initializeGitWorkspace(
   return invoke<GitWorkspaceSnapshot>("initialize_git_workspace", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
     path,
   });
 }
@@ -173,6 +177,7 @@ export async function readGitHubAccount(command: EnabledWorkspaceCommand) {
   return invoke<GitHubAccountStatus>("read_github_account", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
   });
 }
 
@@ -181,6 +186,7 @@ export async function loginGitHubAccount(command: EnabledWorkspaceCommand) {
   return invoke<GitHubAccountStatus>("login_github_account", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
   });
 }
 
@@ -192,6 +198,7 @@ export async function generateGitHubSshKey(
   return invoke<GitHubAccountStatus>("generate_github_ssh_key", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
     comment,
   });
 }
@@ -204,6 +211,7 @@ export async function uploadGitHubSshKey(
   return invoke<GitHubAccountStatus>("upload_github_ssh_key", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
     path,
   });
 }
@@ -218,6 +226,7 @@ export async function gitAutosaveProject(
   return invoke<GitWorkspaceSnapshot>("git_autosave_project", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    capability: command.capability,
     repoPath,
     projectPath: `.research-canvas/${projectFileStem(project)}.mycproj`,
     project,

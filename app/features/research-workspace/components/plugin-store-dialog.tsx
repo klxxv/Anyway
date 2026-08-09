@@ -466,6 +466,7 @@ export function PluginStoreDialog({ onClose }: { onClose: () => void }) {
                                   const result = await runAnalysisPlugin(
                                     pluginReference(plugin),
                                     { operation: "self-test" },
+                                    "analysis.run",
                                   );
                                   setSelfTestResults((current) => ({
                                     ...current,
