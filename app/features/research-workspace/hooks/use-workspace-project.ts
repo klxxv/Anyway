@@ -78,6 +78,8 @@ export function useWorkspaceProject(options: WorkspaceProjectOptions = {}) {
   const [past, setPast] = useState<WorkspaceHistory[]>([]);
   const [future, setFuture] = useState<WorkspaceHistory[]>([]);
   const hydrated = useRef(false);
+  /** 标记自本次 hydration 启动以来用户是否已编辑项目，防止陈旧持久化数据覆盖新状态。 */
+  const hasMutatedSinceHydration = useRef(false);
 
   // Latest-state refs keep callbacks stable while reading current snapshots.
   // 最新状态引用让回调保持稳定，同时读取当前快照。
@@ -95,11 +97,12 @@ export function useWorkspaceProject(options: WorkspaceProjectOptions = {}) {
   });
 
   useEffect(() => {
+    hasMutatedSinceHydration.current = false;
     const frame = window.requestAnimationFrame(() => {
       const restored = hydrateFromStorage(storageBackend, fixtureRef.current);
-      if (restored) {
+      if (restored && !hasMutatedSinceHydration.current) {
         setProject(restored);
-      } else {
+      } else if (!restored) {
         // 无数据或数据损坏时清理；原实现仅在解析失败时移除该键。
         // Clears missing or corrupt payloads; removeItem of an absent key is a no-op.
         storageBackend.clear();
@@ -140,6 +143,7 @@ export function useWorkspaceProject(options: WorkspaceProjectOptions = {}) {
     const draft = cloneProject(current);
     transform(draft);
     stampDraftRevision(draft, new Date().toISOString());
+    hasMutatedSinceHydration.current = true;
     setPast(pushHistoryEntry(pastRef.current, { project: before, label }));
     setFuture([]);
     setProject(draft);
