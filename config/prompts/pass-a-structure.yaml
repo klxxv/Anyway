@@ -16,6 +16,7 @@ system:
     {
       "title": "论文完整标题",
       "authors": ["作者1姓名 (机构)", "作者2姓名 (机构)"],
+      "year": 2024,
       "abstract": "摘要全文",
       "sections": [
         {
@@ -52,6 +53,7 @@ system:
     {
       "title": "Full paper title",
       "authors": ["Author Name (Affiliation)"],
+      "year": 2024,
       "abstract": "Full abstract text",
       "sections": [
         {

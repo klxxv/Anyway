@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 pub struct StructureExtraction {
     pub title: Option<String>,
     pub authors: Vec<String>,
+    /// 论文自身的发表年份(不是参考文献的年份)。
+    #[serde(default)]
+    pub year: Option<u32>,
     pub abstract_text: Option<String>,
     pub sections: Vec<SectionInfo>,
     pub references: Vec<ReferenceInfo>,

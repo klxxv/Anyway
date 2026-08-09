@@ -218,9 +218,9 @@ impl Pipeline {
     ) -> AgentCandidates {
         let title = structure.and_then(|s| s.title.clone());
         let authors = structure.map(|s| s.authors.clone()).unwrap_or_default();
-        let year = structure.and_then(|s| {
-            s.references.first().and_then(|r| r.year)
-        });
+        // 年份取自论文自身的发表年份字段;之前错取参考文献第一条的年份,
+        // 导致每份补丁的 EvidenceData.year 都是别人的年份。
+        let year = structure.and_then(|s| s.year);
         let entities_vec = entities.map(|e| e.entities.clone()).unwrap_or_default();
         let variable_registry = variable_fission
             .map(|v| v.variable_registry.clone())
@@ -318,4 +318,59 @@ pub trait LlmProvider: Send + Sync {
 
     /// 模型名称。
     fn model(&self) -> &str;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{ExtractionMeta, ReferenceInfo, StructureExtraction};
+
+    #[test]
+    fn build_candidates_takes_year_from_paper_not_first_reference() {
+        let structure = StructureExtraction {
+            title: Some("Paper".into()),
+            authors: vec!["A".into()],
+            year: Some(2026),
+            abstract_text: None,
+            sections: vec![],
+            references: vec![ReferenceInfo {
+                ref_id: "r1".into(),
+                raw: "[1] Old et al.".into(),
+                title: None,
+                authors: vec![],
+                year: Some(1999),
+                doi: None,
+            }],
+            meta: ExtractionMeta {
+                language: None,
+                total_pages: None,
+            },
+        };
+        let candidates = Pipeline::build_candidates(
+            "p1",
+            None,
+            Some(&structure),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(candidates.year, Some(2026));
+
+        // 无论文年份字段时保持 None,绝不回退到参考文献年份。
+        let structure_without_year = StructureExtraction {
+            year: None,
+            ..structure
+        };
+        let candidates = Pipeline::build_candidates(
+            "p1",
+            None,
+            Some(&structure_without_year),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(candidates.year, None);
+    }
 }
