@@ -16,3 +16,15 @@ pub struct IndexOptions {
     /// 是否构建证据反向索引（evidenceId → 引用实体）。
     pub with_evidence_index: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn index_stub_returns_default() {
+        let indexes = build_indexes(&Value::Object(Default::default()));
+        // GraphIndexes 当前是空结构；测试确保不会返回貌似填充的索引。
+        assert_eq!(format!("{:?}", indexes), "GraphIndexes");
+    }
+}

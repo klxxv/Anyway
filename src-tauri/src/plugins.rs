@@ -745,12 +745,13 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
 
 /// 将清单序列化为 JSON 并移除 signature 字段，用于签名验证。
 /// Serializes manifest to JSON with the signature field removed, for signature verification.
-fn manifest_to_json_without_signature(manifest: &MycPluginManifest) -> serde_json::Value {
-    let mut value = serde_json::to_value(manifest).expect("Manifest serialization is infallible");
+fn manifest_to_json_without_signature(manifest: &MycPluginManifest) -> Result<serde_json::Value, String> {
+    let mut value = serde_json::to_value(manifest)
+        .map_err(|error| format!("Manifest serialization failed: {error}"))?;
     if let Some(obj) = value.as_object_mut() {
         obj.remove("signature");
     }
-    value
+    Ok(value)
 }
 
 /// 原子移动到 `installed` 前校验并暂存归档 / Validates and stages an archive before atomically renaming it into `installed`.
@@ -773,11 +774,14 @@ fn walkdir_payloads(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-/// 仅读取归档中的 plugin.yml(含签名校验),供发现与安装共用。
-/// Reads only plugin.yml from an archive (with signature verification), shared by discovery and install.
-fn read_archive_manifest(base: &Path, archive_path: &Path) -> Result<MycPluginManifest, String> {
-    let file = File::open(archive_path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+/// 从已打开的归档中读取 plugin.yml(含签名校验),供发现与安装共用。
+/// Reads plugin.yml from an already-opened archive (with signature verification),
+/// shared by discovery and install. This avoids a second `File::open` and the
+/// time-of-check/time-of-use race it introduces.
+fn read_archive_manifest_from_archive(
+    base: &Path,
+    archive: &mut ZipArchive<File>,
+) -> Result<MycPluginManifest, String> {
     if archive.len() > MAX_ENTRIES {
         return Err("Plugin package contains too many files".to_string());
     }
@@ -798,7 +802,7 @@ fn read_archive_manifest(base: &Path, archive_path: &Path) -> Result<MycPluginMa
             return Err("Plugin manifest contains an empty signature field".to_string());
         }
         let trusted_keys = crate::signing::load_all_trusted_keys(base)?;
-        let manifest_without_sig = manifest_to_json_without_signature(&manifest);
+        let manifest_without_sig = manifest_to_json_without_signature(&manifest)?;
         crate::signing::verify_manifest_signature(
             &manifest.metadata.publisher,
             &manifest_without_sig,
@@ -809,6 +813,14 @@ fn read_archive_manifest(base: &Path, archive_path: &Path) -> Result<MycPluginMa
     // --- 签名验证结束 / End signature verification ---
 
     Ok(manifest)
+}
+
+/// 仅读取归档中的 plugin.yml(含签名校验)。
+/// Reads only plugin.yml from an archive (with signature verification).
+fn read_archive_manifest(base: &Path, archive_path: &Path) -> Result<MycPluginManifest, String> {
+    let file = File::open(archive_path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    read_archive_manifest_from_archive(base, &mut archive)
 }
 
 fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
@@ -828,7 +840,10 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
         return Err("Plugin package exceeds the 16 MB archive limit".to_string());
     }
 
-    let manifest = read_archive_manifest(base, archive_path)?;
+    // 只打开一次归档：先读清单并校验签名，再复用同一句柄解压。
+    let file = File::open(archive_path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let manifest = read_archive_manifest_from_archive(base, &mut archive)?;
 
     let installed_root = base.join("installed");
     fs::create_dir_all(&installed_root).map_err(|error| error.to_string())?;
@@ -845,8 +860,6 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
     fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
 
     let extraction = (|| -> Result<(), String> {
-        let file = File::open(archive_path).map_err(|error| error.to_string())?;
-        let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
         let mut expanded = 0_u64;
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;

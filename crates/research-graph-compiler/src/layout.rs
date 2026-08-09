@@ -26,6 +26,19 @@ pub struct Position {
 pub type LayoutResult = std::collections::BTreeMap<String, Position>;
 
 /// 计算确定性布局（骨架占位：返回空坐标集合）。
+///
+/// 空集合是明确的无数据占位，不会给调用方一个看似合理的布局。
 pub fn compute_layout(_project: &Value, _mode: LayoutMode) -> LayoutResult {
     LayoutResult::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layout_stub_returns_empty() {
+        let result = compute_layout(&Value::Null, LayoutMode::Hierarchical);
+        assert!(result.is_empty(), "layout stub must return an empty result");
+    }
 }

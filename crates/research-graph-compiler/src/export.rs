@@ -29,11 +29,23 @@ pub struct Digest {
     pub bytes: Vec<u8>,
 }
 
-/// 生成项目 digest（骨架占位：暂取规范 JSON 字节前 64 字节）。
-pub fn project_digest(project: &Value, _options: &ExportOptions) -> Digest {
-    let bytes = crate::canonical::canonicalize(project);
+/// 生成项目 digest（骨架占位：返回空字节）。
+///
+/// 空字节是明确的无摘要占位，避免把规范 JSON 的前 64 字节误当成稳定 digest。
+pub fn project_digest(_project: &Value, _options: &ExportOptions) -> Digest {
     Digest {
-        bytes: bytes.iter().take(64).copied().collect(),
+        bytes: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn digest_stub_returns_empty() {
+        let digest = project_digest(&Value::Object(Default::default()), &ExportOptions::default());
+        assert!(digest.bytes.is_empty(), "digest stub must not return a fake hash prefix");
     }
 }
 

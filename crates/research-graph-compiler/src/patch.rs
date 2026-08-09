@@ -3,6 +3,7 @@
 //! 用户确认后原子应用；baseFileHash 过期触发乐观并发冲突。当前为骨架，
 //! 生产路径由 workspace_host 的 git diff 管线接入。
 
+use crate::error::CompileFailure;
 use serde_json::Value;
 
 /// GraphPatch 交换格式（骨架占位）：最终以 app/plugins/contracts.ts 的
@@ -23,6 +24,24 @@ pub fn plan_patch(_base: &Value, _patch: &GraphPatch) -> PatchPlan {
 }
 
 /// 原子应用补丁：失败时项目保持原样（GC05-04/05/08/09/10）。
-pub fn apply_patch(_base: &Value, _plan: PatchPlan) -> Result<Value, crate::error::CompileFailure> {
-    Ok(Value::Null)
+///
+/// 当前为骨架：直接返回错误，避免把 `Ok(Null)` 这种数据丢失的占位
+/// 当作成功应用返回给调用方。
+pub fn apply_patch(_base: &Value, _plan: PatchPlan) -> Result<Value, CompileFailure> {
+    Err(CompileFailure::NotImplemented("apply_patch"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_patch_stub_does_not_return_ok_null() {
+        let base = Value::Object(Default::default());
+        let result = apply_patch(&base, PatchPlan::default());
+        assert!(
+            matches!(result, Err(CompileFailure::NotImplemented("apply_patch"))),
+            "apply_patch stub must not silently return Ok(Null)"
+        );
+    }
 }

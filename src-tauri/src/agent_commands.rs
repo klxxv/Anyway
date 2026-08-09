@@ -156,39 +156,45 @@ async fn run_pdf_stages(
     )?;
 
     // ── 阶段 3：OcrOptional ──
+    // 复用阶段 2 的提取结果，不再重新解析 PDF。
     let ocr_triggered = PdfPipeline::needs_ocr(&extracted);
-    let (final_text, ocr_confidence) = if ocr_triggered {
-        let path = abs_path.to_path_buf();
-        match tauri::async_runtime::spawn_blocking(move || PdfPipeline::ocr_fallback(&path))
+    let (final_extracted, ocr_confidence, ocr_error) = if ocr_triggered {
+        let extracted_for_ocr = extracted.clone();
+        match tauri::async_runtime::spawn_blocking(move || PdfPipeline::ocr_fallback(&extracted_for_ocr))
             .await
             .map_err(|e| format!("Pipeline task join error: {e}"))?
         {
-            Ok(ocr_text) => {
-                let ocr_hash = format!("{:x}", sha2::Sha256::digest(ocr_text.full_text.as_bytes()));
-                (Some(ocr_hash), Some(1.0_f64))
-            }
-            Err(_) => {
-                // OCR 失败时仍使用原文本推进
-                (None, None)
+            Ok(ocr_text) => (ocr_text, Some(1.0_f64), None),
+            Err(error) => {
+                // OCR 失败非致命：保留原文本并记录警告，后续阶段仍可推进。
+                (extracted.clone(), None, Some(error))
             }
         }
     } else {
-        (None, None)
+        (extracted.clone(), None, None)
     };
+    let final_text_hash = format!("{:x}", sha2::Sha256::digest(final_extracted.full_text.as_bytes()));
     advance_stage(
         hosts,
         job_id,
         JobState::OcrOptional,
-        final_text.as_deref(),
-        Some(serde_json::json!({ "ocrTriggered": ocr_triggered, "ocrConfidence": ocr_confidence })),
+        Some(&final_text_hash),
+        Some(serde_json::json!({
+            "ocrTriggered": ocr_triggered,
+            "ocrConfidence": ocr_confidence,
+            "ocrError": ocr_error
+        })),
     )?;
 
     // ── 阶段 4：BuildingDocumentMap ──
+    // 直接由已提取文本构建文档结构，不再第三次解析 PDF。
     let doc = {
-        let path = abs_path.to_path_buf();
-        tauri::async_runtime::spawn_blocking(move || PdfPipeline::run(&path))
-            .await
-            .map_err(|e| format!("Pipeline task join error: {e}"))??
+        let extracted_for_doc = final_extracted.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            PdfPipeline::build_structured_document(extracted_for_doc, ocr_triggered, ocr_confidence)
+        })
+        .await
+        .map_err(|e| format!("Pipeline task join error: {e}"))?
     };
     let doc_hash = format!("{:x}", sha2::Sha256::digest(
         serde_json::to_string(&doc).unwrap_or_default().as_bytes()

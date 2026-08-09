@@ -39,10 +39,10 @@ const TRUSTED_KEYS_FILE: &str = "trusted-keys.json";
 ///
 /// Computes the signature payload for a manifest: SHA-256 of its JSON serialization
 /// with the signature field removed. Using JSON avoids YAML formatting ambiguity.
-pub fn manifest_payload(manifest_json_without_signature: &serde_json::Value) -> Vec<u8> {
-    let json_bytes =
-        serde_json::to_vec(manifest_json_without_signature).expect("JSON serialization is infallible");
-    Sha256::digest(&json_bytes).to_vec()
+pub fn manifest_payload(manifest_json_without_signature: &serde_json::Value) -> Result<Vec<u8>, String> {
+    let json_bytes = serde_json::to_vec(manifest_json_without_signature)
+        .map_err(|error| format!("JSON serialization failed: {error}"))?;
+    Ok(Sha256::digest(&json_bytes).to_vec())
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ pub fn verify_manifest_signature(
 ) -> Result<(), String> {
     let public_key = find_public_key(publisher, trusted_keys)?;
     let signature = decode_signature(signature_b64)?;
-    let payload = manifest_payload(manifest_without_signature);
+    let payload = manifest_payload(manifest_without_signature)?;
 
     public_key
         .verify(&payload, &signature)
@@ -223,7 +223,7 @@ mod tests {
             }
         });
 
-        let payload = manifest_payload(&manifest);
+        let payload = manifest_payload(&manifest).expect("manifest payload");
         let signature = signing_key.sign(&payload);
 
         let mut trusted = HashMap::new();
@@ -280,7 +280,7 @@ mod tests {
             }
         });
 
-        let payload = manifest_payload(&original);
+        let payload = manifest_payload(&original).expect("manifest payload");
         let signature = signing_key.sign(&payload);
 
         let mut trusted = HashMap::new();
@@ -324,7 +324,7 @@ mod tests {
             }
         });
 
-        let payload = manifest_payload(&manifest);
+        let payload = manifest_payload(&manifest).expect("manifest payload");
         let signature = signing_key.sign(&payload);
 
         let trusted: TrustedKeys = HashMap::new(); // empty trust store

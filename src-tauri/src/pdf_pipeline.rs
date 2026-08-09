@@ -200,11 +200,15 @@ impl PdfPipeline {
         extracted.total_chars < MIN_TEXT_CHARS
     }
 
-    /// OCR fallback 桩：当前返回 lopdf 重试结果。
-    pub fn ocr_fallback(pdf_path: &Path) -> Result<ExtractedText, String> {
-        let primary = Self::extract_text(pdf_path)?;
-        if !Self::needs_ocr(&primary) { return Ok(primary); }
-        Err(format!("OCR not available: only {} chars extracted from {}", primary.total_chars, pdf_path.display()))
+/// OCR fallback 桩：接收已提取文本，不再重复解析 PDF。
+    pub fn ocr_fallback(extracted: &ExtractedText) -> Result<ExtractedText, String> {
+        if !Self::needs_ocr(extracted) {
+            return Ok(extracted.clone());
+        }
+        Err(format!(
+            "OCR not available: only {} chars extracted",
+            extracted.total_chars
+        ))
     }
 
     /// 从提取文本中识别章节、段落和图表引用。
@@ -215,31 +219,39 @@ impl PdfPipeline {
         StructureResult { sections, paragraphs, figures_tables }
     }
 
-    /// 运行完整 L1 管线。
-    pub fn run(pdf_path: &Path) -> Result<StructuredDocument, String> {
-        let (extracted, ocr_triggered, ocr_confidence) = match Self::extract_text(pdf_path) {
-            Ok(e) if !Self::needs_ocr(&e) => (e, false, None),
-            Ok(low_text) => match Self::ocr_fallback(pdf_path) {
-                Ok(ocr_text) => (ocr_text, true, Some(1.0)),
-                Err(e) => return Err(format!("OCR fallback failed: {e} (had {} chars)", low_text.total_chars)),
-            },
-            Err(e) => match Self::ocr_fallback(pdf_path) {
-                Ok(ocr_text) => (ocr_text, true, Some(1.0)),
-                Err(_) => return Err(format!("Text extraction failed: {e}")),
-            },
-        };
-
+    /// 由已提取文本直接构建结构化文档，避免重复解析 PDF。
+    pub fn build_structured_document(
+        extracted: ExtractedText,
+        ocr_triggered: bool,
+        ocr_confidence: Option<f64>,
+    ) -> StructuredDocument {
         let structure = Self::recognize_structure(&extracted.full_text);
         let document_map = DocumentMap::build(&structure.sections, &structure.paragraphs, &extracted.pages);
 
-        Ok(StructuredDocument {
+        StructuredDocument {
             sections: structure.sections,
             paragraphs: structure.paragraphs,
             figures_tables: structure.figures_tables,
             document_map,
             ocr_triggered,
             ocr_confidence,
-        })
+        }
+    }
+
+    /// 运行完整 L1 管线（仅对未提取过文本的场景使用；
+    /// 否则用 `extract_text` + `build_structured_document` 避免重复解析）。
+    pub fn run(pdf_path: &Path) -> Result<StructuredDocument, String> {
+        let extracted = Self::extract_text(pdf_path)?;
+        let ocr_triggered = Self::needs_ocr(&extracted);
+        let (final_extracted, ocr_confidence) = if ocr_triggered {
+            match Self::ocr_fallback(&extracted) {
+                Ok(ocr_text) => (ocr_text, Some(1.0)),
+                Err(_) => (extracted, None),
+            }
+        } else {
+            (extracted, None)
+        };
+        Ok(Self::build_structured_document(final_extracted, ocr_triggered, ocr_confidence))
     }
 }
 

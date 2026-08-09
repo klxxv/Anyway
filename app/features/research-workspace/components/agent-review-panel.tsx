@@ -82,6 +82,7 @@ export function AgentReviewPanel({
   onClose,
   onApply,
   onReject,
+  onRollback,
 }: {
   jobId: string;
   compileResult?: PdfCompileResult | null;
@@ -89,6 +90,8 @@ export function AgentReviewPanel({
   onClose: () => void;
   onApply: (patch: PluginGraphPatch) => void;
   onReject: () => void;
+  /** 后端 review 调用失败后回滚本地变更 / Roll back local mutation if backend review fails. */
+  onRollback: () => void;
 }) {
   const { t } = useI18n();
   const [status, setStatus] = useState<AgentJobStatus | null>(null);
@@ -151,15 +154,20 @@ export function AgentReviewPanel({
     setApplying(true);
     setError("");
     try {
-      // 全部拒绝时，向后端记录拒绝而非接受。
+      // 先应用本地变更（或关闭 UI），再通知后端；后端失败则回滚。
+      // Apply locally first, then notify backend; rollback on backend failure.
+      if (accepted) {
+        onApply(accepted);
+      } else {
+        onReject();
+      }
       await reviewPdfPatch(jobId, accepted !== null);
-      if (accepted) onApply(accepted);
-      else onReject();
     } catch (applyError) {
+      if (accepted) onRollback();
       setError(applyError instanceof Error ? applyError.message : String(applyError));
       setApplying(false);
     }
-  }, [applying, decisions, jobId, onApply, onReject, patch]);
+  }, [applying, decisions, jobId, onApply, onReject, onRollback, patch]);
 
   const rejectAll = useCallback(async () => {
     if (applying) return;
