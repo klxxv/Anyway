@@ -117,7 +117,12 @@ export function ResearchWorkspaceApp() {
 
   // 插件门控：仅在对应插件安装并启用时显示功能按钮
   const hasPdfAgent = useMemo(
-    () => activePlugins.some((p) => p.manifest.metadata.id === "myc.pdf-canvas-agent"),
+    () =>
+      activePlugins.some(
+        (p) =>
+          p.manifest.kind === "AgentPlugin" &&
+          p.manifest.spec.capabilities.includes("agent.graph.patch.propose"),
+      ),
     [activePlugins],
   );
   const hasDiffCapability = useMemo(
