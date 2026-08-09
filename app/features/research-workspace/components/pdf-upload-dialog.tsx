@@ -13,6 +13,7 @@ import { useI18n } from "../../../i18n/provider";
 import type { AgentJobStage, AgentJobStatus } from "../../../plugins/agent-contracts";
 import { AGENT_STAGE_LABELS, isJobTerminal } from "../../../plugins/agent-contracts";
 import {
+  cancelPdfJob,
   getPdfJobStatus,
   listenForPdfDrops,
   pickPdfFile,
@@ -72,6 +73,8 @@ export function PdfUploadDialog({
   const [dragOver, setDragOver] = useState(false);
   const pollTimer = useRef<number | null>(null);
   const droppedRef = useRef(false);
+  const jobIdRef = useRef<string | null>(null);
+  const statusRef = useRef<AgentJobStatus | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current !== null) {
@@ -80,12 +83,17 @@ export function PdfUploadDialog({
     }
   }, []);
 
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
   useEffect(() => stopPolling, [stopPolling]);
 
   /** 轮询 job 直到进入审阅/终态；解耦：本组件只上报，不决策。 */
   const watchJob = useCallback(
     (jobId: string) => {
       stopPolling();
+      jobIdRef.current = jobId;
       pollTimer.current = window.setInterval(async () => {
         try {
           const next = await getPdfJobStatus(jobId);
@@ -95,10 +103,12 @@ export function PdfUploadDialog({
             onReady(jobId, next);
           } else if (isJobTerminal(next.state)) {
             stopPolling();
+            jobIdRef.current = null;
             setError(next.error ?? `Unexpected terminal state: ${next.state}`);
           }
         } catch (pollError) {
           stopPolling();
+          jobIdRef.current = null;
           setError(pollError instanceof Error ? pollError.message : String(pollError));
         }
       }, 700);
@@ -132,9 +142,11 @@ export function PdfUploadDialog({
     try {
       const job = await startPdfJob(pdfPath);
       setStatus(job);
+      jobIdRef.current = job.jobId;
       if (job.state === "awaiting_review") {
         onReady(job.jobId, job);
       } else if (isJobTerminal(job.state)) {
+        jobIdRef.current = null;
         setError(job.error ?? `Unexpected terminal state: ${job.state}`);
       } else {
         watchJob(job.jobId);
@@ -163,6 +175,16 @@ export function PdfUploadDialog({
     return () => {
       mounted = false;
       dispose?.();
+    };
+  }, []);
+
+  // 关闭对话框时取消进行中的非终态 job，避免孤立 host agent 任务。
+  useEffect(() => {
+    return () => {
+      const activeJob = jobIdRef.current;
+      if (activeJob && statusRef.current && !isJobTerminal(statusRef.current.state)) {
+        void cancelPdfJob(activeJob);
+      }
     };
   }, []);
 
