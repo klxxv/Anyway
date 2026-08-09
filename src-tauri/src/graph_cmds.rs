@@ -3,7 +3,7 @@
 //! 语义内核（graph_compiler）是纯 Rust 库；本模块是它到 Webview 的唯一桥：
 //! 参数经 JSON 校验后交给纯函数，结果序列化为 camelCase JSON。不持有状态。
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 /// 解析 diff 输入：接受完整 ProjectState JSON，或 `{ fileHash, project }` 包装。
 /// 包装形式会校验 fileHash 与 project 内容一致（git 式自编码自校验），

@@ -5,7 +5,6 @@
 //! consistency guarantee.
 
 use serde_json::{Number, Value};
-use std::fmt::Write as _;
 use std::io::Write as _;
 use unicode_normalization::UnicodeNormalization;
 
