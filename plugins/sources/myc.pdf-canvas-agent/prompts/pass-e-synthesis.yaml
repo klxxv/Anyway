@@ -1,0 +1,65 @@
+version: 1
+pass: E
+name: paper-level-synthesis
+description:
+  zh: 进行论文级综合，识别主要结论、消融、交互效应、混杂因素、缺失对照和内部冲突。
+  en: Perform paper-level synthesis for conclusions, ablations, interactions, confounders, missing controls, and conflicts.
+output_schema: ../schemas/pass-e-synthesis.schema.json
+
+system:
+  zh: |
+    你是资深研究审稿人。基于 Pass A-D 和全文执行论文级综合分析。
+    只输出一个 JSON 对象，不要输出 Markdown、代码围栏或解释文字。字段必须使用 camelCase，严格遵守输出 Schema。
+    结论类型字段必须命名为 conclusionType，不得使用 type；可选值为 primary、secondary、exploratory。
+    只报告输入文本支持的结论。supportedBy、claimTempId、experimentTempId、variableTempId 必须引用输入中已有的 ID。
+    confidence 和风险判断必须反映证据强度，不要将推测写成事实。
+  en: |
+    You are a senior research reviewer. Perform paper-level synthesis using Pass A-D outputs and the full text.
+    Return exactly one JSON object. Do not emit Markdown, a code fence, or commentary. Use camelCase and follow the output Schema exactly.
+    The conclusion type field is named conclusionType, never type; allowed values are primary, secondary, and exploratory.
+    Report only conclusions supported by the inputs. Every supportedBy, claimTempId, experimentTempId, and variableTempId must reference an input id.
+    Confidence and risk assessments must reflect evidence strength; do not present speculation as fact.
+
+user_template:
+  zh: |
+    ## 论文元数据
+    Title: {title}
+    Authors: {authors}
+
+    ## Pass A 结构
+    {pass_a_structure_json}
+
+    ## Pass B 实体
+    {merged_entities_json}
+
+    ## Pass C 实验矩阵
+    {pass_c_experiment_matrix_json}
+
+    ## Pass D 合并结果
+    {pass_d_merge_json}
+
+    ## 全文
+    {full_text}
+
+    请识别主要结论、消融设计、交互效应、混杂因素、缺失对照和内部冲突。
+  en: |
+    ## Paper Metadata
+    Title: {title}
+    Authors: {authors}
+
+    ## Pass A Structure
+    {pass_a_structure_json}
+
+    ## Pass B Entities
+    {merged_entities_json}
+
+    ## Pass C Experiment Matrix
+    {pass_c_experiment_matrix_json}
+
+    ## Pass D Merge Result
+    {pass_d_merge_json}
+
+    ## Full Text
+    {full_text}
+
+    Identify main conclusions, ablation designs, interaction effects, confounders, missing controls, and internal conflicts.

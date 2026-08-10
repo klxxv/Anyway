@@ -8,10 +8,71 @@ artifacts through a file protocol.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Literal, Mapping, Protocol
 
 
 GRAPH_PATCH_API_VERSION = "researchcanvas.dev/graph-patch/v1alpha1"
+PluginSettingType = Literal["boolean", "number", "text", "select"]
+
+
+@dataclass(frozen=True)
+class PluginUpdateInfo:
+    """Optional SemVer update metadata rendered by the host plugin settings view."""
+
+    latest_version: str | None = None
+    url: str | None = None
+    release_notes: str | None = None
+
+
+@dataclass(frozen=True)
+class PluginSetting:
+    """Declarative setting metadata; the host owns persistence and rendering."""
+
+    setting_id: str
+    label: str
+    setting_type: PluginSettingType
+    secret: bool = False
+    required: bool = False
+    description: str = ""
+    placeholder: str = ""
+    group: str = ""
+    write_only: bool = False
+    default: bool | float | int | str | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+    step: float | None = None
+    options: tuple[Mapping[str, str], ...] = ()
+
+    @property
+    def is_secret(self) -> bool:
+        """Secret settings are host-owned and must never be read by a plugin."""
+
+        return self.secret
+
+    def to_mapping(self) -> Mapping[str, Any]:
+        """Return the host manifest shape without exposing any secret value."""
+
+        value: dict[str, Any] = {
+            "id": self.setting_id,
+            "label": self.label,
+            "type": self.setting_type,
+            "secret": self.secret,
+            "required": self.required,
+            "description": self.description,
+            "placeholder": self.placeholder,
+            "group": self.group,
+            "writeOnly": self.write_only or self.is_secret,
+            "options": [dict(option) for option in self.options],
+        }
+        if self.default is not None and not self.is_secret:
+            value["default"] = self.default
+        if self.minimum is not None:
+            value["min"] = self.minimum
+        if self.maximum is not None:
+            value["max"] = self.maximum
+        if self.step is not None:
+            value["step"] = self.step
+        return value
 
 
 @dataclass(frozen=True)
@@ -20,7 +81,27 @@ class PluginManifest:
     name: str
     version: str
     capabilities: tuple[str, ...]
+    developer: str = ""
+    developer_id: str | None = None
     permissions: tuple[str, ...] = ()
+    update: PluginUpdateInfo | None = None
+    settings: tuple[PluginSetting, ...] = ()
+
+
+class SettingReader(Protocol):
+    """Read only host-validated non-secret settings.
+
+    The host never exposes a `secret` value to this interface. API keys are
+    consumed by the host model gateway or request proxy instead.
+    """
+
+    def get_boolean(self, setting_id: str) -> bool | None: ...
+
+    def get_number(self, setting_id: str) -> float | None: ...
+
+    def get_text(self, setting_id: str) -> str | None: ...
+
+    def has(self, setting_id: str) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -103,6 +184,3 @@ class NetworkBlockExtractor(Protocol):
     """Torch/ONNX adapters implement this without importing application stores."""
 
     def extract(self, model: Any, *, external_id: str | None = None) -> GraphPatch: ...
-
-
-

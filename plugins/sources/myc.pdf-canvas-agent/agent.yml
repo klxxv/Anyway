@@ -1,0 +1,202 @@
+apiVersion: researchcanvas.dev/agent-pipeline/v1alpha1
+kind: DeclarativeAgentPipeline
+version: 1
+
+id: myc.pdf-canvas-agent.pipeline
+name: PDF Canvas Agent semantic extraction pipeline
+description: >-
+  Declarative PDF semantic extraction harness. The host owns PDF access,
+  credentials, model calls, job lifecycle, checkpointing, validation, and
+  review-gated GraphPatch application. The plugin owns prompts, result
+  schemas, pass ordering, and domain transformation rules.
+
+input:
+  type: application/pdf
+  service: host.pdf.extract
+  output:
+    - structuredDocument
+    - fullText
+    - documentMap
+  derivedServices:
+    sectionText: host.pdf.section-text
+    experimentParagraphs: host.pdf.experiment-paragraphs
+
+modelSlots:
+  - id: extraction
+    label: Extraction model
+    required: true
+    capabilities:
+      - text
+      - structured-output
+    configuration:
+      provider:
+        source: host-active-provider
+      credential:
+        source: host-secret-setting
+        settingId: api-key
+      model:
+        source: plugin-setting
+        settingId: model
+      thinking:
+        source: plugin-setting
+        settingId: thinking
+
+  - id: synthesis
+    label: Synthesis model
+    required: true
+    capabilities:
+      - text
+      - structured-output
+      - long-context
+    configuration:
+      provider:
+        source: host-active-provider
+      credential:
+        source: host-secret-setting
+        settingId: api-key
+      model:
+        source: plugin-setting
+        settingId: model
+      thinking:
+        source: plugin-setting
+        settingId: thinking
+
+  - id: recovery
+    label: Recovery model
+    required: false
+    capabilities:
+      - text
+      - structured-output
+    configuration:
+      provider:
+        source: host-active-provider
+      credential:
+        source: host-secret-setting
+        settingId: api-key
+      model:
+        source: plugin-setting
+        settingId: model
+      thinking:
+        source: plugin-setting
+        settingId: thinking
+
+stages:
+  - id: pass-a-structure
+    pass: A
+    name: structure-extraction
+    type: model
+    modelSlot: extraction
+    dependsOn: []
+    parallelGroup: local-extraction
+    prompt: prompts/pass-a-structure.yaml
+    outputSchema: schemas/pass-a-structure.schema.json
+    inputBindings:
+      document_structure: input.structuredDocument
+      full_text: input.fullText
+
+  - id: pass-b-entities
+    pass: B
+    name: entity-extraction
+    type: model-map
+    modelSlot: extraction
+    dependsOn: []
+    parallelGroup: local-extraction
+    mapOver: input.structuredDocument.sections
+    prompt: prompts/pass-b-entities.yaml
+    outputSchema: schemas/pass-b-entities.schema.json
+    inputBindings:
+      document_structure: input.structuredDocument
+      section_title: item.title
+      section_text: input.derivedServices.sectionText(item.id)
+
+  - id: pass-c-variable-fission
+    pass: C
+    name: variable-fission-experiment-matrix
+    type: model
+    modelSlot: extraction
+    dependsOn:
+      - pass-b-entities
+    prompt: prompts/pass-c-variable-fission.yaml
+    outputSchema: schemas/pass-c-variable-fission.schema.json
+    inputBindings:
+      pass_b_entities_json: stages.pass-b-entities.output
+      experiment_paragraphs: input.derivedServices.experimentParagraphs
+      full_text: input.fullText
+
+  - id: pass-d-cross-segment-merge
+    pass: D
+    name: cross-segment-merge
+    type: model
+    modelSlot: extraction
+    dependsOn:
+      - pass-b-entities
+      - pass-c-variable-fission
+    prompt: prompts/pass-d-merge.yaml
+    outputSchema: schemas/pass-d-merge.schema.json
+    inputBindings:
+      pass_b_all_entities_json: stages.pass-b-entities.output
+      pass_c_variable_registry_json: stages.pass-c-variable-fission.output.variableRegistry
+      full_text: input.fullText
+
+  - id: pass-e-paper-synthesis
+    pass: E
+    name: paper-level-synthesis
+    type: model
+    modelSlot: synthesis
+    dependsOn:
+      - pass-a-structure
+      - pass-b-entities
+      - pass-c-variable-fission
+      - pass-d-cross-segment-merge
+    prompt: prompts/pass-e-synthesis.yaml
+    outputSchema: schemas/pass-e-synthesis.schema.json
+    inputBindings:
+      title: stages.pass-a-structure.output.title
+      authors: stages.pass-a-structure.output.authors
+      pass_a_structure_json: stages.pass-a-structure.output
+      merged_entities_json: stages.pass-b-entities.output
+      pass_c_experiment_matrix_json: stages.pass-c-variable-fission.output.experimentMatrix
+      pass_d_merge_json: stages.pass-d-cross-segment-merge.output
+      full_text: input.fullText
+
+  - id: pass-f-validate-and-transform
+    pass: F
+    name: local-validation-and-graph-patch-transform
+    type: local-transform
+    runtime: host.validation-and-transform
+    dependsOn:
+      - pass-a-structure
+      - pass-b-entities
+      - pass-c-variable-fission
+      - pass-d-cross-segment-merge
+      - pass-e-paper-synthesis
+    inputSchema: schemas/agent-candidates.schema.json
+    outputSchema: schemas/graph-patch.schema.json
+    validationReportSchema: schemas/pass-f-validation-report.schema.json
+    inputBindings:
+      candidates: pipeline.agentCandidates
+      full_text: input.fullText
+    operations:
+      - validate-json-shape
+      - validate-quotes-and-anchors
+      - validate-anchor-uniqueness
+      - validate-temp-id-closure
+      - validate-numerical-consistency
+      - build-review-gated-graph-patch
+    outputPolicy:
+      type: graph-patch
+      reviewRequired: true
+      apiVersion: researchcanvas.dev/graph-patch/v1alpha1
+
+failurePolicy:
+  modelRetries: 2
+  recoverySlot: recovery
+  onTruncatedJson: recover-then-validate
+  onPassFailure: retain-partial-results-and-mark-incomplete
+  requireReviewBeforeApply: true
+
+localization:
+  default: en
+  supported:
+    - en
+    - zh

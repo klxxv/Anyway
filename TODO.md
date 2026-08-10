@@ -61,3 +61,20 @@ core tests, 4 platform tests, 2 rendered-shell tests, and a production build.
 Tauri rendered all 8 MNIST relations with explicit port geometry; the installed
 Circuit Orthogonal `.myc` plugin switched them to strict 90-degree paths while
 retaining green support, red dashed refutation, and muted control semantics.
+
+## Agent plugin settings and host-rendered configuration
+
+- [x] Finalize the cross-language setting contract for boolean, number, text, select, and secret values.
+- [x] Add host-managed Agent model configuration for provider, credential, model, and thinking level.
+- [x] Declare PDF Canvas Agent settings in its `.myc` manifest instead of hard-coding runtime choices.
+- [x] Validate every setting definition and value in the Rust host; never trust values supplied in a plugin call envelope.
+- [x] Persist non-secret values per `pluginId@version` and store secret values separately without returning plaintext to the UI.
+- [x] Add Tauri commands to load, save, and reset effective plugin settings.
+- [x] Extend the Pinia runtime plugin host with typed settings operations.
+- [x] Render plugin-declared settings in a Vue SFC dialog using `<script setup>`, `<template>`, and scoped `<style>`.
+- [x] Make Plugin Store rows open settings only when the plugin declares configurable fields.
+- [x] Keep enable/disable, update, reset, and uninstall actions host-owned rather than plugin callbacks.
+- [x] Add SDK declarations and parity checks for TypeScript, Python, Rust, and C++.
+- [x] Add native validation/persistence tests and Vue/SDK rendering tests.
+- [x] Run Vue typecheck, frontend tests/build, Rust tests, and SDK checks.
+- [x] Update `HANDOFF.md` with final implementation state, known limitations, and verification results.

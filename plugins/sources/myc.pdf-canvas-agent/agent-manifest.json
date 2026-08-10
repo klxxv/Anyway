@@ -10,10 +10,29 @@
   ],
   "securityBoundary": {
     "noApiKey": true,
+    "apiKeyExposure": "none",
     "noFileHandles": true,
     "noNetwork": true,
     "noGraphStoreWrite": true,
     "hostMediated": true
+  },
+  "modelConfiguration": {
+    "ownership": "host-managed",
+    "invocation": "host-model-gateway",
+    "settingIds": [
+      "api-key",
+      "model",
+      "thinking"
+    ],
+    "secretSettingIds": [
+      "api-key"
+    ],
+    "agentReceives": [
+      "model",
+      "thinking"
+    ],
+    "agentReceivesPlaintextSecrets": false,
+    "credentialPolicy": "The host resolves the API key and never exposes its plaintext to the agent."
   },
   "pipeline": {
     "stages": [

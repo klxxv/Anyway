@@ -7,7 +7,12 @@ import {
   type InjectionKey,
 } from "vue";
 import type { InstalledMycPlugin } from "../../../app/plugins/contracts";
+import type {
+  PluginSecretMutation,
+  PluginSettingsSnapshot,
+} from "../../../app/plugins/tauri-client";
 import { useRuntimePluginHostStore } from "../stores/runtime-plugin-host";
+import type { HostPluginSettingDefinition } from "../components/panel-types";
 
 /**
  * Vue equivalent of the React plugin-host context value. The fields are
@@ -26,6 +31,26 @@ export type PluginHostValue = {
   setPluginEnabled: (plugin: InstalledMycPlugin, enabled: boolean) => void;
   enableAll: () => void;
   removeIncompatible: () => Promise<number>;
+  pluginSettings: Record<string, PluginSettingsSnapshot>;
+  pluginSettingsLoading: ReadonlySet<string>;
+  pluginSettingsErrors: Record<string, string>;
+  loadPluginSettings: (
+    plugin: { id: string; version: string; name: string },
+    definitions: readonly HostPluginSettingDefinition[],
+    native?: boolean,
+  ) => Promise<PluginSettingsSnapshot>;
+  savePluginSettings: (
+    plugin: { id: string; version: string; name: string },
+    definitions: readonly HostPluginSettingDefinition[],
+    write: { values: Record<string, unknown>; secrets: Record<string, PluginSecretMutation> },
+    native?: boolean,
+  ) => Promise<PluginSettingsSnapshot>;
+  resetPluginSettings: (
+    plugin: { id: string; version: string; name: string },
+    definitions: readonly HostPluginSettingDefinition[],
+    native?: boolean,
+  ) => Promise<PluginSettingsSnapshot>;
+  uninstall: (plugin: InstalledMycPlugin) => Promise<void>;
 };
 
 export const pluginHostKey: InjectionKey<PluginHostValue> = Symbol("research-canvas.plugin-host");
@@ -58,6 +83,19 @@ function createPluginHostValue(store: RuntimePluginHostStore): PluginHostValue {
     setPluginEnabled: store.setPluginEnabled,
     enableAll: store.enableAll,
     removeIncompatible: store.removeIncompatible,
+    get pluginSettings() {
+      return store.pluginSettings;
+    },
+    get pluginSettingsLoading() {
+      return store.pluginSettingsLoading;
+    },
+    get pluginSettingsErrors() {
+      return store.pluginSettingsErrors;
+    },
+    loadPluginSettings: store.loadPluginSettings,
+    savePluginSettings: store.savePluginSettings,
+    resetPluginSettings: store.resetPluginSettings,
+    uninstall: store.uninstall,
   });
 }
 

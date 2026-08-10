@@ -10,6 +10,7 @@ import zipfile
 
 ALLOWED_ROOT_FILES = {
     "plugin.yml",
+    "agent.yml",
     "theme.json",
     "edge-style.json",
     "workspace-plugin.json",
@@ -20,7 +21,11 @@ ALLOWED_ROOT_FILES = {
     "README.md",
     "LICENSE",
 }
-ALLOWED_DIRECTORIES = {"locales"}
+ALLOWED_DIRECTORIES = {
+    "locales": {".json"},
+    "prompts": {".yaml", ".yml"},
+    "schemas": {".json"},
+}
 
 
 def build(source: pathlib.Path, destination: pathlib.Path) -> None:
@@ -35,7 +40,10 @@ def build(source: pathlib.Path, destination: pathlib.Path) -> None:
         relative = path.relative_to(source)
         root = relative.parts[0]
         if root in ALLOWED_DIRECTORIES:
-            if len(relative.parts) != 2 or relative.suffix.lower() != ".json":
+            if (
+                len(relative.parts) != 2
+                or relative.suffix.lower() not in ALLOWED_DIRECTORIES[root]
+            ):
                 raise SystemExit(f"unsupported package entry: {relative.as_posix()}")
             continue
         if root not in ALLOWED_ROOT_FILES:

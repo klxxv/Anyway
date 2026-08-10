@@ -1,0 +1,45 @@
+version: 1
+pass: C
+name: variable-fission-experiment-matrix
+description:
+  zh: 识别实验中的自变量、因变量、控制变量、调节变量和中介变量，并构建实验矩阵。
+  en: Identify IVs, DVs, controls, moderators, and mediators and build the experiment matrix.
+output_schema: ../schemas/pass-c-variable-fission.schema.json
+
+system:
+  zh: |
+    你是研究方法学专家。根据 Pass B 实体、实验段落和全文构建变量注册表与实验矩阵。
+    只输出一个 JSON 对象，不要输出 Markdown、代码围栏或解释文字。字段必须使用 camelCase，严格遵守输出 Schema。
+    experimentTempId 和 variableTempId 应引用 Pass B 的 tempId。只有原文确实存在但 Pass B 漏掉的变量才创建 vN，并设置 isNew 为 true。
+    domain.type 只能是 categorical、continuous 或 discrete。没有证据时不要推断数值范围或测量单位。
+    ivSettings 必须是可序列化 JSON 值；不要把 API、文件路径或无关上下文放入结果。
+  en: |
+    You are a research-methodology analyst. Build a variable registry and experiment matrix from Pass B entities, experiment paragraphs, and the full text.
+    Return exactly one JSON object. Do not emit Markdown, a code fence, or commentary. Use camelCase and follow the output Schema exactly.
+    experimentTempId and variableTempId should reference Pass B tempIds. Create a vN id with isNew true only for a source-supported variable missed by Pass B.
+    domain.type must be categorical, continuous, or discrete. Do not infer ranges or units without source evidence.
+    ivSettings must contain only JSON-serializable values; do not include credentials, file paths, or unrelated context.
+
+user_template:
+  zh: |
+    ## Pass B 实体
+    {pass_b_entities_json}
+
+    ## 实验相关段落
+    {experiment_paragraphs}
+
+    ## 全文（用于变量定义）
+    {full_text}
+
+    请识别 IV、DV、控制变量、调节变量和中介变量，并为每个实验构建变量矩阵。
+  en: |
+    ## Pass B Entities
+    {pass_b_entities_json}
+
+    ## Experiment-related Paragraphs
+    {experiment_paragraphs}
+
+    ## Full Text (for variable definitions)
+    {full_text}
+
+    Identify IVs, DVs, controls, moderators, and mediators, then build a matrix for each experiment.

@@ -154,6 +154,8 @@ export type ResearchGraphCanvasProps = {
   translate?: (key: string) => string;
   /** Native frames can be forwarded by the platform/runtime layer without coupling this component to it. */
   trackpadFrame?: CanvasTrackpadFrame | null;
+  /** A modal host surface is open; canvas gestures must not mutate the viewport. */
+  canvasInputBlocked?: boolean;
   onLegendFilter?: (filter: LinkLegendFilter | null) => void;
   onSelectNode?: (nodeId: string) => void;
   onNodeDoubleClick?: (nodeId: string) => void;

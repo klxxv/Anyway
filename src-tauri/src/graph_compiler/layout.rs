@@ -18,8 +18,8 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 
 /// 全部布局模式（顺序即 v3 文档中的枚举顺序）。
 /// All layout modes, in v3 enumeration order.
@@ -211,7 +211,9 @@ fn project_edges(project: &Value) -> Vec<LEdge<'_>> {
 
 /// 默认根：项目第一个节点的 id / Default root: the first node's id.
 fn default_root_id(project: &Value) -> Option<String> {
-    project_nodes(project).first().map(|node| node.id.to_string())
+    project_nodes(project)
+        .first()
+        .map(|node| node.id.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -232,8 +234,14 @@ pub fn compute_layout(
     root_id: Option<&str>,
     params: Option<&LayoutParams>,
 ) -> LayoutResult {
-    let resolved_mode = if LAYOUT_MODES.contains(&mode) { mode } else { "evidence-chain" };
-    let mut params = params.cloned().unwrap_or_else(|| defaults_for_mode(resolved_mode));
+    let resolved_mode = if LAYOUT_MODES.contains(&mode) {
+        mode
+    } else {
+        "evidence-chain"
+    };
+    let mut params = params
+        .cloned()
+        .unwrap_or_else(|| defaults_for_mode(resolved_mode));
     let root_id = root_id
         .map(str::to_string)
         .or_else(|| params.root_id.clone())
@@ -312,13 +320,9 @@ pub fn apply_pinned(mut result: LayoutResult, placements: &[Value]) -> LayoutRes
         if !result.node_ids.iter().any(|id| id == node_id) {
             result.node_ids.push(node_id.to_string());
         }
-        result.positions.insert(
-            node_id.to_string(),
-            LayoutPosition {
-                x,
-                y,
-            },
-        );
+        result
+            .positions
+            .insert(node_id.to_string(), LayoutPosition { x, y });
     }
     result
 }
@@ -439,11 +443,7 @@ type LayoutTuple = (
     Vec<String>,
 );
 
-fn tree_layout(
-    project: &Value,
-    root_id: Option<&str>,
-    params: &LayoutParams,
-) -> LayoutTuple {
+fn tree_layout(project: &Value, root_id: Option<&str>, params: &LayoutParams) -> LayoutTuple {
     let all_node_ids: Vec<String> = project_nodes(project)
         .iter()
         .map(|node| node.id.to_string())
@@ -459,12 +459,7 @@ fn tree_layout(
     }
 
     // 未访问节点落到最后一层之后（对应 TS `Math.max(1, ...depths) + 1`）。
-    let fallback_depth = depth
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |max| 1.max(max))
-        + 1;
+    let fallback_depth = depth.values().copied().max().map_or(0, |max| 1.max(max)) + 1;
 
     let mut rows: Vec<(usize, Vec<String>)> = Vec::new();
     let mut row_index: HashMap<usize, usize> = HashMap::new();
@@ -496,10 +491,7 @@ fn tree_layout(
 // table 模式 / Table mode
 // ---------------------------------------------------------------------------
 
-fn table_layout(
-    project: &Value,
-    params: &LayoutParams,
-) -> LayoutTuple {
+fn table_layout(project: &Value, params: &LayoutParams) -> LayoutTuple {
     let nodes = project_nodes(project);
     let all_node_ids: Vec<String> = nodes.iter().map(|node| node.id.to_string()).collect();
     let all_edge_ids: Vec<String> = project_edges(project)
@@ -601,10 +593,7 @@ fn huffman_codes(project: &Value) -> HashMap<String, String> {
     queue.pop().map(|item| item.codes).unwrap_or_default()
 }
 
-fn huffman_layout(
-    project: &Value,
-    params: &LayoutParams,
-) -> LayoutTuple {
+fn huffman_layout(project: &Value, params: &LayoutParams) -> LayoutTuple {
     let nodes = project_nodes(project);
     let all_node_ids: Vec<String> = nodes.iter().map(|node| node.id.to_string()).collect();
     let all_edge_ids: Vec<String> = project_edges(project)
@@ -728,11 +717,7 @@ fn topological_depths(project: &Value, selected: &HashSet<&str>) -> HashMap<Stri
     depth
 }
 
-fn layered_layout(
-    project: &Value,
-    mode: &str,
-    params: &LayoutParams,
-) -> LayoutTuple {
+fn layered_layout(project: &Value, mode: &str, params: &LayoutParams) -> LayoutTuple {
     let nodes = project_nodes(project);
     let all_node_ids: Vec<String> = nodes.iter().map(|node| node.id.to_string()).collect();
 
@@ -860,14 +845,6 @@ mod tests {
         })
     }
 
-    fn positions_of(result: &LayoutResult) -> HashMap<&str, (f64, f64)> {
-        result
-            .positions
-            .iter()
-            .map(|(id, position)| (id.as_str(), (position.x, position.y)))
-            .collect()
-    }
-
     #[test]
     fn all_six_modes_are_deterministic() {
         let project = fixture();
@@ -879,7 +856,10 @@ mod tests {
             // fixture 无 contradicts/refutes 边 → refutation-chain 正确为空；
             // 其余模式都必须有节点落位。
             if *mode != "refutation-chain" {
-                assert!(!first.positions.is_empty(), "mode {mode} should place nodes");
+                assert!(
+                    !first.positions.is_empty(),
+                    "mode {mode} should place nodes"
+                );
             } else {
                 assert!(first.positions.is_empty());
                 assert!(first.edge_ids.is_empty());
@@ -899,8 +879,10 @@ mod tests {
         // m1 (e-q-m1) because neighbors sort by nodeId (h1 < m1).
         assert_eq!(result.node_ids[0], "q1");
         let (order, _, _) = bfs_tree(&project, "q1");
-        assert!(order.iter().position(|id| id == "h1").unwrap()
-            < order.iter().position(|id| id == "m1").unwrap());
+        assert!(
+            order.iter().position(|id| id == "h1").unwrap()
+                < order.iter().position(|id| id == "m1").unwrap()
+        );
         // 未包含节点排在 BFS order 之后（本项目 BFS 可达全部节点）。
         assert_eq!(result.node_ids.len(), 14);
         // 每个节点都有位置，且层级按 BFS 深度。
@@ -916,7 +898,7 @@ mod tests {
         assert_eq!(m1.y, 80.0 + 182.0); // depth 1 的第二行
         let m3 = result.positions["m3"];
         assert_eq!(m3.x, 80.0 + 3.0 * 350.0); // q1→m1→m2→m3, depth 3
-        // tree 边不含 cross/back 边：15 条边中非树边被排除。
+                                              // tree 边不含 cross/back 边：15 条边中非树边被排除。
         assert!(result.edge_ids.iter().all(|id| id.starts_with("e-")));
     }
 
@@ -1032,7 +1014,7 @@ mod tests {
         assert!(result.edge_ids.iter().any(|id| id == "x-con"));
         assert!(result.edge_ids.iter().any(|id| id == "x-ref"));
         assert!(!result.edge_ids.iter().any(|id| id == "e-x1-r1")); // measures 不入选
-        // 参与节点：p1、h1、r1。
+                                                                    // 参与节点：p1、h1、r1。
         assert!(result.node_ids.iter().any(|id| id == "p1"));
         assert!(result.node_ids.iter().any(|id| id == "h1"));
         assert!(result.node_ids.iter().any(|id| id == "r1"));
@@ -1071,14 +1053,22 @@ mod tests {
         let x1 = result.positions["x1"];
         // 同层成员共享列位置（x 由 layer 决定），行位置（y）不同。
         assert_eq!(h1.x, p1.x, "cycle members share the final layer column");
-        assert_eq!(h1.x, x1.x, "dependents of the cycle land in the final layer too");
+        assert_eq!(
+            h1.x, x1.x,
+            "dependents of the cycle land in the final layer too"
+        );
         let max_ranked_x = result
             .positions
             .iter()
-            .filter(|(id, _)| *id != "h1" && *id != "p1" && *id != "x1" && *id != "r1" && *id != "r2")
+            .filter(|(id, _)| {
+                *id != "h1" && *id != "p1" && *id != "x1" && *id != "r1" && *id != "r2"
+            })
             .map(|(_, position)| position.x)
             .fold(0.0_f64, f64::max);
-        assert!(h1.x > max_ranked_x, "cycle members land after ranked layers");
+        assert!(
+            h1.x > max_ranked_x,
+            "cycle members land after ranked layers"
+        );
     }
 
     #[test]
@@ -1088,7 +1078,11 @@ mod tests {
             "id": "pl-h1", "viewId": "view-1", "nodeId": "h1",
             "x": 1234.0, "y": 5678.0, "width": 230, "height": 116, "pinned": true
         })];
-        let result = layout_view(&project, &json!({"id": "view-1", "layout": {"mode": "neural-network"}}), &placements);
+        let result = layout_view(
+            &project,
+            &json!({"id": "view-1", "layout": {"mode": "neural-network"}}),
+            &placements,
+        );
         assert_eq!(result.positions["h1"].x, 1234.0);
         assert_eq!(result.positions["h1"].y, 5678.0);
         // 未 pinned 节点仍是计算值。
@@ -1102,9 +1096,20 @@ mod tests {
             "id": "pl-q1", "viewId": "view-1", "nodeId": "q1",
             "x": 1.0, "y": 2.0, "width": 230, "height": 116
         })];
-        let with_unpinned = layout_view(&project, &json!({"id": "view-1", "layout": {"mode": "tree"}}), &placements);
-        let without = layout_view(&project, &json!({"id": "view-1", "layout": {"mode": "tree"}}), &[]);
-        assert_eq!(with_unpinned, without, "unpinned drags must not churn the diff");
+        let with_unpinned = layout_view(
+            &project,
+            &json!({"id": "view-1", "layout": {"mode": "tree"}}),
+            &placements,
+        );
+        let without = layout_view(
+            &project,
+            &json!({"id": "view-1", "layout": {"mode": "tree"}}),
+            &[],
+        );
+        assert_eq!(
+            with_unpinned, without,
+            "unpinned drags must not churn the diff"
+        );
     }
 
     #[test]
@@ -1128,14 +1133,24 @@ mod tests {
     fn fallback_places_unpositioned_nodes_in_a_grid() {
         let project = fixture();
         let computed = compute_layout(&project, "evidence-chain", None, None);
-        assert!(computed.positions.len() < 14, "chain mode positions a subset");
+        assert!(
+            computed.positions.len() < 14,
+            "chain mode positions a subset"
+        );
         let with_fallback = apply_fallback(computed.clone(), &project);
         assert_eq!(with_fallback.positions.len(), 14);
         // fallback 行从 maxY + 210 开始。
-        let max_y = computed.positions.values().map(|p| p.y).fold(80.0, f64::max);
+        let max_y = computed
+            .positions
+            .values()
+            .map(|p| p.y)
+            .fold(80.0, f64::max);
         for (id, position) in &with_fallback.positions {
             if !computed.positions.contains_key(id) {
-                assert!(position.y >= max_y + 210.0, "{id} should be below computed rows");
+                assert!(
+                    position.y >= max_y + 210.0,
+                    "{id} should be below computed rows"
+                );
             }
         }
     }

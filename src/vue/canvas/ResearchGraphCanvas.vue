@@ -525,6 +525,7 @@ function handlePluginAction(action: ResolvedPluginContextMenuAction) {
 function handleWheel(event: WheelEvent) {
   event.preventDefault();
   event.stopPropagation();
+  if (props.canvasInputBlocked) return;
   const bounds = wrapperRef.value?.getBoundingClientRect();
   const cursor = {
     x: event.clientX - (bounds?.left ?? 0),
@@ -570,6 +571,7 @@ function handleWheel(event: WheelEvent) {
 }
 
 function handleTrackpadFrame(frame: CanvasTrackpadFrame) {
+  if (props.canvasInputBlocked) return;
   if (lastTrackpadFrameId.value === frame.frameId && frame.phase !== "end") return;
   canvasStore.setLastTrackpadFrameId(frame.frameId);
   props.onTrackpadFrame?.(frame);

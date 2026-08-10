@@ -7,6 +7,7 @@ pub mod llm_plugin;
 pub mod llm_provider_registry;
 pub mod pdf_pipeline;
 mod graph_cmds;
+mod plugin_settings;
 mod plugin_vm;
 mod plugins;
 mod projects;
@@ -38,6 +39,9 @@ pub fn run() {
             plugins::install_myc_plugin,
             plugins::uninstall_myc_plugin,
             plugins::list_installed_plugins,
+            plugins::get_plugin_settings,
+            plugins::set_plugin_settings,
+            plugins::reset_plugin_settings,
             plugins::execute_myc_plugin,
             projects::save_project_file,
             projects::import_project_file,

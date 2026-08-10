@@ -23,6 +23,7 @@ import {
   migrateEnabledPluginKeys,
   pluginCompatibility,
   pluginKey,
+  supersededCompatiblePlugins,
   updateEnabledPluginKeys,
 } from "../app/plugins/identity";
 import { resolveTheme, sanitizeCssColor, themeCssVariables } from "../app/plugins/theme";
@@ -215,6 +216,7 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   };
   const allKeys = enableLatestPluginKeys([older, plugin]);
   assert.deepEqual([...allKeys], [pluginKey(plugin)]);
+  assert.deepEqual(supersededCompatiblePlugins([older, plugin]), [older]);
   assert.deepEqual(activePlugins([older, plugin], new Set([pluginKey(older), pluginKey(plugin)])), [plugin]);
   assert.deepEqual(
     [...updateEnabledPluginKeys([older, plugin], new Set([pluginKey(older)]), plugin, true)],

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     fs::File,
     io::{self, Read},
@@ -28,6 +28,10 @@ const MAX_UNPACKED_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 128;
 const REMOVED_PLUGINS_FILE: &str = "removed-plugins.json";
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn manifest_cache() -> &'static Mutex<HashMap<PathBuf, InstalledMycPlugin>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, InstalledMycPlugin>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -47,9 +51,58 @@ pub struct MycPluginMetadata {
     pub version: String,
     pub publisher: String,
     pub developer: String,
+    /// Optional stable developer identity. Older manifests only have the
+    /// human-readable `developer` field and remain valid.
+    #[serde(
+        default,
+        alias = "developerId",
+        alias = "developerUUID",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub developer_uuid: Option<String>,
     pub description: String,
     pub homepage: Option<String>,
     pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<PluginUpdateInfo>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginUpdateInfo {
+    pub latest_version: Option<String>,
+    pub url: Option<String>,
+    pub release_notes: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSettingOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSettingDefinition {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub setting_type: String,
+    pub default: Option<serde_json::Value>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+    pub options: Option<Vec<PluginSettingOption>>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub secret: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,6 +150,8 @@ pub struct MycPluginSpec {
     pub capabilities: Vec<String>,
     pub permissions: Vec<String>,
     pub contributes: Option<MycPluginContributions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<Vec<PluginSettingDefinition>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -197,8 +252,8 @@ fn read_removed_plugins(base: &Path) -> Result<HashSet<String>, String> {
     let bytes = fs::read(&path).map_err(|error| error.to_string())?;
     // 容忍历史 `{}` 写入（空对象等价空集合），但拒绝其它畸形内容 / Tolerate a
     // legacy `{}` write (empty object == empty set); reject anything else malformed.
-    let value: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|error| format!("Invalid removal registry: {error}"))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Invalid removal registry: {error}"))?;
     match value {
         serde_json::Value::Array(items) => {
             let mut removed = HashSet::with_capacity(items.len());
@@ -207,7 +262,9 @@ fn read_removed_plugins(base: &Path) -> Result<HashSet<String>, String> {
                     Some(entry) => {
                         removed.insert(entry.to_string());
                     }
-                    None => return Err("Invalid removal registry: entries must be strings".to_string()),
+                    None => {
+                        return Err("Invalid removal registry: entries must be strings".to_string())
+                    }
                 }
             }
             Ok(removed)
@@ -263,6 +320,50 @@ fn validate_slug(value: &str, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_plugin_settings(manifest: &MycPluginManifest) -> Result<(), String> {
+    crate::plugin_settings::validate_definitions(
+        manifest.spec.settings.as_deref().unwrap_or_default(),
+    )
+}
+
+fn validate_developer_uuid(value: &str) -> Result<(), String> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36
+        || ![8, 13, 18, 23].iter().all(|index| bytes[*index] == b'-')
+        || bytes
+            .iter()
+            .enumerate()
+            .any(|(index, byte)| ![8, 13, 18, 23].contains(&index) && !byte.is_ascii_hexdigit())
+    {
+        return Err("Developer UUID must be a canonical UUID".to_string());
+    }
+    Ok(())
+}
+
+fn validate_plugin_update(update: Option<&PluginUpdateInfo>) -> Result<(), String> {
+    let Some(update) = update else {
+        return Ok(());
+    };
+    if let Some(version) = update.latest_version.as_deref() {
+        validate_slug(version, "latest plugin version")?;
+    }
+    if update
+        .url
+        .as_deref()
+        .is_some_and(|url| !(url.starts_with("https://") || url.starts_with("http://")))
+    {
+        return Err("Plugin update URLs must use http:// or https://".to_string());
+    }
+    if update
+        .release_notes
+        .as_ref()
+        .is_some_and(|notes| notes.chars().count() > 2000)
+    {
+        return Err("Plugin update release notes must be at most 2000 characters".to_string());
+    }
+    Ok(())
+}
+
 fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     if manifest.api_version != MYC_API_VERSION {
         return Err(format!(
@@ -272,6 +373,11 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     }
     validate_slug(&manifest.metadata.id, "plugin id")?;
     validate_slug(&manifest.metadata.version, "plugin version")?;
+    if let Some(developer_uuid) = manifest.metadata.developer_uuid.as_deref() {
+        validate_developer_uuid(developer_uuid)?;
+    }
+    validate_plugin_update(manifest.metadata.update.as_ref())?;
+    validate_plugin_settings(manifest)?;
     if let Some(items) = manifest
         .spec
         .contributes
@@ -573,7 +679,9 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 return Err(format!("Invalid payload path: {path}"));
             }
             if digest.len() != 64
-                || !digest.chars().all(|character| character.is_ascii_hexdigit())
+                || !digest
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit())
                 || digest != &digest.to_lowercase()
             {
                 return Err(format!("Invalid payload sha256 for {path}"));
@@ -653,14 +761,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             let theme: ThemeManifest =
                 serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
             let edge_style = theme.edge_style.clone();
-            (
-                Some(theme),
-                edge_style,
-                None,
-                None,
-                None,
-                None,
-            )
+            (Some(theme), edge_style, None, None, None, None)
         }
         "EdgeStylePlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
@@ -769,7 +870,9 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
 
 /// 将清单序列化为 JSON 并移除 signature 字段，用于签名验证。
 /// Serializes manifest to JSON with the signature field removed, for signature verification.
-fn manifest_to_json_without_signature(manifest: &MycPluginManifest) -> Result<serde_json::Value, String> {
+fn manifest_to_json_without_signature(
+    manifest: &MycPluginManifest,
+) -> Result<serde_json::Value, String> {
     let mut value = serde_json::to_value(manifest)
         .map_err(|error| format!("Manifest serialization failed: {error}"))?;
     if let Some(obj) = value.as_object_mut() {
@@ -933,7 +1036,9 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
                     continue;
                 }
                 let Some(expected) = payloads.get(&relative) else {
-                    return Err(format!("Unlisted payload file in signed package: {relative}"));
+                    return Err(format!(
+                        "Unlisted payload file in signed package: {relative}"
+                    ));
                 };
                 let bytes = fs::read(&entry).map_err(|error| error.to_string())?;
                 let actual = format!("{:x}", Sha256::digest(&bytes));
@@ -973,7 +1078,11 @@ fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycP
     install_archive_into(&base, archive_path)
 }
 
-fn install_pending_from(base: &Path, packages: &Path, removed: &HashSet<String>) -> Result<(), String> {
+fn install_pending_from(
+    base: &Path,
+    packages: &Path,
+    removed: &HashSet<String>,
+) -> Result<(), String> {
     if !packages.is_dir() {
         return Ok(());
     }
@@ -1037,6 +1146,39 @@ fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn installed_plugin_directory(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+) -> Result<PathBuf, String> {
+    validate_slug(plugin_id, "plugin id")?;
+    validate_slug(plugin_version, "plugin version")?;
+    let directory = plugin_base(app)?
+        .join("installed")
+        .join(format!("{plugin_id}@{plugin_version}"));
+    if !directory.is_dir() {
+        return Err(format!(
+            "Plugin {plugin_id}@{plugin_version} is not installed"
+        ));
+    }
+    Ok(directory)
+}
+
+fn read_installed_plugin_by_identity(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+) -> Result<(PathBuf, InstalledMycPlugin), String> {
+    let directory = installed_plugin_directory(app, plugin_id, plugin_version)?;
+    let installed = read_installed_plugin(&directory)?;
+    if installed.manifest.metadata.id != plugin_id
+        || installed.manifest.metadata.version != plugin_version
+    {
+        return Err("Installed plugin identity does not match its directory".to_string());
+    }
+    Ok((directory, installed))
+}
+
 /// 将用户传入的插件路径解析为允许的 packages 目录下的真实路径。
 /// Resolves a caller-supplied plugin path to a real path inside the configured
 /// `packages` directory. Rejects paths that escape the directory.
@@ -1047,9 +1189,7 @@ fn resolve_package_path(base: &Path, path: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("Cannot resolve plugin path: {error}"))?;
     let normalized_allowed = allowed.canonicalize().unwrap_or(allowed);
     if !input.starts_with(&normalized_allowed) {
-        return Err(
-            "Plugin path must be inside the configured packages directory".to_string(),
-        );
+        return Err("Plugin path must be inside the configured packages directory".to_string());
     }
     Ok(input)
 }
@@ -1075,6 +1215,7 @@ pub fn uninstall_myc_plugin(
     plugin_version: String,
 ) -> Result<(), String> {
     let base = plugin_base(&app)?;
+    crate::plugin_settings::remove_plugin_settings(&app, &plugin_id, &plugin_version)?;
     uninstall_plugin_from(&base, &plugin_id, &plugin_version)
 }
 
@@ -1097,6 +1238,46 @@ pub fn list_installed_plugins(app: AppHandle) -> Result<Vec<InstalledMycPlugin>,
     }
     plugins.sort_by(|left, right| left.manifest.metadata.id.cmp(&right.manifest.metadata.id));
     Ok(plugins)
+}
+
+#[tauri::command]
+pub fn get_plugin_settings(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+) -> Result<crate::plugin_settings::PluginSettingsSnapshot, String> {
+    let (_directory, installed) =
+        read_installed_plugin_by_identity(&app, &plugin_id, &plugin_version)?;
+    crate::plugin_settings::get_snapshot(&app, &installed.manifest, &plugin_id, &plugin_version)
+}
+
+#[tauri::command]
+pub fn set_plugin_settings(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    values: BTreeMap<String, serde_json::Value>,
+) -> Result<crate::plugin_settings::PluginSettingsSnapshot, String> {
+    let (_directory, installed) =
+        read_installed_plugin_by_identity(&app, &plugin_id, &plugin_version)?;
+    crate::plugin_settings::set_values(
+        &app,
+        &installed.manifest,
+        &plugin_id,
+        &plugin_version,
+        values,
+    )
+}
+
+#[tauri::command]
+pub fn reset_plugin_settings(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+) -> Result<crate::plugin_settings::PluginSettingsSnapshot, String> {
+    let (_directory, installed) =
+        read_installed_plugin_by_identity(&app, &plugin_id, &plugin_version)?;
+    crate::plugin_settings::reset_values(&app, &installed.manifest, &plugin_id, &plugin_version)
 }
 
 /** 原生动作前解析已安装包并验证一个命名能力 / Resolve an installed package and prove one capability. */
@@ -1235,34 +1416,94 @@ fn validate_analysis_call(
     Ok(())
 }
 
+pub(crate) fn inject_trusted_host_settings(
+    input: &serde_json::Value,
+    plugin_id: &str,
+    plugin_version: &str,
+    settings: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let object = input
+        .as_object()
+        .ok_or_else(|| "Plugin call must be a JSON object".to_string())?;
+    let mut sanitized = object.clone();
+    // The frontend may submit an arbitrary `host` object, but it is never
+    // allowed to survive into the guest invocation.
+    let trusted_settings = settings
+        .as_object()
+        .ok_or_else(|| "Trusted plugin settings must be a JSON object".to_string())?;
+    // Keep the guest-facing schema deliberately allow-listed. In particular,
+    // a future caller cannot accidentally add a plaintext `secrets` field to
+    // an execution envelope.
+    let guest_settings = serde_json::json!({
+        "effectiveValues": trusted_settings
+            .get("effectiveValues")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+        "secretConfigured": trusted_settings
+            .get("secretConfigured")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    });
+    sanitized.remove("host");
+    sanitized.insert(
+        "host".to_string(),
+        serde_json::json!({
+            "pluginId": plugin_id,
+            "pluginVersion": plugin_version,
+            "settings": guest_settings,
+        }),
+    );
+    Ok(serde_json::Value::Object(sanitized))
+}
+
 #[tauri::command]
 pub fn execute_myc_plugin(
     app: AppHandle,
     plugin_id: String,
     plugin_version: String,
+    capability: Option<String>,
     input: serde_json::Value,
 ) -> Result<crate::plugin_vm::PluginExecutionResult, String> {
-    validate_slug(&plugin_id, "plugin id")?;
-    validate_slug(&plugin_version, "plugin version")?;
-    let directory = plugin_base(&app)?
-        .join("installed")
-        .join(format!("{plugin_id}@{plugin_version}"));
-    let installed = read_installed_plugin(&directory)?;
+    let (directory, installed) =
+        read_installed_plugin_by_identity(&app, &plugin_id, &plugin_version)?;
     if installed.manifest.kind != "AnalysisPlugin" || installed.runtime.is_none() {
         return Err("Only installed AnalysisPlugin packages can execute".to_string());
+    }
+    let requested_capability = capability.as_deref().unwrap_or("analysis.run");
+    validate_slug(requested_capability, "plugin capability")?;
+    if !installed
+        .manifest
+        .spec
+        .capabilities
+        .iter()
+        .any(|declared| declared == "analysis.run")
+    {
+        return Err("AnalysisPlugin must declare analysis.run".to_string());
     }
     if !installed
         .manifest
         .spec
         .capabilities
         .iter()
-        .any(|capability| capability == "analysis.run")
+        .any(|declared| declared == requested_capability)
     {
-        return Err("AnalysisPlugin must declare analysis.run".to_string());
+        return Err(format!(
+            "Plugin {plugin_id}@{plugin_version} does not declare {requested_capability}"
+        ));
     }
     validate_analysis_call(&installed, &input)?;
+    let persisted =
+        crate::plugin_settings::persisted_values_for_execution(&app, &plugin_id, &plugin_version)?;
+    let settings = crate::plugin_settings::build_execution_settings(
+        &installed.manifest,
+        &plugin_id,
+        &plugin_version,
+        persisted,
+    )?;
+    let trusted_input =
+        inject_trusted_host_settings(&input, &plugin_id, &plugin_version, settings)?;
     let entry = directory.join(&installed.manifest.spec.entry);
-    crate::plugin_vm::execute_plugin(&entry, &plugin_id, &plugin_version, &input)
+    crate::plugin_vm::execute_plugin(&entry, &plugin_id, &plugin_version, &trusted_input)
 }
 
 #[cfg(test)]
@@ -1401,6 +1642,51 @@ spec:
         )
         .expect_err("scope escalation is rejected")
         .contains("does not contribute"));
+    }
+
+    #[test]
+    fn trusted_host_settings_replace_frontend_host_fields() {
+        let input = json!({
+            "apiVersion": PLUGIN_CALL_API_VERSION,
+            "operation": "self-test",
+            "host": {
+                "pluginId": "attacker.plugin",
+                "settings": {"api-key": "attacker-secret"}
+            },
+            "payload": {"value": 1}
+        });
+        let trusted_settings = json!({
+            "effectiveValues": {"model": "luna"},
+            "secretConfigured": {"api-key": true},
+            "secrets": {"api-key": "host-secret"}
+        });
+        let sanitized =
+            inject_trusted_host_settings(&input, "myc.runtime-smoke", "1.0.0", trusted_settings)
+                .expect("host settings are injected");
+
+        assert_eq!(sanitized["host"]["pluginId"], "myc.runtime-smoke");
+        assert_eq!(sanitized["host"]["pluginVersion"], "1.0.0");
+        assert!(sanitized["host"]["settings"].get("secrets").is_none());
+        assert!(!serde_json::to_string(&sanitized)
+            .expect("serialize sanitized input")
+            .contains("attacker-secret"));
+        assert!(!serde_json::to_string(&sanitized)
+            .expect("serialize sanitized input")
+            .contains("host-secret"));
+        assert_eq!(sanitized["payload"]["value"], 1);
+    }
+
+    #[test]
+    fn validates_optional_developer_uuid_without_breaking_legacy_metadata() {
+        let mut manifest: MycPluginManifest =
+            serde_yaml::from_str(&runtime_manifest("rust")).expect("parse runtime manifest");
+        validate_manifest(&manifest).expect("legacy developer field remains valid");
+        manifest.metadata.developer_uuid = Some("550e8400-e29b-41d4-a716-446655440000".to_string());
+        validate_manifest(&manifest).expect("canonical developer UUID is valid");
+        manifest.metadata.developer_uuid = Some("not-a-uuid".to_string());
+        assert!(validate_manifest(&manifest)
+            .expect_err("invalid developer UUID is rejected")
+            .contains("Developer UUID"));
     }
 
     #[test]
@@ -1724,8 +2010,7 @@ spec:
 
         // 坏包在前(文件名排序靠前),好包在后:坏包不能阻断好包安装。
         // The corrupt package sorts first; it must not block the valid one.
-        fs::write(packages.join("aaa.corrupt@1.0.0.myc"), b"not a zip")
-            .expect("corrupt package");
+        fs::write(packages.join("aaa.corrupt@1.0.0.myc"), b"not a zip").expect("corrupt package");
 
         // 好包的文件名故意与 manifest id@version 不一致:
         // 发现、去重、墓碑都必须按 manifest 身份而不是文件名。
@@ -1774,7 +2059,8 @@ spec:
             "valid package installs under its manifest identity"
         );
         assert!(
-            !root.path()
+            !root
+                .path()
                 .join("installed")
                 .join("aaa.corrupt@1.0.0")
                 .exists(),
@@ -1798,7 +2084,8 @@ spec:
         install_pending_from(root2.path(), &packages2, &tombstoned)
             .expect("tombstoned pass completes");
         assert!(
-            !root2.path()
+            !root2
+                .path()
                 .join("installed")
                 .join("myc.valid-theme@1.0.0")
                 .exists(),
@@ -1880,7 +2167,8 @@ spec:
                     "theme.json": theme_hash
                 }
             });
-            let payload = crate::signing::manifest_payload(&manifest_value).expect("manifest payload");
+            let payload =
+                crate::signing::manifest_payload(&manifest_value).expect("manifest payload");
             let signature_b64 = sign(&BASE64.encode(&payload));
             yaml.push_str(&format!("signature: {signature_b64}\n"));
         }
@@ -1896,10 +2184,8 @@ spec:
         let pubkey_b64 = BASE64.encode(verifying_key.as_bytes());
         let publisher = "trusted-publisher";
 
-        let trusted_json =
-            serde_json::json!({ publisher: pubkey_b64 }).to_string();
-        fs::write(root.path().join("trusted-keys.json"), trusted_json)
-            .expect("write trusted keys");
+        let trusted_json = serde_json::json!({ publisher: pubkey_b64 }).to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json).expect("write trusted keys");
 
         let package = root.path().join("signed-theme.myc");
         let file = File::create(&package).expect("create archive");
@@ -1944,10 +2230,8 @@ spec:
         let pubkey_b64_b = BASE64.encode(verifying_key_b.as_bytes());
         let publisher = "untrusted-publisher";
 
-        let trusted_json =
-            serde_json::json!({ publisher: pubkey_b64_b }).to_string();
-        fs::write(root.path().join("trusted-keys.json"), trusted_json)
-            .expect("write trusted keys");
+        let trusted_json = serde_json::json!({ publisher: pubkey_b64_b }).to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json).expect("write trusted keys");
 
         let package = root.path().join("bad-sig.myc");
         let file = File::create(&package).expect("create archive");
@@ -2032,7 +2316,8 @@ spec:
     fn unsigned_plugin_still_installs() {
         let root = tempdir().expect("temp root");
 
-        let manifest_yaml = signed_theme_manifest("unsigned-publisher", None::<&dyn Fn(&str) -> String>);
+        let manifest_yaml =
+            signed_theme_manifest("unsigned-publisher", None::<&dyn Fn(&str) -> String>);
         let theme_json = valid_theme_json().to_string();
 
         let package = root.path().join("unsigned.myc");
@@ -2068,10 +2353,8 @@ spec:
         let pubkey_b64 = BASE64.encode(verifying_key.as_bytes());
         let publisher = "honest-publisher";
 
-        let trusted_json =
-            serde_json::json!({ publisher: pubkey_b64 }).to_string();
-        fs::write(root.path().join("trusted-keys.json"), trusted_json)
-            .expect("write trusted keys");
+        let trusted_json = serde_json::json!({ publisher: pubkey_b64 }).to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json).expect("write trusted keys");
 
         let original_value = serde_json::json!({
             "apiVersion": "researchcanvas.dev/v1alpha1",
@@ -2238,7 +2521,10 @@ spec:
         );
         let error = install_archive_into(root3.path(), &package)
             .expect_err("unlisted payload must be rejected");
-        assert!(error.contains("Unlisted payload"), "unexpected error: {error}");
+        assert!(
+            error.contains("Unlisted payload"),
+            "unexpected error: {error}"
+        );
 
         // 清单列出但包内缺失 → 拒绝 / Listed but missing → reject.
         let root4 = tempdir().expect("fourth root");
@@ -2268,10 +2554,9 @@ spec:
         let signing_key = SigningKey::generate(&mut rand_core::OsRng);
         let verifying_key = signing_key.verifying_key();
         let publisher = "payloadless-publisher";
-        let trusted_json = serde_json::json!({ publisher: BASE64.encode(verifying_key.as_bytes()) })
-            .to_string();
-        fs::write(root.path().join("trusted-keys.json"), trusted_json)
-            .expect("write trusted keys");
+        let trusted_json =
+            serde_json::json!({ publisher: BASE64.encode(verifying_key.as_bytes()) }).to_string();
+        fs::write(root.path().join("trusted-keys.json"), trusted_json).expect("write trusted keys");
 
         // 手工构造:有签名但无 payloads(攻击者换掉 wasm 后老方案仍过签)。
         // Hand-built: signature present, payloads absent — the old gap where a

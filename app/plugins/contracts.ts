@@ -38,9 +38,141 @@ export interface MycPluginMetadata {
   version: string;
   publisher: string;
   developer: string;
+  /** Stable publisher/developer UUID; optional for legacy manifests. */
+  developerId?: string;
   description: string;
   homepage?: string;
   license?: string;
+  update?: PluginUpdateInfo;
+}
+
+/** Declarative update metadata exposed by the plugin store. */
+export interface PluginUpdateInfo {
+  latestVersion?: string;
+  url?: string;
+  releaseNotes?: string;
+}
+
+export type PluginSettingType =
+  | "boolean"
+  | "number"
+  | "text"
+  | "select";
+
+export interface PluginSettingOption {
+  value: string;
+  label: string;
+}
+
+/** A bounded, host-rendered setting; plugins never receive a React callback. */
+export interface PluginSettingDefinition {
+  id: string;
+  label: string;
+  type: PluginSettingType;
+  /** Secret text is host-owned, write-only, and never exposed to plugins. */
+  secret?: boolean;
+  /** Whether the host must receive a value before enabling/executing the plugin. */
+  required?: boolean;
+  description?: string;
+  /** Host-rendered input hint; never a secret value. */
+  placeholder?: string;
+  /** Stable UI grouping key, such as `model` or `advanced`. */
+  group?: string;
+  /** Derived UI hint; host treats `secret: true` as write-only. */
+  writeOnly?: boolean;
+  default?: boolean | number | string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: PluginSettingOption[];
+}
+
+/** Agent model configuration is resolved by the host model gateway. */
+export interface AgentModelConfiguration {
+  ownership: "host-managed";
+  invocation: "host-model-gateway";
+  settingIds: string[];
+  secretSettingIds: string[];
+  agentReceives: string[];
+  agentReceivesPlaintextSecrets: false;
+  credentialPolicy?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPluginSettingType(value: unknown): value is PluginSettingType {
+  return (
+    value === "boolean" ||
+    value === "number" ||
+    value === "text" ||
+    value === "select"
+  );
+}
+
+/**
+ * Normalizes host-delivered manifest data for settings dialogs.
+ * Invalid declarations are ignored; secret defaults are never forwarded.
+ */
+export function normalizePluginSettings(value: unknown): PluginSettingDefinition[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    const label = typeof candidate.label === "string" ? candidate.label.trim() : "";
+    const declaredType = candidate.type;
+    // `type: secret` is accepted only as a legacy input spelling. The shared
+    // contract stays canonical as `type: text, secret: true`, which lets the
+    // native validator enforce one explicit secret boundary.
+    const isSecret = candidate.secret === true || candidate.writeOnly === true || declaredType === "secret";
+    const type = declaredType === "secret" ? "text" : declaredType;
+    if (!id || !label || !isPluginSettingType(type)) return [];
+
+    const setting: PluginSettingDefinition = { id, label, type };
+    if (isSecret) {
+      setting.secret = true;
+      setting.writeOnly = true;
+    }
+    if (typeof candidate.required === "boolean") setting.required = candidate.required;
+    if (typeof candidate.description === "string") setting.description = candidate.description;
+    if (typeof candidate.placeholder === "string") setting.placeholder = candidate.placeholder;
+    if (typeof candidate.group === "string") setting.group = candidate.group;
+
+    if (!isSecret) {
+      const defaultValue = candidate.default;
+      if (
+        typeof defaultValue === "boolean" ||
+        typeof defaultValue === "number" ||
+        typeof defaultValue === "string"
+      ) {
+        setting.default = defaultValue;
+      }
+    }
+    if (typeof candidate.min === "number" && Number.isFinite(candidate.min)) {
+      setting.min = candidate.min;
+    }
+    if (typeof candidate.max === "number" && Number.isFinite(candidate.max)) {
+      setting.max = candidate.max;
+    }
+    if (
+      typeof candidate.step === "number" &&
+      Number.isFinite(candidate.step) &&
+      candidate.step > 0
+    ) {
+      setting.step = candidate.step;
+    }
+    if (Array.isArray(candidate.options)) {
+      const options = candidate.options.flatMap((option) => {
+        if (!isRecord(option)) return [];
+        if (typeof option.value !== "string" || typeof option.label !== "string") return [];
+        return [{ value: option.value, label: option.label }];
+      });
+      if (options.length > 0) setting.options = options;
+    }
+    return [setting];
+  });
 }
 
 export interface MycPluginSpec {
@@ -50,6 +182,7 @@ export interface MycPluginSpec {
   capabilities: string[];
   permissions: string[];
   contributes?: MycPluginContributions;
+  settings?: PluginSettingDefinition[];
 }
 
 export type PluginContextMenuIcon =
@@ -156,7 +289,8 @@ export interface AgentPluginDescriptor {
   agentType?: string;
   reviewGated: true;
   capabilities?: string[];
-  securityBoundary?: Record<string, boolean>;
+  securityBoundary?: Record<string, boolean | string>;
+  modelConfiguration?: AgentModelConfiguration;
   pipeline?: Record<string, unknown>;
 }
 

@@ -25,6 +25,11 @@ import type {
   PluginGraphPatch,
   PluginReference,
 } from "../../../app/plugins/contracts";
+import type {
+  PluginSecretMutation,
+  PluginSettingsSnapshot,
+  PluginSettingsWrite,
+} from "../../../app/plugins/tauri-client";
 import type { ContextMenuActionId, ContextMenuScope } from "../../../app/features/research-workspace/workspace-context-menu";
 import type { WorkspacePreferences } from "../../../app/features/research-workspace/workspace-preferences";
 import type { RadialMenuAction, RadialMenuPosition } from "../../../app/features/research-workspace/workspace-radial-menu";
@@ -64,6 +69,211 @@ export function usePanelI18n() {
   });
 
   return { locale, t, syncLocale };
+}
+
+export type HostPluginSettingType = "boolean" | "number" | "text" | "select" | "secret";
+
+export type HostPluginSettingOption = {
+  value: string;
+  label: string;
+};
+
+/** UI-side compatibility shape; `secret` is accepted without changing the shared install contract. */
+export type HostPluginSettingDefinition = {
+  id: string;
+  label: string;
+  description?: string;
+  type: HostPluginSettingType;
+  default?: boolean | number | string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: HostPluginSettingOption[];
+  placeholder?: string;
+  required?: boolean;
+  group?: string;
+};
+
+export type PluginSecretDraft = {
+  action: "keep" | "set" | "clear";
+  value: string;
+};
+
+export type PluginSettingsDraft = Record<string, boolean | number | string | PluginSecretDraft>;
+
+export type PluginSettingsTarget = {
+  source: "builtin" | "installed";
+  reference: PluginReference;
+  name: string;
+  version: string;
+  kind: string;
+  description: string;
+  publisher?: string;
+  developer?: string;
+  developerUuid?: string;
+  signaturePresent?: boolean;
+  update?: { latestVersion?: string; url?: string; releaseNotes?: string };
+  definitions: HostPluginSettingDefinition[];
+  /** Built-in catalog entries use the browser-safe store until native installation exists. */
+  native: boolean;
+  uninstallable: boolean;
+};
+
+export function normalizePluginSettingDefinitions(input: unknown): HostPluginSettingDefinition[] {
+  if (!Array.isArray(input)) return [];
+  return input.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const source = candidate as Record<string, unknown>;
+    const id = typeof source.id === "string" ? source.id.trim() : "";
+    if (!id) return [];
+    const declaredType = source.type;
+    const type = source.secret === true || source.writeOnly === true ? "secret" : declaredType;
+    if (type !== "boolean" && type !== "number" && type !== "text" && type !== "select" && type !== "secret") {
+      return [];
+    }
+    const options = Array.isArray(source.options)
+      ? source.options.flatMap((option) => {
+          if (!option || typeof option !== "object") return [];
+          const item = option as Record<string, unknown>;
+          return typeof item.value === "string" && typeof item.label === "string"
+            ? [{ value: item.value, label: item.label }]
+            : [];
+        })
+      : undefined;
+    const definition: HostPluginSettingDefinition = {
+      id,
+      label: typeof source.label === "string" && source.label.trim() ? source.label : id,
+      description: typeof source.description === "string" ? source.description : undefined,
+      type,
+      placeholder: typeof source.placeholder === "string" ? source.placeholder : undefined,
+      required: source.required === true,
+      group: typeof source.group === "string" ? source.group : undefined,
+      default: type !== "secret" && (
+        typeof source.default === "boolean" || typeof source.default === "number" || typeof source.default === "string"
+      )
+        ? source.default
+        : undefined,
+      min: typeof source.min === "number" && Number.isFinite(source.min) ? source.min : undefined,
+      max: typeof source.max === "number" && Number.isFinite(source.max) ? source.max : undefined,
+      step: typeof source.step === "number" && Number.isFinite(source.step) && source.step > 0 ? source.step : undefined,
+      options,
+    };
+    if (definition.type === "select" && !definition.options?.length) return [];
+    return [definition];
+  });
+}
+
+function defaultForSetting(definition: HostPluginSettingDefinition): boolean | number | string | undefined {
+  if (definition.type === "secret") return undefined;
+  if (definition.type === "boolean") return typeof definition.default === "boolean" ? definition.default : false;
+  if (definition.type === "number") {
+    const value = typeof definition.default === "number" && Number.isFinite(definition.default)
+      ? definition.default
+      : definition.min ?? 0;
+    return Math.min(definition.max ?? value, Math.max(definition.min ?? value, value));
+  }
+  if (definition.type === "select") {
+    const selected = typeof definition.default === "string" && definition.options?.some((option) => option.value === definition.default)
+      ? definition.default
+      : definition.options?.[0]?.value;
+    return selected ?? "";
+  }
+  return typeof definition.default === "string" ? definition.default : "";
+}
+
+export function defaultPluginSettingsDraft(
+  definitions: readonly HostPluginSettingDefinition[],
+  configuredSecrets: Readonly<Record<string, boolean>> = {},
+): PluginSettingsDraft {
+  const draft: PluginSettingsDraft = {};
+  for (const definition of definitions) {
+    if (definition.type === "secret") {
+      draft[definition.id] = { action: configuredSecrets[definition.id] ? "keep" : "clear", value: "" };
+      continue;
+    }
+    const value = defaultForSetting(definition);
+    if (value !== undefined) draft[definition.id] = value;
+  }
+  return draft;
+}
+
+export function draftFromPluginSettings(
+  definitions: readonly HostPluginSettingDefinition[],
+  snapshot: PluginSettingsSnapshot,
+): PluginSettingsDraft {
+  const defaults = defaultPluginSettingsDraft(definitions, snapshot.configuredSecrets);
+  for (const definition of definitions) {
+    if (definition.type === "secret") continue;
+    const value = snapshot.values[definition.id];
+    if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+      defaults[definition.id] = value;
+    }
+  }
+  return defaults;
+}
+
+export function clonePluginSettingsDraft(draft: PluginSettingsDraft): PluginSettingsDraft {
+  return Object.fromEntries(
+    Object.entries(draft).map(([id, value]) => [id, typeof value === "object" ? { ...value } : value]),
+  );
+}
+
+export function validatePluginSettingsDraft(
+  definitions: readonly HostPluginSettingDefinition[],
+  draft: PluginSettingsDraft,
+  configuredSecrets: Readonly<Record<string, boolean>> = {},
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const definition of definitions) {
+    const value = draft[definition.id];
+    if (definition.type === "secret") {
+      const secret: PluginSecretDraft = value && typeof value === "object"
+        ? value as PluginSecretDraft
+        : { action: "keep", value: "" };
+      if (!["keep", "set", "clear"].includes(secret.action)) errors[definition.id] = "Invalid secret action.";
+      if (secret.action === "set" && !secret.value.trim()) errors[definition.id] = "Enter a value or choose Clear.";
+      if (
+        definition.required &&
+        (secret.action === "clear" || (secret.action === "keep" && !configuredSecrets[definition.id]))
+      ) {
+        errors[definition.id] = "A value is required.";
+      }
+      continue;
+    }
+    if (definition.type === "boolean" && typeof value !== "boolean") errors[definition.id] = "Choose true or false.";
+    if (definition.type === "number") {
+      if (typeof value !== "number" || !Number.isFinite(value)) errors[definition.id] = "Enter a valid number.";
+      else if (definition.min !== undefined && value < definition.min) errors[definition.id] = `Value must be at least ${definition.min}.`;
+      else if (definition.max !== undefined && value > definition.max) errors[definition.id] = `Value must be at most ${definition.max}.`;
+    }
+    if (definition.type === "text" && typeof value !== "string") errors[definition.id] = "Enter text.";
+    if (definition.type === "select" && (typeof value !== "string" || !definition.options?.some((option) => option.value === value))) {
+      errors[definition.id] = "Choose one of the listed options.";
+    }
+  }
+  return errors;
+}
+
+export function settingsWriteFromDraft(
+  definitions: readonly HostPluginSettingDefinition[],
+  draft: PluginSettingsDraft,
+): { values: Record<string, unknown>; secrets: Record<string, PluginSecretMutation> } {
+  const values: Record<string, unknown> = {};
+  const secrets: Record<string, PluginSecretMutation> = {};
+  for (const definition of definitions) {
+    const value = draft[definition.id];
+    if (definition.type === "secret") {
+      const secret: PluginSecretDraft = value && typeof value === "object"
+        ? value as PluginSecretDraft
+        : { action: "keep", value: "" };
+      secrets[definition.id] = secret.action === "set"
+        ? { action: "set", value: secret.value }
+        : { action: secret.action };
+    } else if (value !== undefined) {
+      values[definition.id] = value;
+    }
+  }
+  return { values, secrets };
 }
 
 export type ComposerState = { type: ResearchNodeType; x: number; y: number };
@@ -177,6 +387,19 @@ export type PluginStoreItemProps = {
   onOpenSettings?: () => void;
 };
 
+export type PluginSettingsDialogProps = {
+  target: PluginSettingsTarget;
+  draft: PluginSettingsDraft;
+  configuredSecrets: Readonly<Record<string, boolean>>;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  onClose: () => void;
+  onSave: (draft: PluginSettingsDraft) => Promise<void>;
+  onReset: () => Promise<void>;
+  onUninstall?: () => Promise<void>;
+};
+
 export type PluginStoreDialogProps = { onClose: () => void };
 
 export type PluginHostSnapshot = {
@@ -189,6 +412,23 @@ export type PluginHostSnapshot = {
   setPluginEnabled: (plugin: InstalledMycPlugin, enabled: boolean) => void;
   enableAll: () => void;
   removeIncompatible: () => Promise<number>;
+  loadPluginSettings: (
+    plugin: PluginReference,
+    definitions: readonly HostPluginSettingDefinition[],
+    native?: boolean,
+  ) => Promise<PluginSettingsSnapshot>;
+  savePluginSettings: (
+    plugin: PluginReference,
+    definitions: readonly HostPluginSettingDefinition[],
+    write: PluginSettingsWrite,
+    native?: boolean,
+  ) => Promise<PluginSettingsSnapshot>;
+  resetPluginSettings: (
+    plugin: PluginReference,
+    definitions: readonly HostPluginSettingDefinition[],
+    native?: boolean,
+  ) => Promise<PluginSettingsSnapshot>;
+  uninstall: (plugin: InstalledMycPlugin) => Promise<void>;
 };
 
 export type PluginRunRequest = {

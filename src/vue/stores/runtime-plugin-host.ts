@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import {
   pluginReference,
   type InstalledMycPlugin,
+  type PluginReference,
 } from "../../../app/plugins/contracts";
 import {
   enabledPluginsStorageKey,
@@ -20,8 +21,14 @@ import {
 import {
   installMycPlugin,
   listInstalledMycPlugins,
+  getPluginSettings,
+  resetPluginSettings as resetPluginSettingsNative,
+  savePluginSettings as savePluginSettingsNative,
   uninstallMycPlugin,
+  type PluginSettingsSnapshot,
+  type PluginSettingsWrite,
 } from "../../../app/plugins/tauri-client";
+import type { HostPluginSettingDefinition } from "../components/panel-types";
 
 function writeEnabledPluginKeys(keys: ReadonlySet<string>): void {
   if (typeof window === "undefined") return;
@@ -38,6 +45,9 @@ export const useRuntimePluginHostStore = defineStore("runtime-plugin-host", () =
   const enabledPluginKeys = shallowRef<Set<string>>(new Set());
   const loading = shallowRef(true);
   const error = shallowRef("");
+  const pluginSettings = shallowRef<Record<string, PluginSettingsSnapshot>>({});
+  const pluginSettingsLoading = shallowRef<Set<string>>(new Set());
+  const pluginSettingsErrors = shallowRef<Record<string, string>>({});
 
   const activePlugins = computed(() =>
     resolveActivePlugins(installedPlugins.value, enabledPluginKeys.value),
@@ -92,6 +102,79 @@ export const useRuntimePluginHostStore = defineStore("runtime-plugin-host", () =
     commitEnabled(enableLatestPluginKeys(installedPlugins.value));
   };
 
+  const settingsKey = (plugin: PluginReference): string => `${plugin.id}@${plugin.version}`;
+
+  const setSettingsLoading = (plugin: PluginReference, isLoading: boolean): void => {
+    const next = new Set(pluginSettingsLoading.value);
+    if (isLoading) next.add(settingsKey(plugin));
+    else next.delete(settingsKey(plugin));
+    pluginSettingsLoading.value = next;
+  };
+
+  const loadPluginSettings = async (
+    plugin: PluginReference,
+    definitions: readonly HostPluginSettingDefinition[],
+    native = true,
+  ): Promise<PluginSettingsSnapshot> => {
+    const key = settingsKey(plugin);
+    setSettingsLoading(plugin, true);
+    pluginSettingsErrors.value = { ...pluginSettingsErrors.value, [key]: "" };
+    try {
+      const snapshot = await getPluginSettings(plugin, definitions, { native });
+      pluginSettings.value = { ...pluginSettings.value, [key]: snapshot };
+      return snapshot;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      pluginSettingsErrors.value = { ...pluginSettingsErrors.value, [key]: message };
+      throw cause;
+    } finally {
+      setSettingsLoading(plugin, false);
+    }
+  };
+
+  const savePluginSettings = async (
+    plugin: PluginReference,
+    definitions: readonly HostPluginSettingDefinition[],
+    write: PluginSettingsWrite,
+    native = true,
+  ): Promise<PluginSettingsSnapshot> => {
+    const key = settingsKey(plugin);
+    setSettingsLoading(plugin, true);
+    pluginSettingsErrors.value = { ...pluginSettingsErrors.value, [key]: "" };
+    try {
+      const snapshot = await savePluginSettingsNative(plugin, definitions, write, { native });
+      pluginSettings.value = { ...pluginSettings.value, [key]: snapshot };
+      return snapshot;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      pluginSettingsErrors.value = { ...pluginSettingsErrors.value, [key]: message };
+      throw cause;
+    } finally {
+      setSettingsLoading(plugin, false);
+    }
+  };
+
+  const resetPluginSettings = async (
+    plugin: PluginReference,
+    definitions: readonly HostPluginSettingDefinition[],
+    native = true,
+  ): Promise<PluginSettingsSnapshot> => {
+    const key = settingsKey(plugin);
+    setSettingsLoading(plugin, true);
+    pluginSettingsErrors.value = { ...pluginSettingsErrors.value, [key]: "" };
+    try {
+      const snapshot = await resetPluginSettingsNative(plugin, definitions, { native });
+      pluginSettings.value = { ...pluginSettings.value, [key]: snapshot };
+      return snapshot;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      pluginSettingsErrors.value = { ...pluginSettingsErrors.value, [key]: message };
+      throw cause;
+    } finally {
+      setSettingsLoading(plugin, false);
+    }
+  };
+
   const install = async (path: string): Promise<InstalledMycPlugin> => {
     const plugin = await installMycPlugin(path);
     installedPlugins.value = await listInstalledMycPlugins();
@@ -107,6 +190,15 @@ export const useRuntimePluginHostStore = defineStore("runtime-plugin-host", () =
     }
     await refresh();
     return incompatible.length;
+  };
+
+  const uninstall = async (plugin: InstalledMycPlugin): Promise<void> => {
+    await uninstallMycPlugin(pluginReference(plugin));
+    const key = pluginKey(plugin);
+    const nextSettings = { ...pluginSettings.value };
+    delete nextSettings[key];
+    pluginSettings.value = nextSettings;
+    await refresh();
   };
 
   let refreshFrame: number | null = null;
@@ -132,11 +224,18 @@ export const useRuntimePluginHostStore = defineStore("runtime-plugin-host", () =
     activePluginKeys,
     loading,
     error,
+    pluginSettings,
+    pluginSettingsLoading,
+    pluginSettingsErrors,
     refresh,
     install,
     setPluginEnabled,
     enableAll,
     removeIncompatible,
+    loadPluginSettings,
+    savePluginSettings,
+    resetPluginSettings,
+    uninstall,
     start,
     stop,
   };

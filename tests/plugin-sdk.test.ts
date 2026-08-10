@@ -42,3 +42,20 @@ test("community model adapters share a review-gated GraphPatch schema", () => {
   assert.match(python, /class NetworkBlockExtractor\(Protocol\)/);
   assert.match(python, /"reviewRequired": True/);
 });
+
+test("SDK setting declarations keep credentials host-owned and write-only", () => {
+  const rust = read("plugins/sdk/rust/src/lib.rs");
+  const cpp = read("plugins/sdk/cpp/research_canvas_plugin.h");
+  const python = read("plugins/sdk/python/research_canvas.py");
+
+  assert.match(rust, /pub struct PluginSettingDefinition/);
+  assert.match(rust, /pub trait SettingReader/);
+  assert.match(cpp, /struct PluginSettingDefinition/);
+  assert.match(cpp, /class SettingsReader/);
+  assert.match(python, /class PluginSetting/);
+  assert.match(python, /class SettingReader\(Protocol\)/);
+  assert.match(python, /"writeOnly": self\.write_only or self\.is_secret/);
+  assert.doesNotMatch(rust, /get_secret/i);
+  assert.doesNotMatch(cpp, /getSecret\s*\(/);
+  assert.doesNotMatch(python, /get_secret/);
+});

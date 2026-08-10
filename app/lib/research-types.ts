@@ -2,6 +2,10 @@
  * Renderer-agnostic domain contract for persisted research projects, graph
  * algorithms, plugins, and fixtures. Keep UI-only fields out of this module.
  */
+import type {
+  PluginSettingDefinition,
+  PluginUpdateInfo,
+} from "../plugins/contracts";
 /** 允许持久化的研究实体类别 / Persisted research entity categories. */
 export const NODE_TYPES = [
   "question",
@@ -304,6 +308,11 @@ export interface PluginManifest {
   permissions: string[];
   capabilities: string[];
   publisher: string;
+  developer?: string;
+  homepage?: string;
+  license?: string;
+  update?: PluginUpdateInfo;
+  settings?: PluginSettingDefinition[];
 }
 
 /** 声明式主题中可嵌入的视觉-only 边样式（不含 id/name 等元数据）。 */

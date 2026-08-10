@@ -180,6 +180,24 @@ export function latestCompatiblePlugins(
   );
 }
 
+/**
+ * Returns compatible packages which are shadowed by a newer compatible
+ * version of the same plugin. They stay installed so the host can offer an
+ * explicit removal action, but must not be the primary store entry.
+ */
+export function supersededCompatiblePlugins(
+  plugins: readonly InstalledMycPlugin[],
+): InstalledMycPlugin[] {
+  const latestKeys = new Set(latestCompatiblePlugins(plugins).map(pluginKey));
+  return plugins
+    .filter((plugin) => pluginCompatibility(plugin).compatible && !latestKeys.has(pluginKey(plugin)))
+    .sort((left, right) => {
+      const byId = left.manifest.metadata.id.localeCompare(right.manifest.metadata.id);
+      if (byId !== 0) return byId;
+      return comparePluginVersions(left.manifest.metadata.version, right.manifest.metadata.version);
+    });
+}
+
 /** Selects at most one enabled, compatible version for every plugin id. */
 export function activePlugins(
   plugins: readonly InstalledMycPlugin[],

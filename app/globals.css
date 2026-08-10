@@ -515,32 +515,33 @@ html.custom-cursor-active * {
   left: 0;
   pointer-events: none;
   z-index: 9999;
-  will-change: transform, opacity, scale;
+  will-change: translate, transform, opacity;
   width: 36px;
   height: 36px;
   margin-left: -18px;
   margin-top: -18px;
   border-radius: 50%;
   border: 1.5px solid rgba(36, 39, 43, 0.28);
-  scale: 1;
+  border-color: var(--color-blue, #2457d6);
+  transform: scale(1);
   transition:
-    scale 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
     border-color 0.35s ease,
     background-color 0.35s ease,
     opacity 0.3s ease;
 }
 
 .custom-cursor-ring.is-hover {
-  scale: calc(56 / 36);
-  border-color: var(--color-blue, #2457d6);
+  transform: scale(0.6);
+  /* border-color: var(--color-blue, #2457d6); */
   background-color: color-mix(in srgb, var(--color-blue, #2457d6) 8%, transparent);
 }
 
 .custom-cursor-ring.is-longpress {
   opacity: 0;
-  scale: 1;
+  transform: scale(1);
   transition:
-    scale 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
     border-color 0.5s ease,
     opacity 0.5s ease;
 }

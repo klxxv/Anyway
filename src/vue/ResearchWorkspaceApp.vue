@@ -146,6 +146,7 @@ const selectedNodeId = computed(() => workspace.selectedNodeId.value);
 const selectedEdgeId = computed(() => workspace.selectedEdgeId.value);
 const canUndo = computed(() => workspace.canUndo.value);
 const canRedo = computed(() => workspace.canRedo.value);
+const canvasInputBlocked = computed(() => settingsOpen.value || pluginStoreOpen.value);
 
 const folderWorkspace = ref<FolderWorkspaceState | null>(null);
 const gitSnapshot = ref<GitWorkspaceState["snapshot"] | null>(null);
@@ -744,6 +745,7 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
           :shortcuts="preferences.shortcuts"
           :plugin-context-menu-actions="pluginContextMenuActions"
           :trackpad-frame="trackpadFrame"
+          :canvas-input-blocked="canvasInputBlocked"
           :diff-overlay="diffOpen && diffMode === 'overlay' ? diffOverlay : null"
           :diff-focus="diffOpen && diffMode === 'overlay' ? diffFocus : null"
           @legend-filter="handleLegendFilter"

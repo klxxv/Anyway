@@ -6,6 +6,151 @@ import type {
 } from "./contracts";
 import { PLUGIN_CALL_API_VERSION } from "./contracts";
 
+export type PluginSettingsSnapshot = {
+  pluginId: string;
+  pluginVersion: string;
+  values: Record<string, unknown>;
+  /** Secret values are never returned; only their configured state is exposed. */
+  configuredSecrets: Record<string, boolean>;
+};
+
+export type PluginSecretMutation =
+  | { action: "keep" }
+  | { action: "clear" }
+  | { action: "set"; value: string };
+
+export type PluginSettingsWrite = {
+  values: Record<string, unknown>;
+  secrets: Record<string, PluginSecretMutation>;
+};
+
+type PluginSettingDefinitionLike = {
+  id?: unknown;
+  type?: unknown;
+  secret?: unknown;
+  writeOnly?: unknown;
+  default?: unknown;
+  min?: unknown;
+  max?: unknown;
+  step?: unknown;
+  options?: unknown;
+};
+
+/** Accept the canonical `text + secret: true` shape and a legacy `secret` type. */
+function isSecretDefinition(definition: PluginSettingDefinitionLike): boolean {
+  return definition.type === "secret" || definition.secret === true || definition.writeOnly === true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneSettingValue(value: unknown): unknown {
+  if (Array.isArray(value)) return [...value];
+  if (isRecord(value)) return { ...value };
+  return value;
+}
+
+function fallbackValue(definition: PluginSettingDefinitionLike): unknown {
+  const type = definition.type;
+  if (isSecretDefinition(definition)) return undefined;
+  if (definition.default !== undefined) return cloneSettingValue(definition.default);
+  if (type === "boolean") return false;
+  if (type === "number") {
+    const options = isRecord(definition) ? definition : {};
+    const min = typeof options.min === "number" ? options.min : undefined;
+    return min ?? 0;
+  }
+  if (type === "select" && Array.isArray(definition.options)) {
+    const first = definition.options.find((option) => isRecord(option) && typeof option.value === "string");
+    return isRecord(first) ? first.value : "";
+  }
+  return "";
+}
+
+function browserSettingsKey(plugin: PluginReference): string {
+  return `research-canvas.plugin-settings.v1:${encodeURIComponent(plugin.id)}@${encodeURIComponent(plugin.version)}`;
+}
+
+function fallbackSnapshot(
+  plugin: PluginReference,
+  definitions: readonly PluginSettingDefinitionLike[],
+): PluginSettingsSnapshot {
+  const values: Record<string, unknown> = {};
+  const configuredSecrets: Record<string, boolean> = {};
+  for (const definition of definitions) {
+    if (typeof definition.id !== "string" || definition.id.length === 0) continue;
+    const value = fallbackValue(definition);
+    if (isSecretDefinition(definition)) configuredSecrets[definition.id] = false;
+    else values[definition.id] = value;
+  }
+  return { pluginId: plugin.id, pluginVersion: plugin.version, values, configuredSecrets };
+}
+
+function readBrowserSnapshot(
+  plugin: PluginReference,
+  definitions: readonly PluginSettingDefinitionLike[],
+): PluginSettingsSnapshot {
+  const defaults = fallbackSnapshot(plugin, definitions);
+  if (typeof window === "undefined") return defaults;
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(browserSettingsKey(plugin)) ?? "null");
+    if (!isRecord(raw)) return defaults;
+    return normalizePluginSettingsSnapshot(raw, plugin, definitions, defaults);
+  } catch {
+    return defaults;
+  }
+}
+
+function writeBrowserSnapshot(snapshot: PluginSettingsSnapshot): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      browserSettingsKey({ id: snapshot.pluginId, version: snapshot.pluginVersion, name: snapshot.pluginId }),
+      JSON.stringify({ values: snapshot.values, configuredSecrets: snapshot.configuredSecrets }),
+    );
+  } catch {
+    // Browser storage is optional; the in-memory Pinia snapshot remains usable.
+  }
+}
+
+/** Normalizes both the native snapshot and the browser fallback shape. */
+export function normalizePluginSettingsSnapshot(
+  raw: unknown,
+  plugin: PluginReference,
+  definitions: readonly PluginSettingDefinitionLike[],
+  defaults = fallbackSnapshot(plugin, definitions),
+): PluginSettingsSnapshot {
+  const source = isRecord(raw) && isRecord(raw.settings) ? raw.settings : raw;
+  const valuesSource = isRecord(source) && isRecord(source.values)
+    ? source.values
+    : isRecord(source) && isRecord(source.effectiveValues)
+      ? source.effectiveValues
+    : isRecord(source)
+      ? source
+      : {};
+  const configuredSource = isRecord(source) && isRecord(source.configuredSecrets)
+    ? source.configuredSecrets
+    : isRecord(source) && isRecord(source.secretConfigured)
+      ? source.secretConfigured
+      : {};
+  const values: Record<string, unknown> = { ...defaults.values };
+  const configuredSecrets: Record<string, boolean> = { ...defaults.configuredSecrets };
+  for (const definition of definitions) {
+    if (typeof definition.id !== "string" || definition.id.length === 0) continue;
+    if (isSecretDefinition(definition)) {
+      const configured = configuredSource[definition.id];
+      configuredSecrets[definition.id] = configured === true || (isRecord(configured) && configured.configured === true);
+      delete values[definition.id];
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(valuesSource, definition.id)) {
+      values[definition.id] = cloneSettingValue(valuesSource[definition.id]);
+    }
+  }
+  return { pluginId: plugin.id, pluginVersion: plugin.version, values, configuredSecrets };
+}
+
 /** 检测可选桌面桥接；浏览器构建必须保持可用 / Detects optional desktop bridge; browser builds must remain usable. */
 function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -35,6 +180,83 @@ export async function uninstallMycPlugin(plugin: PluginReference): Promise<void>
     pluginId: plugin.id,
     pluginVersion: plugin.version,
   });
+}
+
+/**
+ * Reads host-owned plugin settings. The native command receives only the
+ * identity; the host remains authoritative for definitions and secrets.
+ * Non-desktop and built-in catalog entries use a safe local fallback.
+ */
+export async function getPluginSettings(
+  plugin: PluginReference,
+  definitions: readonly PluginSettingDefinitionLike[],
+  options: { native?: boolean } = {},
+): Promise<PluginSettingsSnapshot> {
+  if (!hasTauriRuntime() || options.native === false) {
+    return readBrowserSnapshot(plugin, definitions);
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  const raw = await invoke<unknown>("get_plugin_settings", {
+    pluginId: plugin.id,
+    pluginVersion: plugin.version,
+  });
+  return normalizePluginSettingsSnapshot(raw, plugin, definitions);
+}
+
+/** Saves non-secret values and secret mutations without exposing secret text in the snapshot. */
+export async function savePluginSettings(
+  plugin: PluginReference,
+  definitions: readonly PluginSettingDefinitionLike[],
+  write: PluginSettingsWrite,
+  options: { native?: boolean } = {},
+): Promise<PluginSettingsSnapshot> {
+  const current = readBrowserSnapshot(plugin, definitions);
+  const next: PluginSettingsSnapshot = {
+    ...current,
+    values: { ...current.values, ...write.values },
+    configuredSecrets: { ...current.configuredSecrets },
+  };
+  for (const [id, mutation] of Object.entries(write.secrets)) {
+    if (mutation.action === "set") next.configuredSecrets[id] = mutation.value.length > 0;
+    if (mutation.action === "clear") next.configuredSecrets[id] = false;
+  }
+  if (!hasTauriRuntime() || options.native === false) {
+    writeBrowserSnapshot(next);
+    return next;
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  const nativeValues: Record<string, unknown> = { ...write.values };
+  for (const [id, mutation] of Object.entries(write.secrets)) {
+    if (mutation.action === "set") nativeValues[id] = mutation.value;
+    if (mutation.action === "clear") nativeValues[id] = null;
+  }
+  const raw = await invoke<unknown>("set_plugin_settings", {
+    pluginId: plugin.id,
+    pluginVersion: plugin.version,
+    values: nativeValues,
+  });
+  return normalizePluginSettingsSnapshot(raw ?? next, plugin, definitions, next);
+}
+
+/** Restores manifest defaults; the host must erase stored credentials atomically. */
+export async function resetPluginSettings(
+  plugin: PluginReference,
+  definitions: readonly PluginSettingDefinitionLike[],
+  options: { native?: boolean } = {},
+): Promise<PluginSettingsSnapshot> {
+  const defaults = fallbackSnapshot(plugin, definitions);
+  if (!hasTauriRuntime() || options.native === false) {
+    if (typeof window !== "undefined") {
+      try { window.localStorage.removeItem(browserSettingsKey(plugin)); } catch { /* optional storage */ }
+    }
+    return defaults;
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  const raw = await invoke<unknown>("reset_plugin_settings", {
+    pluginId: plugin.id,
+    pluginVersion: plugin.version,
+  });
+  return normalizePluginSettingsSnapshot(raw ?? defaults, plugin, definitions, defaults);
 }
 
 /**

@@ -54,6 +54,30 @@ export const builtInPluginCatalog: PluginManifest[] = [
     permissions: ["Read current project"],
     capabilities: ["graph.validate", "chain.score"],
     publisher: "Research Canvas Labs",
+    developer: "Research Canvas Labs",
+    update: {
+      latestVersion: "0.2.0",
+      releaseNotes: "Adds alternate-route scoring and configurable audit depth.",
+    },
+    settings: [
+      {
+        id: "audit-depth",
+        label: "Audit depth",
+        description: "How many relationship hops the audit should inspect.",
+        type: "number",
+        default: 3,
+        min: 1,
+        max: 12,
+        step: 1,
+      },
+      {
+        id: "include-alternate-routes",
+        label: "Include alternate routes",
+        description: "Report secondary evidence paths in the audit summary.",
+        type: "boolean",
+        default: true,
+      },
+    ],
   },
 ];
 

@@ -121,7 +121,7 @@ export function CustomCursor() {
       <div
         className={`custom-cursor-ring${hover ? " is-hover" : ""}${longPress ? " is-longpress" : ""}`}
         style={{
-          transform: `translate(${position.x}px, ${position.y}px)`,
+          translate: `${position.x}px ${position.y}px`,
           opacity: visible ? 1 : 0,
         }}
         aria-hidden="true"
