@@ -5,9 +5,9 @@
   "identifier": "com.researchcanvas.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:desktop-web",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://127.0.0.1:5173",
     "beforeBuildCommand": "npm run build:desktop",
-    "frontendDist": "../out"
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [],
