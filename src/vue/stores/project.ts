@@ -31,13 +31,20 @@ import {
   cloneProject,
   createEdgeInDraft,
   createNodeInDraft,
+  createSelectionClipboard,
   duplicateNodeInDraft,
+  type GraphSelectionClipboard,
+  type GraphSelectionResult,
   makeId,
   moveNodeInDraft,
+  moveNodesInDraft,
+  type NodeMove,
+  pasteSelectionClipboardInDraft,
   pushHistoryEntry,
   redoHistory,
   removeEdgeInDraft,
   removeNodeInDraft,
+  removeSelectionInDraft,
   reverseEdgeInDraft,
   stampDraftRevision,
   undoHistory,
@@ -72,6 +79,7 @@ export const useProjectStore = defineStore("project", () => {
   const future = shallowRef<WorkspaceHistory[]>([]);
   const selectedNodeId = ref("variable-canopy");
   const selectedEdgeId = ref("");
+  const selectionClipboard = shallowRef<GraphSelectionClipboard | null>(null);
   const hydrated = ref(false);
   const hasMutatedSinceHydration = ref(false);
   const configured = ref(false);
@@ -80,6 +88,7 @@ export const useProjectStore = defineStore("project", () => {
     PROJECT_STORAGE_KEY,
   );
   let hydrationFrame: number | null = null;
+  let clipboardPasteCount = 0;
 
   /**
    * Applies compatibility options before the component-mounted hydration
@@ -143,6 +152,11 @@ export const useProjectStore = defineStore("project", () => {
     selectedNodeId.value = "";
   };
 
+  const clearSelection = (): void => {
+    selectedNodeId.value = "";
+    selectedEdgeId.value = "";
+  };
+
   const commit = (label: string, transform: (draft: ProjectState) => void): void => {
     const current = projectRef.value;
     const before = cloneProject(current);
@@ -167,6 +181,48 @@ export const useProjectStore = defineStore("project", () => {
 
   const moveNode = (nodeId: string, x: number, y: number): void => {
     commit("Move node", (draft) => moveNodeInDraft(draft, nodeId, x, y));
+  };
+
+  const moveNodes = (moves: readonly NodeMove[]): void => {
+    const validMoves = moves.filter(
+      (move) =>
+        move.nodeId && Number.isFinite(move.x) && Number.isFinite(move.y),
+    );
+    if (!validMoves.length) return;
+    commit("Move selected nodes", (draft) => moveNodesInDraft(draft, validMoves));
+  };
+
+  const copySelection = (
+    selectedNodeIds: readonly string[],
+    selectedEdgeIds: readonly string[],
+  ): GraphSelectionClipboard | null => {
+    const clipboard = createSelectionClipboard(
+      projectRef.value,
+      selectedNodeIds,
+      selectedEdgeIds,
+    );
+    selectionClipboard.value = clipboard;
+    clipboardPasteCount = 0;
+    return clipboard;
+  };
+
+  const pasteSelection = (): GraphSelectionResult => {
+    const clipboard = selectionClipboard.value;
+    if (!clipboard) return { nodeIds: [], edgeIds: [] };
+    let result: GraphSelectionResult = { nodeIds: [], edgeIds: [] };
+    const offset = 32 * (clipboardPasteCount + 1);
+    commit("Paste selection", (draft) => {
+      result = pasteSelectionClipboardInDraft(
+        draft,
+        clipboard,
+        offset,
+        new Date().toISOString(),
+      );
+    });
+    clipboardPasteCount += 1;
+    selectedNodeId.value = result.nodeIds[0] ?? "";
+    selectedEdgeId.value = result.nodeIds.length ? "" : result.edgeIds[0] ?? "";
+    return result;
   };
 
   const createNode = (draftNode: NodeDraft, x: number, y: number): string => {
@@ -205,6 +261,25 @@ export const useProjectStore = defineStore("project", () => {
     commit("Delete node", (draft) => removeNodeInDraft(draft, nodeId));
     selectedNodeId.value = "";
     selectedEdgeId.value = "";
+  };
+
+  const removeSelection = (
+    selectedNodeIds: readonly string[],
+    selectedEdgeIds: readonly string[],
+  ): GraphSelectionResult => {
+    const nodeIds = [...new Set(selectedNodeIds)].filter((nodeId) =>
+      projectRef.value.nodes.some((node) => node.id === nodeId),
+    );
+    const edgeIds = [...new Set(selectedEdgeIds)].filter((edgeId) =>
+      projectRef.value.edges.some((edge) => edge.id === edgeId),
+    );
+    if (!nodeIds.length && !edgeIds.length) return { nodeIds: [], edgeIds: [] };
+    commit("Delete selection", (draft) =>
+      removeSelectionInDraft(draft, nodeIds, edgeIds),
+    );
+    selectedNodeId.value = "";
+    selectedEdgeId.value = "";
+    return { nodeIds, edgeIds };
   };
 
   const duplicateNode = (nodeId: string): void => {
@@ -302,12 +377,17 @@ export const useProjectStore = defineStore("project", () => {
     configure,
     selectNode,
     selectEdge,
+    clearSelection,
     updateNode,
     updateEdge,
     moveNode,
+    moveNodes,
+    copySelection,
+    pasteSelection,
     createNode,
     createEdge,
     removeNode,
+    removeSelection,
     duplicateNode,
     removeEdge,
     reverseEdge,

@@ -12,10 +12,35 @@ export default defineConfig({
       "@": projectRoot,
     },
   },
+  optimizeDeps: {
+    // Keep the renderer's stable Vue runtime and graph dependencies in one
+    // pre-bundled dependency graph so cold starts do not rediscover them from
+    // a deep SFC import waterfall.
+    include: [
+      "vue",
+      "pinia",
+      "@vue-flow/core",
+      "@vue-flow/background",
+      "@vue-flow/controls",
+      "@vue-flow/minimap",
+      "@tabler/icons-vue",
+      "jspdf",
+    ],
+  },
   server: {
     host: "127.0.0.1",
     port: 5173,
     strictPort: true,
+    warmup: {
+      clientFiles: [
+        "./src/main.ts",
+        "./src/App.vue",
+        "./src/vue/ResearchWorkspaceApp.vue",
+        "./src/vue/canvas/ResearchGraphCanvas.vue",
+        "./src/vue/components/WorkspaceTopbar.vue",
+        "./src/vue/components/InspectorPanel.vue",
+      ],
+    },
   },
   build: {
     outDir: "dist",

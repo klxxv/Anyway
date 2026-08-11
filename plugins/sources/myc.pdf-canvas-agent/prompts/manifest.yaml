@@ -1,0 +1,56 @@
+version: 1
+defaultLocale: en
+passes:
+  - pass: A
+    name: structure-extraction
+    file: pass-a-structure.yaml
+    description:
+      en: Document structure extraction
+    inputSchema:
+      document_structure: StructuredDocument JSON
+      full_text: Full extracted text
+    outputSchema: {}
+  - pass: B
+    name: entity-extraction
+    file: pass-b-entities.yaml
+    description:
+      en: Local entity extraction
+    inputSchema:
+      document_structure: StructuredDocument JSON
+      section_title: string
+      section_text: string
+    outputSchema: {}
+  - pass: C
+    name: variable-fission
+    file: pass-c-variable-fission.yaml
+    description:
+      en: Variable fission and experiment matrix
+    inputSchema:
+      pass_b_entities_json: string
+      experiment_paragraphs: string
+      full_text: string
+    outputSchema: {}
+  - pass: D
+    name: cross-segment-merge
+    file: pass-d-merge.yaml
+    description:
+      en: Cross-segment merge
+    inputSchema:
+      pass_b_all_entities_json: string
+      pass_c_variable_registry_json: string
+      full_text: string
+    outputSchema: {}
+  - pass: E
+    name: paper-level-synthesis
+    file: pass-e-synthesis.yaml
+    description:
+      en: Paper-level synthesis
+    inputSchema:
+      title: string
+      authors: string
+      pass_a_structure_json: string
+      merged_entities_json: string
+      pass_c_experiment_matrix_json: string
+      pass_d_merge_json: string
+      full_text: string
+    outputSchema: {}

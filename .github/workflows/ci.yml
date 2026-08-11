@@ -117,8 +117,8 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
   # ── Build Verification (main push only) ────────────────────────────
-  build-next:
-    name: Build · Next.js
+  build-vite:
+    name: Build · Vite
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -130,7 +130,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Next.js production build
+      - name: Vite production build
         run: npm run build:desktop
 
   build-desktop:
@@ -172,7 +172,7 @@ jobs:
       - name: Tauri desktop build check
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
-      - name: Next.js desktop build
+      - name: Vite desktop renderer build
         run: npm run build:desktop
 
   # ── Plugin Build Verification ──────────────────────────────────────
@@ -201,7 +201,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-next]
+    needs: [build-vite]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

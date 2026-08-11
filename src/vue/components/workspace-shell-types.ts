@@ -46,6 +46,11 @@ import type {
   NodeDraft,
   WorkspaceHistory,
 } from "../../../app/features/research-workspace/workspace-types";
+import type {
+  GraphSelectionClipboard,
+  GraphSelectionResult,
+  NodeMove,
+} from "../../../app/features/research-workspace/hooks/commit-logic";
 
 export type {
   CachedRadialMenuItem,
@@ -59,6 +64,9 @@ export type {
   InspectorUpdate,
   LayoutMode,
   LinkLegendFilter,
+  GraphSelectionClipboard,
+  GraphSelectionResult,
+  NodeMove,
   NodeDraft,
   PdfCompileResult,
   PluginGraphPatch,
@@ -177,12 +185,23 @@ export type WorkspaceProjectComposable = {
   canRedo: Ref<boolean>;
   selectNode: (nodeId: string) => void;
   selectEdge: (edgeId: string) => void;
+  clearSelection: () => void;
   updateNode: (nodeId: string, update: InspectorUpdate) => void;
   updateEdge: (edgeId: string, update: EdgeInspectorUpdate) => void;
   moveNode: (nodeId: string, x: number, y: number) => void;
+  moveNodes: (moves: readonly NodeMove[]) => void;
+  copySelection: (
+    selectedNodeIds: readonly string[],
+    selectedEdgeIds: readonly string[],
+  ) => GraphSelectionClipboard | null;
+  pasteSelection: () => GraphSelectionResult;
   createNode: (draft: NodeDraft, x: number, y: number) => string | undefined;
   createEdge: (source: string, target: string, type?: ResearchEdgeType) => string | undefined;
   removeNode: (nodeId: string) => void;
+  removeSelection: (
+    selectedNodeIds: readonly string[],
+    selectedEdgeIds: readonly string[],
+  ) => GraphSelectionResult;
   duplicateNode: (nodeId: string) => void;
   removeEdge: (edgeId: string) => void;
   reverseEdge: (edgeId: string) => void;

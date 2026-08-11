@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { IconChevronRight, IconPlugConnected } from "@tabler/icons-vue";
 
@@ -49,15 +49,10 @@ import { usePluginHost } from "./runtime/plugin-host";
 import { useCanvasDiff } from "./composables/use-canvas-diff";
 import { useNativeTrackpadFrames } from "./composables/use-trackpad-pinch";
 import { useWorkspaceProject } from "./composables/use-workspace-project";
+import { useCanvasInteractionStore } from "./stores/canvas-interaction";
 import { useWorkspaceUiStore } from "./stores/workspace-ui";
 import ResearchGraphCanvas from "./canvas/ResearchGraphCanvas.vue";
-import AgentReviewPanel from "./components/AgentReviewPanel.vue";
-import DiffPanel from "./components/DiffPanel.vue";
 import InspectorPanel from "./components/InspectorPanel.vue";
-import PdfUploadDialog from "./components/PdfUploadDialog.vue";
-import PluginStoreDialog from "./components/PluginStoreDialog.vue";
-import WorkspaceDialogs from "./components/WorkspaceDialogs.vue";
-import WorkspacePluginDialogs from "./components/WorkspacePluginDialogs.vue";
 import WorkspaceTopbar from "./components/WorkspaceTopbar.vue";
 import type {
   DiffVersion,
@@ -69,8 +64,16 @@ import type {
   WorkspaceProjectComposable,
 } from "./components/workspace-shell-types";
 import type {
+  CanvasNodeMove,
   ResolvedPluginContextMenuAction as CanvasPluginContextMenuAction,
 } from "./canvas/canvas-types";
+
+const AgentReviewPanel = defineAsyncComponent(() => import("./components/AgentReviewPanel.vue"));
+const DiffPanel = defineAsyncComponent(() => import("./components/DiffPanel.vue"));
+const PdfUploadDialog = defineAsyncComponent(() => import("./components/PdfUploadDialog.vue"));
+const PluginStoreDialog = defineAsyncComponent(() => import("./components/PluginStoreDialog.vue"));
+const WorkspaceDialogs = defineAsyncComponent(() => import("./components/WorkspaceDialogs.vue"));
+const WorkspacePluginDialogs = defineAsyncComponent(() => import("./components/WorkspacePluginDialogs.vue"));
 
 const preferencesStorageKey = "research-canvas.workspace-preferences.v2";
 const toastVisibleMs = 3_200;
@@ -92,8 +95,9 @@ const linkFilterLabelKeys: Record<LinkLegendFilter, string> = {
 };
 
 const { t } = useI18n();
-const { activePlugins } = usePluginHost();
+const pluginHost = usePluginHost();
 const workspace = useWorkspaceProject() as WorkspaceProjectComposable;
+const canvasInteraction = useCanvasInteractionStore();
 const workspaceUi = useWorkspaceUiStore();
 const {
   menuOpen,
@@ -120,6 +124,11 @@ const {
   diffCompareId,
   diffFocus,
 } = storeToRefs(workspaceUi);
+const {
+  selectedNodeIds: canvasSelectedNodeIds,
+  selectedEdgeIds: canvasSelectedEdgeIds,
+  selectionMode: boxSelectionMode,
+} = storeToRefs(canvasInteraction);
 const {
   clearNotice,
   closeComposer,
@@ -156,26 +165,26 @@ const gitAutoSave = ref(false);
 const pluginBusy = ref(false);
 
 const hasPdfAgent = computed(() =>
-    activePlugins.some(
+  pluginHost.activePlugins.some(
     (plugin) =>
       plugin.manifest.kind === "AgentPlugin" &&
       plugin.manifest.spec.capabilities.includes("agent.graph.patch.propose"),
   ),
 );
 const hasDiffCapability = computed(() =>
-  activePlugins.some(
+  pluginHost.activePlugins.some(
     (plugin) => plugin.manifest.kind === "AgentPlugin" || plugin.manifest.kind === "AnalysisPlugin",
   ),
 );
 const pluginContextMenuActions = computed(() =>
   preferences.value.showPluginContextMenuActions
-    ? contextMenuContributionsFromPlugins(activePlugins)
+    ? contextMenuContributionsFromPlugins(pluginHost.activePlugins)
     : [],
 );
-const edgeStyle = computed(() => resolveEdgeStyle(activePlugins));
-const theme = computed(() => resolveTheme(activePlugins));
+const edgeStyle = computed(() => resolveEdgeStyle(pluginHost.activePlugins));
+const theme = computed(() => resolveTheme(pluginHost.activePlugins));
 const themeStyle = computed(() => themeCssVariables(theme.value));
-const workspaceCommands = computed(() => workspaceCommandsFromPlugins(activePlugins));
+const workspaceCommands = computed(() => workspaceCommandsFromPlugins(pluginHost.activePlugins));
 const exportCommand = computed(() => workspaceCommands.value.find((command) => command.category === "export"));
 const folderCommand = computed(() => workspaceCommands.value.find((command) => command.category === "folder"));
 const availableGitCommand = computed(() => workspaceCommands.value.find((command) => command.category === "git"));
@@ -485,6 +494,57 @@ function handleDeleteEdge(edgeId: string) {
   showNotice(t("toast.relationDeleted"));
 }
 
+function selectionItemCount(nodeIds = canvasSelectedNodeIds.value, edgeIds = canvasSelectedEdgeIds.value) {
+  return nodeIds.length + edgeIds.length;
+}
+
+function copyCurrentSelection(): boolean {
+  const clipboard = workspace.copySelection(
+    canvasSelectedNodeIds.value,
+    canvasSelectedEdgeIds.value,
+  );
+  if (!clipboard) return false;
+  showNotice(t("toast.selectionCopied", {
+    count: clipboard.nodes.length + clipboard.edges.length,
+  }));
+  return true;
+}
+
+function pasteCurrentSelection(): boolean {
+  const pasted = workspace.pasteSelection();
+  const count = selectionItemCount(pasted.nodeIds, pasted.edgeIds);
+  if (!count) return false;
+  canvasInteraction.setSelectedElements(pasted.nodeIds, pasted.edgeIds);
+  inspectorOpen.value = true;
+  showNotice(t("toast.selectionPasted", { count }));
+  return true;
+}
+
+function deleteCurrentSelection(): boolean {
+  const deleted = workspace.removeSelection(
+    canvasSelectedNodeIds.value,
+    canvasSelectedEdgeIds.value,
+  );
+  const count = selectionItemCount(deleted.nodeIds, deleted.edgeIds);
+  if (!count) return false;
+  canvasInteraction.clearSelectedElements();
+  showNotice(t("toast.selectionDeleted", { count }));
+  return true;
+}
+
+function handleMoveNodes(moves: readonly CanvasNodeMove[]) {
+  workspace.moveNodes(moves);
+}
+
+function handleClearSelection() {
+  canvasInteraction.clearSelectedElements();
+  workspace.clearSelection();
+}
+
+function handleSelectionModeChange(active: boolean) {
+  showNotice(t(active ? "toast.selectionModeOn" : "toast.selectionModeOff"));
+}
+
 function handleCreateEdge(source: string, target: string) {
   const edgeId = workspace.createEdge(source, target, connectType.value);
   setConnectMode(false);
@@ -530,6 +590,28 @@ async function handlePluginContextMenuAction(
   }
 }
 
+function handleCanvasSelectionShortcut(event: KeyboardEvent): boolean {
+  const key = event.key.toLowerCase();
+  const hasModifier = event.ctrlKey || event.metaKey;
+  if (hasModifier && key === "c" && copyCurrentSelection()) {
+    event.preventDefault();
+    return true;
+  }
+  if (hasModifier && key === "v" && pasteCurrentSelection()) {
+    event.preventDefault();
+    return true;
+  }
+  if (
+    !hasModifier &&
+    (event.key === "Delete" || event.key === "Backspace") &&
+    deleteCurrentSelection()
+  ) {
+    event.preventDefault();
+    return true;
+  }
+  return false;
+}
+
 function runShortcut(event: KeyboardEvent) {
   if (
     event.defaultPrevented ||
@@ -542,6 +624,7 @@ function runShortcut(event: KeyboardEvent) {
   ) {
     return;
   }
+  if (handleCanvasSelectionShortcut(event)) return;
   const binding = shortcutFromKeyboardEvent(event);
   if (!binding) return;
   const action = SHORTCUT_ACTIONS.find((candidate) => preferences.value.shortcuts[candidate] === binding);
@@ -584,6 +667,12 @@ function runShortcut(event: KeyboardEvent) {
 
 function closeTransientUiOnEscape(event: KeyboardEvent) {
   if (event.key !== "Escape") return;
+  if (boxSelectionMode.value) {
+    canvasInteraction.setSelectionMode(false);
+    showNotice(t("toast.selectionModeOff"));
+    event.preventDefault();
+    return;
+  }
   closeUiTransient();
 }
 
@@ -751,7 +840,12 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
           @legend-filter="handleLegendFilter"
           @select-node="handleSelectNode"
           @select-edge="handleSelectEdge"
+          @clear-selection="handleClearSelection"
           @move-node="workspace.moveNode"
+          @move-nodes="handleMoveNodes"
+          @selection-copy="copyCurrentSelection"
+          @selection-delete="deleteCurrentSelection"
+          @selection-mode-change="handleSelectionModeChange"
           @request-connect="handleRequestConnect"
           @duplicate-node="handleDuplicateNode"
           @delete-node="handleDeleteNode"

@@ -1,4 +1,3 @@
-import type { Edge, Node } from "@xyflow/react";
 import type { DiffState } from "../../lib/graph/canvas-diff";
 import type {
   EdgeStyleManifest,
@@ -37,9 +36,6 @@ export type WorkspaceEdgeData = {
   /** Canvas Diff 叠加标记（added/removed/modified）。 */
   diffState?: DiffState;
 };
-
-export type WorkspaceNode = Node<WorkspaceNodeData, "researchNode">;
-export type WorkspaceEdge = Edge<WorkspaceEdgeData, "researchEdge">;
 
 export type PieMenuState = {
   screenX: number;

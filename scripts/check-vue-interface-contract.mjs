@@ -125,7 +125,7 @@ export const REQUIRED_EXPORTS = Object.freeze({
   ],
   "app/plugins/theme.ts": ["resolveTheme", "sanitizeCssColor", "themeCssVariables"],
   "app/plugins/edge-style.ts": ["resolveEdgeStyle"],
-  "app/plugins/plugin-host.tsx": ["PluginHostProvider", "usePluginHost"],
+  "src/vue/runtime/plugin-host.ts": ["providePluginHost", "usePluginHost"],
 });
 
 export const REQUIRED_TAURI_COMMANDS = Object.freeze({
@@ -204,12 +204,12 @@ export const REQUIRED_STRING_CONSTANTS = Object.freeze([
     pattern: /export\s+const\s+PROJECT_STORAGE_KEY\s*=\s*["']research-canvas\.zen-workspace\.v1["']/,
   },
   {
-    file: "app/i18n/provider.tsx",
+    file: "src/vue/runtime/i18n.ts",
     label: "localeStorageKey",
     pattern: /const\s+localeStorageKey\s*=\s*["']research-canvas\.locale\.v1["']/,
   },
   {
-    file: "app/features/research-workspace/ResearchWorkspaceApp.tsx",
+    file: "src/vue/ResearchWorkspaceApp.vue",
     label: "preferencesStorageKey",
     pattern: /const\s+preferencesStorageKey\s*=\s*["']research-canvas\.workspace-preferences\.v2["']/,
   },

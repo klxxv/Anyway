@@ -64,7 +64,7 @@ export interface PluginSettingOption {
   label: string;
 }
 
-/** A bounded, host-rendered setting; plugins never receive a React callback. */
+/** A bounded, host-rendered setting; plugins never receive a renderer callback. */
 export interface PluginSettingDefinition {
   id: string;
   label: string;
@@ -85,6 +85,31 @@ export interface PluginSettingDefinition {
   max?: number;
   step?: number;
   options?: PluginSettingOption[];
+}
+
+export type PluginApiFormat = "openai" | "anthropic";
+
+export type PluginApiKeySource =
+  | { source: "host-secret"; settingId: string }
+  | { source: "environment"; name: string; fallbackSettingId?: string };
+
+export interface PluginConnectionTestAction {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+/** Declarative host connection metadata; plugins never receive credentials. */
+export interface PluginConnectionDefinition {
+  id: string;
+  label: string;
+  urlSettingId: string;
+  formatSettingId: string;
+  modelSettingId?: string;
+  credentialSourceSettingId?: string;
+  credentialEnvVarSettingId?: string;
+  apiKey: PluginApiKeySource;
+  testAction?: PluginConnectionTestAction;
 }
 
 /** Agent model configuration is resolved by the host model gateway. */
@@ -183,6 +208,7 @@ export interface MycPluginSpec {
   permissions: string[];
   contributes?: MycPluginContributions;
   settings?: PluginSettingDefinition[];
+  connections?: PluginConnectionDefinition[];
 }
 
 export type PluginContextMenuIcon =

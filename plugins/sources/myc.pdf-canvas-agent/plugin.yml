@@ -3,13 +3,13 @@ kind: AgentPlugin
 metadata:
   id: myc.pdf-canvas-agent
   name: PDF Canvas Agent
-  version: 0.2.0
+  version: 0.3.0
   publisher: Research Canvas
   developer: Agent Platform Team
   developerId: 8bca4aed-e0ab-43c5-89ee-e2bcaf7f0e31
   update:
-    latestVersion: 0.2.0
-    releaseNotes: Added host-managed API key, model, and thinking settings.
+    latestVersion: 0.3.0
+    releaseNotes: Added declarative API connection settings and host-side connection testing.
   description: >
     从 PDF 论文中提取 DocumentMap → 语义结构 → 审阅门控的 GraphPatch。
     Agent 不持有 API Key、文件系统句柄、网络访问、Graph store 写权限。
@@ -25,18 +25,66 @@ spec:
   permissions: []
   settings:
     - id: api-key
-      label: Provider API key
+      label: Fallback provider API key
       type: text
       secret: true
-      required: true
+      required: false
       placeholder: Enter your provider API key
       group: model
+    - id: api-url
+      label: API URL
+      type: text
+      required: true
+      default: https://api.deepseek.com/anthropic
+      placeholder: https://api.example.com/anthropic
+      group: connection
+    - id: api-format
+      label: API format
+      type: select
+      required: true
+      default: anthropic
+      group: connection
+      options:
+        - value: openai
+          label: OpenAI-compatible
+        - value: anthropic
+          label: Anthropic
+    - id: credential-source
+      label: Credential source
+      type: select
+      required: true
+      default: environment
+      group: connection
+      options:
+        - value: environment
+          label: Local environment variable
+        - value: host-secret
+          label: Host secret
+    - id: credential-env-var
+      label: Credential environment variable
+      type: text
+      required: true
+      default: DEEPSEEK_API_KEY
+      placeholder: DEEPSEEK_API_KEY
+      group: connection
+    - id: pdf-transport
+      label: PDF extraction
+      description: Local text extraction keeps the PDF on-device. Kimi Files uploads it to Moonshot for extraction.
+      type: select
+      required: true
+      default: local-text
+      group: connection
+      options:
+        - value: local-text
+          label: Local text extraction
+        - value: kimi-file-extract
+          label: Kimi Files (remote upload)
     - id: model
       label: Model
       type: text
       required: true
-      default: luna
-      placeholder: luna
+      default: deepseek-v4-flash
+      placeholder: deepseek-v4-flash
       group: model
     - id: thinking
       label: Thinking
@@ -53,3 +101,19 @@ spec:
           label: High
         - value: extra_high
           label: Extra high
+  connections:
+    - id: provider
+      label: Provider API
+      urlSettingId: api-url
+      formatSettingId: api-format
+      modelSettingId: model
+      credentialSourceSettingId: credential-source
+      credentialEnvVarSettingId: credential-env-var
+      apiKey:
+        source: environment
+        name: DEEPSEEK_API_KEY
+        fallbackSettingId: api-key
+      testAction:
+        id: test-connection
+        label: Test connection
+        description: Send a minimal non-sensitive request using the current form values.

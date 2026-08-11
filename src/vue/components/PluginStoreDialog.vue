@@ -123,6 +123,7 @@ const targetFromInstalled = (plugin: InstalledMycPlugin): PluginSettingsTarget |
     signaturePresent: Boolean(plugin.manifest.signature),
     update: plugin.manifest.metadata.update,
     definitions,
+    connections: plugin.manifest.spec.connections ?? [],
     native: true,
     uninstallable: true,
   };
@@ -140,11 +141,26 @@ const targetFromBuiltIn = (plugin: PluginManifest): PluginSettingsTarget | null 
     description: plugin.description,
     publisher: plugin.publisher,
     developer: plugin.developer,
+    connections: [],
     definitions,
     update: plugin.update,
     native: false,
     uninstallable: false,
   };
+};
+
+const testConnection = async (
+  connectionId: string,
+  draft: Parameters<typeof settingsWriteFromDraft>[1],
+) => {
+  const target = settingsTarget.value;
+  if (!target) throw new Error("PLUGIN_SETTINGS_TARGET_REQUIRED");
+  return pluginHost.testPluginConnection(
+    target.reference,
+    connectionId,
+    settingsWriteFromDraft(target.definitions, draft),
+    target.native,
+  );
 };
 
 const openSettings = async (target: PluginSettingsTarget) => {
@@ -392,6 +408,7 @@ onUnmounted(() => disposeDropListener?.());
                 <p v-if="plugin.manifest.spec.settings?.length" class="mt-1 font-serif text-[9px] text-blue/70">{{ t('plugins.settingsAvailable') }}</p>
                 <p v-if="selfTestResults[pluginKey(plugin)]" class="mt-2 rounded-[4px] border px-2.5 py-2 font-serif text-[9px]" :class="selfTestResults[pluginKey(plugin)].status === 'error' ? 'border-alert/25 bg-alert/5 text-alert' : selfTestResults[pluginKey(plugin)].status === 'running' ? 'border-blue/20 bg-blue-soft text-blue' : 'border-ink/15 bg-canvas text-ink/65'" role="status" aria-live="polite">{{ selfTestResults[pluginKey(plugin)].text }}</p>
                 <template #actions>
+                  <button v-if="targetFromInstalled(plugin)" type="button" class="button-secondary px-3" :disabled="hostBusy" @click="void openSettings(targetFromInstalled(plugin)!)">{{ t('settings.title') }}</button>
                   <button v-if="plugin.runtime" class="button-secondary px-3" :disabled="!activePluginKeys.has(pluginKey(plugin)) || hostBusy" :title="!activePluginKeys.has(pluginKey(plugin)) ? t('plugins.enableToTest') : undefined" @click="void runSelfTest(plugin)">{{ t('plugins.selfTest') }}</button>
                   <button class="px-3" :class="activePluginKeys.has(pluginKey(plugin)) ? 'button-primary' : 'button-secondary'" :disabled="!pluginCompatibility(plugin).compatible || hostBusy" @click="setPluginEnabled(plugin, !activePluginKeys.has(pluginKey(plugin)))">{{ activePluginKeys.has(pluginKey(plugin)) ? t('plugins.enabled') : t('plugins.enable') }}</button>
                   <button type="button" class="button-secondary px-3 text-alert" :disabled="hostBusy" :aria-label="t('plugins.uninstallVersion', { version: plugin.manifest.metadata.version })" @click="void uninstallPlugin(plugin)">{{ t('plugins.uninstall') }}</button>
@@ -442,6 +459,7 @@ onUnmounted(() => disposeDropListener?.());
       :on-close="closeSettings"
       :on-save="saveSettings"
       :on-reset="resetSettings"
+      :on-test-connection="settingsTarget.native ? testConnection : undefined"
       :on-uninstall="settingsTarget.uninstallable ? uninstallSelected : undefined"
     />
   </div>

@@ -1,8 +1,11 @@
 import { computeLayout } from "../../../lib/layout";
 import type {
   LayoutMode,
+  PlacementRecord,
   ProjectState,
+  ResearchEdge,
   ResearchEdgeType,
+  ResearchNode,
 } from "../../../lib/research-types";
 import { projectForLegendFilter, type LinkLegendFilter } from "../workspace-layout";
 import type {
@@ -14,7 +17,7 @@ import type {
 
 /**
  * Pure, framework-free graph mutation and history logic behind the workspace hook.
- * 不依赖 React 的纯图谱变换与历史栈逻辑，可直接进行单元测试。
+ * 不依赖渲染器的纯图谱变换与历史栈逻辑，可直接进行单元测试。
  */
 
 /** 撤销栈保留的最大快照数 / Maximum undo checkpoints kept on the past stack. */
@@ -118,6 +121,138 @@ export function moveNodeInDraft(
   placement.y = y;
 }
 
+/** A persisted position update for one or more nodes in a single history entry. */
+export type NodeMove = {
+  nodeId: string;
+  x: number;
+  y: number;
+};
+
+/** Serializable graph fragment held by the host clipboard, never persisted with a project. */
+export type GraphSelectionClipboard = {
+  nodes: ResearchNode[];
+  edges: ResearchEdge[];
+  placements: PlacementRecord[];
+};
+
+/** Identifiers created by a paste operation. */
+export type GraphSelectionResult = {
+  nodeIds: string[];
+  edgeIds: string[];
+};
+
+/** Moves all valid nodes atomically, so one group drag corresponds to one undo step. */
+export function moveNodesInDraft(
+  draft: ProjectState,
+  moves: readonly NodeMove[],
+): void {
+  const finalMoves = new Map<string, NodeMove>();
+  for (const move of moves) {
+    if (
+      !move.nodeId ||
+      !Number.isFinite(move.x) ||
+      !Number.isFinite(move.y)
+    ) {
+      continue;
+    }
+    finalMoves.set(move.nodeId, move);
+  }
+  for (const move of finalMoves.values()) {
+    moveNodeInDraft(draft, move.nodeId, move.x, move.y);
+  }
+}
+
+/**
+ * Produces a self-contained graph fragment. Selecting a relation also brings
+ * its two endpoint nodes into the fragment; all relations internal to the
+ * fragment are retained so pasted graph topology stays intact.
+ */
+export function createSelectionClipboard(
+  project: ProjectState,
+  selectedNodeIds: readonly string[],
+  selectedEdgeIds: readonly string[],
+): GraphSelectionClipboard | null {
+  const nodeIds = new Set(selectedNodeIds.filter(Boolean));
+  const edgeIds = new Set(selectedEdgeIds.filter(Boolean));
+  for (const edge of project.edges) {
+    if (!edgeIds.has(edge.id)) continue;
+    nodeIds.add(edge.source);
+    nodeIds.add(edge.target);
+  }
+
+  const nodes = project.nodes.filter((node) => nodeIds.has(node.id));
+  if (!nodes.length) return null;
+  const copiedNodeIds = new Set(nodes.map((node) => node.id));
+  return cloneProject({
+    nodes,
+    edges: project.edges.filter(
+      (edge) => copiedNodeIds.has(edge.source) && copiedNodeIds.has(edge.target),
+    ),
+    placements: project.placements.filter((placement) => copiedNodeIds.has(placement.nodeId)),
+  });
+}
+
+/** Pastes a clipboard fragment with fresh IDs and a visible offset from its source. */
+export function pasteSelectionClipboardInDraft(
+  draft: ProjectState,
+  clipboard: GraphSelectionClipboard,
+  offset: number,
+  now: string,
+): GraphSelectionResult {
+  const copied = cloneProject(clipboard);
+  const nodeIdMap = new Map<string, string>();
+  const nodeIds: string[] = [];
+  const edgeIds: string[] = [];
+
+  copied.nodes.forEach((source, index) => {
+    const nextId = makeId("node");
+    nodeIdMap.set(source.id, nextId);
+    nodeIds.push(nextId);
+    draft.nodes.push({
+      ...source,
+      id: nextId,
+      title: `${source.title} copy`,
+      provenance: { origin: "human", actorId: "local-researcher" },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const placement = copied.placements.find((item) => item.nodeId === source.id);
+    draft.placements.push({
+      ...(placement ?? {
+        id: `placement-${source.id}`,
+        viewId: "view-main",
+        nodeId: source.id,
+        x: 80 + index * 28,
+        y: 80 + index * 28,
+        width: source.type === "question" ? 136 : 164,
+        height: source.type === "question" ? 136 : 116,
+      }),
+      id: `placement-${nextId}`,
+      nodeId: nextId,
+      x: (placement?.x ?? 80 + index * 28) + offset,
+      y: (placement?.y ?? 80 + index * 28) + offset,
+    });
+  });
+
+  copied.edges.forEach((source) => {
+    const nextSource = nodeIdMap.get(source.source);
+    const nextTarget = nodeIdMap.get(source.target);
+    if (!nextSource || !nextTarget) return;
+    const nextId = makeId("edge");
+    edgeIds.push(nextId);
+    draft.edges.push({
+      ...source,
+      id: nextId,
+      source: nextSource,
+      target: nextTarget,
+      provenance: { origin: "human", actorId: "local-researcher" },
+    });
+  });
+
+  return { nodeIds, edgeIds };
+}
+
 export function createNodeInDraft(
   draft: ProjectState,
   id: string,
@@ -178,6 +313,28 @@ export function removeNodeInDraft(draft: ProjectState, nodeId: string): void {
     (edge) => edge.source !== nodeId && edge.target !== nodeId,
   );
   draft.placements = draft.placements.filter((placement) => placement.nodeId !== nodeId);
+}
+
+/** Removes a mixed node/relation selection in one atomic operation. */
+export function removeSelectionInDraft(
+  draft: ProjectState,
+  selectedNodeIds: readonly string[],
+  selectedEdgeIds: readonly string[],
+): void {
+  const nodeIds = new Set(selectedNodeIds.filter(Boolean));
+  const edgeIds = new Set(selectedEdgeIds.filter(Boolean));
+  if (!nodeIds.size && !edgeIds.size) return;
+
+  draft.nodes = draft.nodes.filter((node) => !nodeIds.has(node.id));
+  draft.placements = draft.placements.filter(
+    (placement) => !nodeIds.has(placement.nodeId),
+  );
+  draft.edges = draft.edges.filter(
+    (edge) =>
+      !edgeIds.has(edge.id) &&
+      !nodeIds.has(edge.source) &&
+      !nodeIds.has(edge.target),
+  );
 }
 
 export function removeEdgeInDraft(draft: ProjectState, edgeId: string): void {

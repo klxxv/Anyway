@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createPinia, setActivePinia } from "pinia";
+import { computed, nextTick } from "vue";
 import {
   localeCatalog,
   normalizeLocale,
@@ -35,6 +37,8 @@ import {
   projectToSvg,
   workspaceCommandsFromPlugins,
 } from "../app/plugins/workspace";
+import { createPluginHostValue } from "../src/vue/runtime/plugin-host";
+import { useRuntimePluginHostStore } from "../src/vue/stores/runtime-plugin-host";
 
 test("locale normalization and Simplified Chinese catalog are deterministic", () => {
   assert.equal(normalizeLocale("zh-CN"), "zh-CN");
@@ -53,6 +57,57 @@ test("locale normalization and Simplified Chinese catalog are deterministic", ()
       assert.ok(value.trim(), `${locale}:${key} must not be empty`);
     }
   }
+});
+
+test("live plugin host capability gates update when an installed AgentPlugin is enabled", async () => {
+  setActivePinia(createPinia());
+  const store = useRuntimePluginHostStore();
+  const agent: InstalledMycPlugin = {
+    installPath: "plugins/installed/myc.pdf-agent@1.0.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "AgentPlugin",
+      metadata: {
+        id: "myc.pdf-agent",
+        name: "PDF Agent",
+        version: "1.0.0",
+        publisher: "Research Canvas",
+        developer: "Research Canvas",
+        description: "Review-gated PDF graph agent",
+      },
+      spec: {
+        engine: "host-mediated",
+        entry: "agent.json",
+        capabilities: ["agent.graph.patch.propose"],
+        permissions: [],
+      },
+    },
+    agent: {
+      schemaVersion: 1,
+      mode: "agent",
+      reviewGated: true,
+    },
+  };
+
+  store.installedPlugins = [agent];
+  const pluginHost = createPluginHostValue(store);
+  const hasPdfAgent = computed(() =>
+    pluginHost.activePlugins.some(
+      (plugin) =>
+        plugin.manifest.kind === "AgentPlugin" &&
+        plugin.manifest.spec.capabilities.includes("agent.graph.patch.propose"),
+    ),
+  );
+
+  assert.equal(hasPdfAgent.value, false);
+  store.setPluginEnabled(agent, true);
+  await nextTick();
+  assert.equal(hasPdfAgent.value, true);
+  assert.deepEqual([...pluginHost.activePluginKeys], ["myc.pdf-agent@1.0.0"]);
+
+  store.setPluginEnabled(agent, false);
+  await nextTick();
+  assert.equal(hasPdfAgent.value, false);
 });
 
 test("installed EdgeStylePlugin metadata owns the registered style identity", () => {
@@ -495,7 +550,7 @@ test("GraphPatch proposals are review-gated and structurally validated", () => {
 
 test("built-in plugin catalog only advertises implemented or clearly reserved packages", () => {
   const ids = builtInPluginCatalog.map((plugin) => plugin.id);
-  assert.ok(ids.includes("pdf-canvas-agent"));
+  assert.ok(!ids.includes("pdf-canvas-agent"));
   assert.ok(!ids.includes("zotero-source"));
   assert.ok(!ids.includes("mcp-bridge"));
   assert.ok(!ids.includes("agent-runtime"));

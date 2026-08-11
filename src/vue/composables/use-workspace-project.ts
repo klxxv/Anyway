@@ -19,6 +19,11 @@ import type {
   NodeDraft,
   WorkspaceHistory,
 } from "../../../app/features/research-workspace/workspace-types";
+import type {
+  GraphSelectionClipboard,
+  GraphSelectionResult,
+  NodeMove,
+} from "../../../app/features/research-workspace/hooks/commit-logic";
 import {
   useProjectStore,
   type ProjectStoreOptions,
@@ -28,7 +33,7 @@ export type WorkspaceProjectOptions = ProjectStoreOptions;
 
 export type WorkspaceProjectResult = {
   project: ShallowRef<ProjectState>;
-  /** Vue equivalent of React's latest-snapshot `projectRef.current`. */
+  /** Latest project snapshot used by imperative workspace handlers. */
   projectRef: ShallowRef<ProjectState>;
   history: ShallowRef<WorkspaceHistory[]>;
   selectedNode: ComputedRef<ResearchNode | null>;
@@ -39,9 +44,16 @@ export type WorkspaceProjectResult = {
   canRedo: ComputedRef<boolean>;
   selectNode: (nodeId: string) => void;
   selectEdge: (edgeId: string) => void;
+  clearSelection: () => void;
   updateNode: (nodeId: string, update: InspectorUpdate) => void;
   updateEdge: (edgeId: string, update: EdgeInspectorUpdate) => void;
   moveNode: (nodeId: string, x: number, y: number) => void;
+  moveNodes: (moves: readonly NodeMove[]) => void;
+  copySelection: (
+    selectedNodeIds: readonly string[],
+    selectedEdgeIds: readonly string[],
+  ) => GraphSelectionClipboard | null;
+  pasteSelection: () => GraphSelectionResult;
   createNode: (draftNode: NodeDraft, x: number, y: number) => string;
   createEdge: (
     source: string,
@@ -49,6 +61,10 @@ export type WorkspaceProjectResult = {
     type?: ResearchEdgeType,
   ) => string | undefined;
   removeNode: (nodeId: string) => void;
+  removeSelection: (
+    selectedNodeIds: readonly string[],
+    selectedEdgeIds: readonly string[],
+  ) => GraphSelectionResult;
   duplicateNode: (nodeId: string) => void;
   removeEdge: (edgeId: string) => void;
   reverseEdge: (edgeId: string) => void;
@@ -97,12 +113,17 @@ export function useWorkspaceProject(
     canRedo: refs.canRedo,
     selectNode: store.selectNode,
     selectEdge: store.selectEdge,
+    clearSelection: store.clearSelection,
     updateNode: store.updateNode,
     updateEdge: store.updateEdge,
     moveNode: store.moveNode,
+    moveNodes: store.moveNodes,
+    copySelection: store.copySelection,
+    pasteSelection: store.pasteSelection,
     createNode: store.createNode,
     createEdge: store.createEdge,
     removeNode: store.removeNode,
+    removeSelection: store.removeSelection,
     duplicateNode: store.duplicateNode,
     removeEdge: store.removeEdge,
     reverseEdge: store.reverseEdge,

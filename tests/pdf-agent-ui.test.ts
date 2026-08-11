@@ -1,7 +1,7 @@
 /**
  * PDF Agent UI 纯逻辑测试
  * =========================
- * 覆盖阶段 1/3 的组件纯函数（不渲染 React）：
+ * 覆盖阶段 1/3 的组件纯函数（不渲染组件树）：
  * 1. jobStageIndex —— 上传管线阶段顺序与终态处理
  * 2. deriveUploadProgress —— 进度条推导
  * 3. buildAcceptedPatch / countAccepted —— 逐项审阅决策与就地编辑
@@ -19,15 +19,13 @@ import type { AgentJobStatus } from "../app/plugins/agent-contracts";
 import type { PluginGraphPatch } from "../app/plugins/contracts";
 import { patchOperationsOf } from "../app/platform/agent-client";
 import {
+  buildAcceptedPatch,
+  countAccepted,
   PDF_PIPELINE_STAGES,
   deriveUploadProgress,
   jobStageIndex,
-} from "../app/features/research-workspace/components/pdf-upload-dialog";
-import {
-  buildAcceptedPatch,
-  countAccepted,
   operationSubject,
-} from "../app/features/research-workspace/components/agent-review-panel";
+} from "../src/vue/components/panel-types";
 
 function mockStatus(overrides: Partial<AgentJobStatus> = {}): AgentJobStatus {
   return {

@@ -16,7 +16,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 
@@ -194,6 +194,112 @@ pub(crate) fn validate_definitions(settings: &[PluginSettingDefinition]) -> Resu
 
         if let Some(default) = setting.default.as_ref() {
             validate_value(setting, default)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_connections(manifest: &MycPluginManifest) -> Result<(), String> {
+    let connections = manifest.spec.connections.as_deref().unwrap_or_default();
+    if connections.len() > 8 {
+        return Err("A plugin can declare at most 8 connections".to_string());
+    }
+    let definitions = definition_map(manifest)?;
+    let mut ids = HashSet::with_capacity(connections.len());
+    for connection in connections {
+        validate_slug(&connection.id, "plugin connection id")?;
+        if !ids.insert(&connection.id) {
+            return Err(format!("Duplicate plugin connection id: {}", connection.id));
+        }
+        if connection.label.trim().is_empty() || connection.label.chars().count() > 64 {
+            return Err(format!("Plugin connection labels must contain 1 to 64 characters: {}", connection.id));
+        }
+        let url_setting = definitions
+            .get(connection.url_setting_id.as_str())
+            .ok_or_else(|| format!("Connection URL setting is not declared: {}", connection.url_setting_id))?;
+        if url_setting.setting_type != "text" {
+            return Err(format!("Connection URL setting must be text: {}", connection.id));
+        }
+        let format_setting = definitions
+            .get(connection.format_setting_id.as_str())
+            .ok_or_else(|| format!("Connection format setting is not declared: {}", connection.format_setting_id))?;
+        if format_setting.setting_type != "select"
+            || !format_setting.options.as_ref().is_some_and(|options| {
+                options.iter().any(|option| option.value == "openai")
+                    && options.iter().any(|option| option.value == "anthropic")
+            })
+        {
+            return Err(format!(
+                "Connection format setting must offer openai and anthropic: {}",
+                connection.id
+            ));
+        }
+        if let Some(model_setting_id) = connection.model_setting_id.as_deref() {
+            let model_setting = definitions
+                .get(model_setting_id)
+                .ok_or_else(|| format!("Connection model setting is not declared: {model_setting_id}"))?;
+            if model_setting.setting_type != "text" && model_setting.setting_type != "select" {
+                return Err(format!("Connection model setting must be text or select: {model_setting_id}"));
+            }
+        }
+        if let Some(source_setting_id) = connection.credential_source_setting_id.as_deref() {
+            let source_setting = definitions
+                .get(source_setting_id)
+                .ok_or_else(|| format!("Connection credential source setting is not declared: {source_setting_id}"))?;
+            if source_setting.setting_type != "select"
+                || !source_setting.options.as_ref().is_some_and(|options| {
+                    options.iter().any(|option| option.value == "host-secret")
+                        && options.iter().any(|option| option.value == "environment")
+                })
+            {
+                return Err(format!("Connection credential source setting must offer host-secret and environment: {source_setting_id}"));
+            }
+        }
+        if let Some(env_setting_id) = connection.credential_env_var_setting_id.as_deref() {
+            let env_setting = definitions
+                .get(env_setting_id)
+                .ok_or_else(|| format!("Connection credential environment setting is not declared: {env_setting_id}"))?;
+            if env_setting.setting_type != "text" {
+                return Err(format!("Connection credential environment setting must be text: {env_setting_id}"));
+            }
+        }
+        match &connection.api_key {
+            crate::plugins::PluginApiKeySource::HostSecret { setting_id } => {
+                let setting = definitions
+                    .get(setting_id.as_str())
+                    .ok_or_else(|| format!("Connection secret setting is not declared: {setting_id}"))?;
+                if !setting.secret || setting.setting_type != "text" {
+                    return Err(format!("Connection secret setting must be a secret text field: {setting_id}"));
+                }
+            }
+            crate::plugins::PluginApiKeySource::Environment { name, fallback_setting_id } => {
+                if name.is_empty()
+                    || name.len() > 128
+                    || !name.chars().enumerate().all(|(index, character)| {
+                        (index == 0 && (character.is_ascii_uppercase() || character == '_'))
+                            || (index > 0 && (character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'))
+                    })
+                {
+                    return Err(format!("Invalid connection environment variable name: {name}"));
+                }
+                if let Some(setting_id) = fallback_setting_id {
+                    let setting = definitions
+                        .get(setting_id.as_str())
+                        .ok_or_else(|| format!("Connection fallback secret setting is not declared: {setting_id}"))?;
+                    if !setting.secret || setting.setting_type != "text" {
+                        return Err(format!("Connection fallback secret must be a secret text field: {setting_id}"));
+                    }
+                }
+            }
+        }
+        if let Some(action) = &connection.test_action {
+            validate_slug(&action.id, "connection test action id")?;
+            if action.label.trim().is_empty() || action.label.chars().count() > 64 {
+                return Err(format!("Connection test action label is invalid: {}", connection.id));
+            }
+            if action.description.as_ref().is_some_and(|description| description.chars().count() > 180) {
+                return Err(format!("Connection test action description is too long: {}", connection.id));
+            }
         }
     }
     Ok(())
@@ -422,6 +528,75 @@ fn configured_secrets(plugin_key: &str) -> Result<BTreeMap<String, String>, Stri
         .map(|values| values.get(plugin_key).cloned().unwrap_or_default())
 }
 
+/// Resolves one saved host-secret in memory. This function is crate-private
+/// on purpose: callers receive the value only inside the native host and it
+/// is never serialized into a snapshot, plugin envelope, UI response, or log.
+pub(crate) fn resolve_host_secret(
+    plugin_id: &str,
+    plugin_version: &str,
+    setting_id: &str,
+) -> Result<Option<String>, String> {
+    let plugin_key = format!("{plugin_id}@{plugin_version}");
+    secret_values()
+        .lock()
+        .map_err(|error| format!("Plugin secret settings lock poisoned: {error}"))
+        .map(|values| values.get(&plugin_key).and_then(|settings| settings.get(setting_id)).cloned())
+}
+
+fn resolve_latest_host_secret(
+    plugin_id: &str,
+    setting_id: &str,
+) -> Result<Option<String>, String> {
+    secret_values()
+        .lock()
+        .map_err(|error| format!("Plugin secret settings lock poisoned: {error}"))
+        .map(|values| {
+            values
+                .iter()
+                .filter(|(plugin_key, settings)| {
+                    plugin_key
+                        .strip_prefix(&format!("{plugin_id}@"))
+                        .is_some_and(|version| !version.is_empty() && settings.contains_key(setting_id))
+                })
+                .max_by(|(left, _), (right, _)| left.cmp(right))
+                .and_then(|(_, settings)| settings.get(setting_id))
+                .cloned()
+        })
+}
+
+/// Host-only credential resolution used by native agent execution. The source
+/// accepts host-secret, environment, or auto; an omitted plugin version
+/// selects the newest in-memory version for legacy PDF callers.
+pub(crate) fn resolve_connection_credentials(
+    plugin_id: &str,
+    plugin_version: Option<&str>,
+    source: &str,
+    env_var: &str,
+    host_secret_setting_id: &str,
+) -> Result<Option<String>, String> {
+    let source = source.trim().to_ascii_lowercase();
+    let host_secret = || {
+        plugin_version
+            .map(|version| resolve_host_secret(plugin_id, version, host_secret_setting_id))
+            .unwrap_or_else(|| resolve_latest_host_secret(plugin_id, host_secret_setting_id))
+    };
+    let environment = || {
+        if env_var.trim().is_empty() {
+            return Ok(None);
+        }
+        Ok(std::env::var(env_var)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()))
+    };
+    match source.as_str() {
+        "host-secret" | "host" | "secret" => host_secret(),
+        "environment" | "env" | "env-var" => environment(),
+        "auto" | "" => Ok(host_secret()?.or(environment()?)),
+        _ => Err("Unsupported credential source".to_string()),
+    }
+}
+
 fn build_snapshot(
     manifest: &MycPluginManifest,
     plugin_id: &str,
@@ -638,6 +813,237 @@ pub(crate) fn persisted_values_for_execution(
         .unwrap_or_default())
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginConnectionTestResult {
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSecretMutationInput {
+    pub action: String,
+    pub value: Option<String>,
+}
+
+fn connection_endpoint(raw: &str, format: &str) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(raw.trim())
+        .map_err(|_| "Connection URL is not valid".to_string())?;
+    let is_local_http = url.scheme() == "http"
+        && url.host_str().is_some_and(|host| {
+            matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
+        });
+    if url.scheme() != "https" && !is_local_http {
+        return Err("Connection URL must use https:// (or localhost for development)".to_string());
+    }
+    if url.username() != "" || url.password().is_some() || url.host_str().is_none() {
+        return Err("Connection URL must not contain credentials".to_string());
+    }
+    let suffix = match format {
+        "openai" => "/chat/completions",
+        "anthropic" => "/v1/messages",
+        _ => return Err("Connection format must be openai or anthropic".to_string()),
+    };
+    let path = url.path().trim_end_matches('/');
+    if !path.ends_with(suffix) {
+        let next_path = if path.is_empty() {
+            suffix.to_string()
+        } else {
+            format!("{path}{suffix}")
+        };
+        url.set_path(&next_path);
+    }
+    Ok(url)
+}
+
+fn connection_value<'a>(
+    values: &'a BTreeMap<String, Value>,
+    setting_id: &str,
+    label: &str,
+) -> Result<&'a str, String> {
+    values
+        .get(setting_id)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Connection {label} is not configured"))
+}
+
+pub(crate) async fn test_connection(
+    app: &AppHandle,
+    manifest: &MycPluginManifest,
+    plugin_id: &str,
+    plugin_version: &str,
+    connection_id: &str,
+    input_values: BTreeMap<String, Value>,
+    input_secrets: BTreeMap<String, PluginSecretMutationInput>,
+) -> Result<PluginConnectionTestResult, String> {
+    validate_connections(manifest)?;
+    let connection = manifest
+        .spec
+        .connections
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|connection| connection.id == connection_id)
+        .ok_or_else(|| format!("Unknown plugin connection: {connection_id}"))?;
+    if connection.test_action.is_none() {
+        return Err("This plugin connection does not declare a test action".to_string());
+    }
+
+    let definitions = definition_map(manifest)?;
+    let snapshot = get_snapshot(app, manifest, plugin_id, plugin_version)?;
+    let mut effective_values = snapshot.effective_values;
+    for (id, value) in input_values {
+        let setting = definitions
+            .get(id.as_str())
+            .ok_or_else(|| format!("Unknown plugin setting: {id}"))?;
+        if setting.secret {
+            return Err("Secret values must use the secret channel".to_string());
+        }
+        validate_value(setting, &value)?;
+        effective_values.insert(id, value);
+    }
+
+    let url = connection_value(&effective_values, &connection.url_setting_id, "URL")?;
+    let format = connection_value(
+        &effective_values,
+        &connection.format_setting_id,
+        "format",
+    )?;
+    if format != "openai" && format != "anthropic" {
+        return Err("Connection format must be openai or anthropic".to_string());
+    }
+    let model = connection
+        .model_setting_id
+        .as_deref()
+        .and_then(|setting_id| effective_values.get(setting_id))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("deepseek-v4-flash");
+
+    let plugin_key = format!("{plugin_id}@{plugin_version}");
+    let stored_secrets = configured_secrets(&plugin_key)?;
+    let (static_source, static_env_var, static_host_secret_setting) = match &connection.api_key {
+        crate::plugins::PluginApiKeySource::Environment { name, fallback_setting_id } => (
+            "environment",
+            Some(name.as_str()),
+            fallback_setting_id.as_deref(),
+        ),
+        crate::plugins::PluginApiKeySource::HostSecret { setting_id } => {
+            ("host-secret", None, Some(setting_id.as_str()))
+        }
+    };
+    let credential_source = connection
+        .credential_source_setting_id
+        .as_deref()
+        .and_then(|setting_id| effective_values.get(setting_id))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(static_source);
+    let credential_env_var = connection
+        .credential_env_var_setting_id
+        .as_deref()
+        .and_then(|setting_id| effective_values.get(setting_id))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(static_env_var);
+    let host_secret_setting = static_host_secret_setting;
+    let host_secret = || -> Result<Option<String>, String> {
+        let Some(setting_id) = host_secret_setting else {
+            return Ok(None);
+        };
+        let value = match input_secrets.get(setting_id).map(|mutation| mutation.action.as_str()) {
+            Some("set") => input_secrets
+                .get(setting_id)
+                .and_then(|mutation| mutation.value.clone()),
+            Some("clear") => None,
+            Some("keep") | None => stored_secrets.get(setting_id).cloned(),
+            Some(_) => return Err("Invalid secret mutation".to_string()),
+        };
+        Ok(value
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()))
+    };
+    let environment = || {
+        credential_env_var
+            .and_then(|name| std::env::var(name).ok())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    let api_key = match credential_source.to_ascii_lowercase().as_str() {
+        "host-secret" | "host" | "secret" => host_secret()?,
+        "environment" | "env" | "env-var" => environment(),
+        "auto" | "" => host_secret()?.or_else(environment),
+        _ => return Err("Unsupported credential source".to_string()),
+    }
+    .ok_or_else(|| "No API credential is configured for this connection".to_string())?;
+    if api_key.len() > MAX_SECRET_LENGTH {
+        return Err("API credential is too long".to_string());
+    }
+
+    let endpoint = connection_endpoint(url, format)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|_| "Could not initialize the connection test".to_string())?;
+    let response = if format == "anthropic" {
+        client
+            .post(endpoint)
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": 1,
+                "stream": false,
+                "messages": [{"role": "user", "content": "Reply with OK."}]
+            }))
+            .send()
+            .await
+    } else {
+        client
+            .post(endpoint)
+            .bearer_auth(&api_key)
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": 1,
+                "stream": false,
+                "messages": [{"role": "user", "content": "Reply with OK."}]
+            }))
+            .send()
+            .await
+    };
+
+    match response {
+        Ok(response) if response.status().is_success() => Ok(PluginConnectionTestResult {
+            ok: true,
+            message: "Connection succeeded.".to_string(),
+        }),
+        Ok(response) if response.status().as_u16() == 401 || response.status().as_u16() == 403 => {
+            Ok(PluginConnectionTestResult {
+                ok: false,
+                message: "Provider rejected the API credential.".to_string(),
+            })
+        }
+        Ok(response) if response.status().as_u16() == 429 => Ok(PluginConnectionTestResult {
+            ok: false,
+            message: "Provider reached, but rate limited the test request.".to_string(),
+        }),
+        Ok(response) => Ok(PluginConnectionTestResult {
+            ok: false,
+            message: format!("Provider returned HTTP {}.", response.status().as_u16()),
+        }),
+        Err(_) => Ok(PluginConnectionTestResult {
+            ok: false,
+            message: "Connection request could not be completed.".to_string(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -667,6 +1073,7 @@ mod tests {
                 permissions: vec![],
                 contributes: None,
                 settings: Some(settings),
+                connections: None,
             },
             payloads: None,
             signature: None,
@@ -748,6 +1155,62 @@ mod tests {
         assert!(!serde_json::to_string(&execution)
             .expect("serialize execution settings")
             .contains("secret-value"));
+        if let Ok(mut values) = secret_values().lock() {
+            values.remove(key);
+        }
+    }
+
+    #[test]
+    fn host_secret_resolution_is_exact_and_never_part_of_public_snapshot() {
+        let key = "test.settings@2.0.0";
+        if let Ok(mut values) = secret_values().lock() {
+            values.insert(
+                key.to_string(),
+                BTreeMap::from([("api-key".to_string(), "host-secret-value".to_string())]),
+            );
+        }
+        assert_eq!(
+            resolve_host_secret("test.settings", "2.0.0", "api-key")
+                .expect("host secret lookup"),
+            Some("host-secret-value".to_string())
+        );
+        assert_eq!(
+            resolve_host_secret("test.settings", "9.0.0", "api-key")
+                .expect("missing host secret lookup"),
+            None
+        );
+        let public = serde_json::to_string(&build_snapshot(
+            &manifest(vec![setting("api-key", "text")]),
+            "test.settings",
+            "2.0.0",
+            BTreeMap::new(),
+        )
+        .expect("snapshot"))
+        .expect("serialize snapshot");
+        assert!(!public.contains("host-secret-value"));
+        if let Ok(mut values) = secret_values().lock() {
+            values.remove(key);
+        }
+    }
+
+    #[test]
+    fn connection_credentials_can_select_host_secret_without_serializing_it() {
+        let key = "test.settings@3.0.0";
+        if let Ok(mut values) = secret_values().lock() {
+            values.insert(
+                key.to_string(),
+                BTreeMap::from([("api-key".to_string(), "selected-host-secret".to_string())]),
+            );
+        }
+        let resolved = resolve_connection_credentials(
+            "test.settings",
+            Some("3.0.0"),
+            "host-secret",
+            "UNUSED_TEST_ENV",
+            "api-key",
+        )
+        .expect("credential resolution");
+        assert_eq!(resolved, Some("selected-host-secret".to_string()));
         if let Ok(mut values) = secret_values().lock() {
             values.remove(key);
         }

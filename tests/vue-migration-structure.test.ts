@@ -94,6 +94,63 @@ test("Vite is configured for Vue and the package exposes the Vue toolchain", () 
   assert.deepEqual(missingPackages, [], `Missing Vue migration packages: ${missingPackages.join(", ")}`);
   assert.match(viteConfig, /@vitejs\/plugin-vue/, "vite.config.ts must load @vitejs/plugin-vue");
   assert.match(viteConfig, /plugins\s*:\s*\[[\s\S]*vue\(\)/, "vite.config.ts must register vue()");
+  for (const dependency of [
+    "vue",
+    "pinia",
+    "@vue-flow/core",
+    "@vue-flow/background",
+    "@vue-flow/controls",
+    "@vue-flow/minimap",
+    "@tabler/icons-vue",
+    "jspdf",
+  ]) {
+    assert.match(
+      viteConfig,
+      new RegExp(`include:[\\s\\S]*["']${dependency.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")}\"?`),
+      `vite.config.ts must pre-bundle ${dependency}`,
+    );
+  }
+  assert.match(viteConfig, /warmup\s*:\s*\{[\s\S]*clientFiles\s*:/, "vite.config.ts must warm the renderer entry");
+  assert.match(viteConfig, /src\/vue\/ResearchWorkspaceApp\.vue/, "Vite warmup must include the workspace shell");
+});
+
+test("workspace shell lazy-loads conditional heavy panels", () => {
+  const workspaceShell = readFileSync(
+    resolve(repositoryRoot, "src/vue/ResearchWorkspaceApp.vue"),
+    "utf8",
+  );
+
+  for (const [name, path] of [
+    ["AgentReviewPanel", "./components/AgentReviewPanel.vue"],
+    ["DiffPanel", "./components/DiffPanel.vue"],
+    ["PdfUploadDialog", "./components/PdfUploadDialog.vue"],
+    ["PluginStoreDialog", "./components/PluginStoreDialog.vue"],
+    ["WorkspaceDialogs", "./components/WorkspaceDialogs.vue"],
+    ["WorkspacePluginDialogs", "./components/WorkspacePluginDialogs.vue"],
+  ]) {
+    assert.match(
+      workspaceShell,
+      new RegExp(`const\\s+${name}\\s*=\\s*defineAsyncComponent\\(\\(\\)\\s*=>\\s*import\\(\\s*["']${path.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")}["']\\s*\\)\\s*\\)`),
+      `${name} must be loaded with defineAsyncComponent`,
+    );
+    assert.doesNotMatch(
+      workspaceShell,
+      new RegExp(`import\\s+${name}\\s+from\\s+["']${path.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")}`),
+      `${name} must not be synchronously imported by the workspace shell`,
+    );
+  }
+
+  for (const [name, path] of [
+    ["ResearchGraphCanvas", "./canvas/ResearchGraphCanvas.vue"],
+    ["InspectorPanel", "./components/InspectorPanel.vue"],
+    ["WorkspaceTopbar", "./components/WorkspaceTopbar.vue"],
+  ]) {
+    assert.match(
+      workspaceShell,
+      new RegExp(`import\\s+${name}\\s+from\\s+["']${path.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")}`),
+      `${name} must remain synchronous for the initial workspace shell`,
+    );
+  }
 });
 
 test("Pinia is registered once and all renderer stores use setup-style definitions", () => {
@@ -168,6 +225,21 @@ test("plugin store reuses the Vue item component and the Pinia host bridge", () 
     /\b(?:listInstalledMycPlugins|installMycPlugin|enabledPluginsStorageKey)\b/,
     "the dialog must not maintain a second plugin-host state source",
   );
+});
+
+test("Vue canvas composes native touchpad frames and dispatches radial flick selections", () => {
+  const canvas = readFileSync(
+    resolve(repositoryRoot, "src/vue/canvas/ResearchGraphCanvas.vue"),
+    "utf8",
+  );
+
+  assert.match(canvas, /lowPassCompleteTrackpadFrame\(/);
+  assert.match(canvas, /viewportForCompleteTrackpadFrame\(\s*originViewport/);
+  assert.match(canvas, /viewportForCoalescedWheelFrame\(/);
+  assert.match(canvas, /radialSelectionForNormalizedDisplacement\(/);
+  assert.match(canvas, /<RadialAddMenu\b/);
+  assert.match(canvas, /function handleChromiumWheel\(/);
+  assert.doesNotMatch(canvas, /function handleWheel\(/);
 });
 
 test("Vue components use separated SFC script setup, template, and style blocks", () => {

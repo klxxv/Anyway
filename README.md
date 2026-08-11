@@ -19,22 +19,22 @@ Research is messy. You run experiments, read papers, form hypotheses, and change
 
 ```bash
 npm install
-npm run dev:desktop-web    # start the Next.js dev server
+npm run dev:desktop-web    # start the Vite dev server
 npm run desktop:dev        # start the Tauri desktop app
 ```
 
-Open `http://localhost:3000`.
+Open `http://127.0.0.1:5173`.
 
 ## Scripts
 
 | Command | Description |
 |---|---|
-| `npm run dev:desktop-web` | Next.js dev server |
+| `npm run dev:desktop-web` | Vite dev server |
 | `npm run build:desktop` | Production build for Tauri |
 | `npm run desktop:dev` | Tauri desktop dev mode |
 | `npm test` | Full test suite |
 | `npm run lint` | ESLint |
-| `npx tsc --noEmit` | TypeScript type check |
+| `npm run typecheck:vue` | Vue + TypeScript type check |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Rust tests |
 
 ## `.myc` plugin format
@@ -67,7 +67,9 @@ Plugin kinds:
 ## Architecture
 
 ```
-app/                  TypeScript frontend (Next.js + React Flow)
+src/                  Vue 3 renderer (Vite + Vue Flow + Pinia)
+  vue/                Workspace components, composables, and stores
+app/                  Renderer-agnostic TypeScript domain and platform layer
   lib/
     graph/            Graph algorithms (traversal, cycles, paths, reachability)
     layout/           Deterministic layout projections
@@ -90,7 +92,7 @@ The TypeScript and Rust graph implementations are kept bit-identical through a c
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js, React, React Flow, Tailwind CSS |
+| Frontend | Vue 3, Vite, Vue Flow, Pinia, Tailwind CSS |
 | Desktop | Tauri 2, WebView2 (Windows) |
 | Graph kernel (TS) | TypeScript, pure functions |
 | Graph kernel (Rust) | Rust, serde, sha2 |

@@ -2,16 +2,13 @@
 
 ## Current stack
 
-The repository currently contains a Next.js 16 / React 19 renderer with
-TypeScript, `@xyflow/react`, and a Tauri 2 desktop shell. The Vue migration
-target is Vue 3, Composition API, TypeScript, Vite, `@vue-flow/core`, and
-Pinia. Pinia is the shared renderer-state architecture: stores must use the
-setup-store form, the application must register one shared root, and legacy
-composable/context entry points must remain compatibility facades.
-The renderer-agnostic domain and platform code remains under `app/` while the
-new Vue renderer is assembled under `src/vue/` (with `src/main.ts` and
-`src/App.vue` as the Vite entry). A short-lived React/Next compatibility tree
-may remain until the Vue acceptance gate is green.
+The renderer is Vue 3 with the Composition API, TypeScript, Vite,
+`@vue-flow/core`, and Pinia, packaged in a Tauri 2 desktop shell. Pinia is the
+shared renderer-state architecture: stores use the setup-store form and the
+application registers one shared root. The renderer-agnostic domain and
+platform code remains under `app/`, while the Vue renderer is assembled under
+`src/vue/` with `src/main.ts` and `src/App.vue` as the Vite entry. The legacy
+React/Next renderer has been removed.
 
 ## Migration scope
 
@@ -70,7 +67,7 @@ rewrite, fork, or silently rename their public interfaces:
 - `app/plugins/**`, including manifest, provider, Agent, GraphPatch, workspace,
   theme, identity, and Tauri client contracts.
 - `app/features/research-workspace/hooks/sync-logic.ts` and its project storage
-  key; `app/i18n/provider.tsx` and its locale key; the workspace preference key
+  key; `src/vue/runtime/i18n.ts` and its locale key; the workspace preference key
   and plugin changed event declarations.
 - `src-tauri/**`, Rust command registration, Tauri capabilities, and the
   project/compiler/plugin schemas.
@@ -155,10 +152,8 @@ renderer adapter or by a protected contract.
   compatibility callers, including SSR/browser lifecycle safety.
 - [x] Run Vue typecheck, desktop/Vite build, interface/SFC/Pinia gates, core,
   platform, workspace, compiler, and SDK parity tests.
-- [x] Smoke-test the production Vue renderer in a real browser, including the
-  Pinia-driven project menu and search panel.
-- [ ] Restore or re-sign the pre-existing modified runtime smoke plugin fixture
-  so `plugins::tests::accepts_signed_plugin_with_trusted_key` passes again.
+- [ ] Manually smoke-test the production Vue renderer, plugin connection test,
+  Kimi opt-in upload, and PDF-to-canvas result in the desktop application.
 
 ## Remaining known risks
 
@@ -170,24 +165,6 @@ now act as compatibility bridges over Pinia stores; future cleanup must retain
 their injection APIs, lifecycle start/stop behavior, persisted keys, plugin
 events, and platform adapters.
 
-The native Rust suite currently passes 113 of 114 tests. The remaining
-Ed25519 verification failure is associated with the pre-existing modified
-`plugins/packages/myc.runtime-smoke@1.1.0.myc` fixture and protected
-`src-tauri/src/plugins.rs` changes; the Pinia migration does not modify either
-file.
-
-## Known Next auth risk
-
-`app/chatgpt-auth.ts` uses `next/headers` and `next/navigation`, which depend on
-Next server request context and do not exist in a browser-only Vite runtime.
-Do not import those modules into Vue components. Preserve the public auth
-operation names and redirect safety, but put the implementation behind an
-explicit server/worker adapter or an authenticated host endpoint. The adapter
-must keep safe relative `returnTo` handling, avoid exposing credentials to the
-client, preserve sign-in/sign-out behavior, and fail clearly when no trusted
-server auth context is available. Auth migration is a separate risk gate and
-must not be “fixed” by weakening the existing open-redirect or session checks.
-
 ## Current worker status
 
 The Vue renderer now registers one Pinia root and uses setup-style stores for
@@ -198,3 +175,43 @@ test, SFC structure test, Vue typecheck, and Vite build must all remain green;
 do not resolve failures by weakening required paths or protected interfaces.
 The production browser smoke check renders the workspace and verifies that the
 project menu and search state transition correctly through the Pinia store.
+
+## Provider/PDF integration handoff
+
+Provider configuration is a host boundary, not an Agent-owned HTTP client.
+Plugin manifests may declare the API URL, request dialect, model, thinking
+level, and credential source, while the Tauri host validates those values,
+resolves secrets, performs connection tests, and makes model requests. Test
+results must contain only bounded status/latency/provider metadata; API keys and
+raw authorization headers must never be returned to Vue or plugin code.
+
+DeepSeek's public OpenAI/Anthropic-compatible APIs support streamed model
+responses, but the Anthropic compatibility table explicitly marks document and
+container upload content as unsupported. The portable PDF path therefore reads
+and extracts the PDF locally, sends bounded text context through the selected
+OpenAI/Anthropic adapter, parses the model result, and keeps the GraphPatch
+review gate intact.
+
+Kimi provides a provider-specific Files workflow at
+`https://api.moonshot.ai/v1`: upload with multipart `purpose=file-extract`, read
+`/v1/files/{file_id}/content`, place the returned text (not the file id) in the
+messages, then delete the temporary remote file. This path must be enabled only
+by an explicit Kimi/Moonshot provider configuration; arbitrary OpenAI-compatible
+URLs must retain local extraction so a PDF is never uploaded by inference.
+The PDF Agent exposes this choice as `pdf-transport`: `local-text` is the safe
+default, while `kimi-file-extract` explicitly opts into the Kimi upload flow.
+Runtime prompt metadata ships inside the `.myc` archive under
+`prompts/manifest.yaml`, so installed release plugins do not depend on the
+developer source tree.
+
+For Vite development cold starts, stable Vue/Pinia/Vue Flow dependencies are
+pre-bundled and the renderer entry, workspace shell, canvas, top bar, and
+inspector are warmed. Conditional PDF, plugin-store, Agent review, Diff, and
+workspace dialog surfaces are async chunks. The core canvas remains synchronous
+to preserve the first usable workspace render.
+
+Final verification passed Vue typechecking, ESLint, production Vite build,
+platform/workspace/core/compiler tests, all three SDK parity checks, and the
+native Rust suite (130/130). This pass produced the updated PDF Agent `.myc`
+runtime archive for manual testing, but intentionally did not build a desktop
+installer.

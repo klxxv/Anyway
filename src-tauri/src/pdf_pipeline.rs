@@ -7,6 +7,21 @@ use std::path::Path;
 
 const MIN_TEXT_CHARS: usize = 500;
 
+/// LLM input is bounded even when the source PDF is very large. The semantic
+/// passes receive a bounded context assembled from these chunks; PDF bytes
+/// never enter an LLM request.
+pub const DEFAULT_TEXT_CHUNK_CHARS: usize = 20_000;
+pub const MAX_LLM_CONTEXT_CHARS: usize = 80_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextChunk {
+    pub index: usize,
+    pub start_offset: usize,
+    pub end_offset: usize,
+    pub text: String,
+}
+
 // ── 核心数据结构 ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +118,11 @@ pub struct ResolvedAnchor {
 }
 
 impl DocumentMap {
-    pub fn build(_sections: &[StructureSection], paragraphs: &[StructureParagraph], pages: &[PageText]) -> Self {
+    pub fn build(
+        _sections: &[StructureSection],
+        paragraphs: &[StructureParagraph],
+        pages: &[PageText],
+    ) -> Self {
         let paragraph_spans: Vec<ParagraphSpan> = paragraphs
             .iter()
             .map(|p| ParagraphSpan {
@@ -124,13 +143,19 @@ impl DocumentMap {
             })
             .collect();
 
-        Self { paragraph_spans, page_offsets }
+        Self {
+            paragraph_spans,
+            page_offsets,
+        }
     }
 
     /// O(log N) 二分查找：给定全局字符偏移，解析为完整锚点。
     pub fn resolve(&self, offset: usize) -> Option<ResolvedAnchor> {
         let para = binary_search_span(&self.paragraph_spans, offset)?;
-        let page = self.page_offsets.iter().rev()
+        let page = self
+            .page_offsets
+            .iter()
+            .rev()
             .find(|(_, start)| offset >= *start)
             .map(|(p, _)| *p)
             .unwrap_or(1);
@@ -163,9 +188,15 @@ impl DocumentMap {
 
 fn binary_search_span<'a>(spans: &'a [ParagraphSpan], offset: usize) -> Option<&'a ParagraphSpan> {
     let idx = spans.partition_point(|s| s.start_offset <= offset);
-    if idx == 0 { return None; }
+    if idx == 0 {
+        return None;
+    }
     let candidate = &spans[idx - 1];
-    if offset >= candidate.start_offset && offset < candidate.end_offset { Some(candidate) } else { None }
+    if offset >= candidate.start_offset && offset < candidate.end_offset {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 // ── PDF 管线 ──
@@ -176,8 +207,7 @@ pub struct PdfPipeline;
 impl PdfPipeline {
     /// 使用 lopdf 从 PDF 提取所有文本。
     pub fn extract_text(pdf_path: &Path) -> Result<ExtractedText, String> {
-        let document = Document::load(pdf_path)
-            .map_err(|e| format!("lopdf load error: {e}"))?;
+        let document = Document::load(pdf_path).map_err(|e| format!("lopdf load error: {e}"))?;
 
         let mut pages = Vec::with_capacity(document.get_pages().len());
         let mut full_parts = Vec::new();
@@ -185,14 +215,120 @@ impl PdfPipeline {
         for (page_num, _) in &document.get_pages() {
             let text = document.extract_text(&[*page_num]).unwrap_or_default();
             let char_count = text.chars().count();
-            pages.push(PageText { page_number: *page_num as usize, text: text.clone(), char_count });
+            pages.push(PageText {
+                page_number: *page_num as usize,
+                text: text.clone(),
+                char_count,
+            });
             full_parts.push(text);
         }
 
         let full_text = full_parts.join("\n");
         let total_chars = full_text.chars().count();
 
-        Ok(ExtractedText { full_text, pages, total_chars })
+        Ok(ExtractedText {
+            full_text,
+            pages,
+            total_chars,
+        })
+    }
+
+    /// Construct the same extraction shape from provider-returned plain text.
+    /// This is used only by the explicitly opted-in Kimi file-extract path;
+    /// the provider returns text, never a document block or a file id.
+    pub fn from_plain_text(full_text: String) -> ExtractedText {
+        let pages = full_text
+            .split('\u{000c}')
+            .enumerate()
+            .map(|(index, text)| PageText {
+                page_number: index + 1,
+                char_count: text.chars().count(),
+                text: text.to_string(),
+            })
+            .collect::<Vec<_>>();
+        let total_chars = full_text.chars().count();
+        ExtractedText {
+            full_text,
+            pages,
+            total_chars,
+        }
+    }
+
+    /// Split text on Unicode scalar boundaries, preferring paragraph/line
+    /// boundaries. The returned offsets are byte offsets into the original
+    /// string and every chunk is at most `max_chars` Unicode characters.
+    pub fn chunk_text(text: &str, max_chars: usize) -> Vec<TextChunk> {
+        if text.is_empty() || max_chars == 0 {
+            return Vec::new();
+        }
+
+        let chars = text.char_indices().collect::<Vec<_>>();
+        let char_len = chars.len();
+        let mut chunks = Vec::new();
+        let mut start_char = 0usize;
+
+        while start_char < char_len {
+            let hard_end = (start_char + max_chars).min(char_len);
+            let mut end_char = hard_end;
+
+            if hard_end < char_len {
+                let start_byte = chars[start_char].0;
+                let hard_end_byte = chars[hard_end].0;
+                let window = &text[start_byte..hard_end_byte];
+                if let Some(boundary) = window
+                    .char_indices()
+                    .rev()
+                    .find(|(_, ch)| *ch == '\n' || *ch == '\u{000c}')
+                    .map(|(offset, _)| offset + 1)
+                {
+                    let candidate = text[start_byte..start_byte + boundary].chars().count();
+                    if candidate > 0 {
+                        end_char = start_char + candidate;
+                    }
+                }
+            }
+
+            let start_byte = chars[start_char].0;
+            let end_byte = if end_char < char_len {
+                chars[end_char].0
+            } else {
+                text.len()
+            };
+            let chunk = text[start_byte..end_byte].trim().to_string();
+            if !chunk.is_empty() {
+                chunks.push(TextChunk {
+                    index: chunks.len(),
+                    start_offset: start_byte,
+                    end_offset: end_byte,
+                    text: chunk,
+                });
+            }
+            start_char = end_char.max(start_char + 1);
+        }
+
+        chunks
+    }
+
+    /// Join a bounded number of chunks for a model context while preserving
+    /// chunk boundaries in the prompt. This is intentionally a text-only
+    /// operation and is safe for both OpenAI-compatible and Anthropic bodies.
+    pub fn bounded_llm_context(text: &str) -> String {
+        Self::chunk_text(text, DEFAULT_TEXT_CHUNK_CHARS)
+            .into_iter()
+            .scan(0usize, |used, chunk| {
+                if *used >= MAX_LLM_CONTEXT_CHARS {
+                    return None;
+                }
+                let remaining = MAX_LLM_CONTEXT_CHARS - *used;
+                let bounded = chunk.text.chars().take(remaining).collect::<String>();
+                if bounded.is_empty() {
+                    return None;
+                }
+                *used += bounded.chars().count();
+                Some(format!("[TEXT_CHUNK {}]\n{}", chunk.index, bounded))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     /// 判断是否需要 OCR fallback。
@@ -200,7 +336,7 @@ impl PdfPipeline {
         extracted.total_chars < MIN_TEXT_CHARS
     }
 
-/// OCR fallback 桩：接收已提取文本，不再重复解析 PDF。
+    /// OCR fallback 桩：接收已提取文本，不再重复解析 PDF。
     pub fn ocr_fallback(extracted: &ExtractedText) -> Result<ExtractedText, String> {
         if !Self::needs_ocr(extracted) {
             return Ok(extracted.clone());
@@ -216,7 +352,11 @@ impl PdfPipeline {
         let sections = detect_sections(text);
         let paragraphs = detect_paragraphs(text, &sections);
         let figures_tables = detect_figures_tables(text);
-        StructureResult { sections, paragraphs, figures_tables }
+        StructureResult {
+            sections,
+            paragraphs,
+            figures_tables,
+        }
     }
 
     /// 由已提取文本直接构建结构化文档，避免重复解析 PDF。
@@ -226,7 +366,8 @@ impl PdfPipeline {
         ocr_confidence: Option<f64>,
     ) -> StructuredDocument {
         let structure = Self::recognize_structure(&extracted.full_text);
-        let document_map = DocumentMap::build(&structure.sections, &structure.paragraphs, &extracted.pages);
+        let document_map =
+            DocumentMap::build(&structure.sections, &structure.paragraphs, &extracted.pages);
 
         StructuredDocument {
             sections: structure.sections,
@@ -251,7 +392,11 @@ impl PdfPipeline {
         } else {
             (extracted, None)
         };
-        Ok(Self::build_structured_document(final_extracted, ocr_triggered, ocr_confidence))
+        Ok(Self::build_structured_document(
+            final_extracted,
+            ocr_triggered,
+            ocr_confidence,
+        ))
     }
 }
 
@@ -284,13 +429,20 @@ fn detect_sections(text: &str) -> Vec<StructureSection> {
     }
 
     for i in 0..sections.len() {
-        sections[i].end_offset = if i + 1 < sections.len() { sections[i + 1].start_offset } else { text.len() };
+        sections[i].end_offset = if i + 1 < sections.len() {
+            sections[i + 1].start_offset
+        } else {
+            text.len()
+        };
     }
 
     let mut parent_stack: Vec<usize> = Vec::new();
     for i in 0..sections.len() {
         let level = sections[i].level;
-        while parent_stack.last().map_or(false, |&p| sections[p].level >= level) {
+        while parent_stack
+            .last()
+            .map_or(false, |&p| sections[p].level >= level)
+        {
             parent_stack.pop();
         }
         if let Some(&parent_idx) = parent_stack.last() {
@@ -309,10 +461,14 @@ fn detect_paragraphs(text: &str, sections: &[StructureSection]) -> Vec<Structure
 
     for block in text.split("\n\n") {
         let trimmed = block.trim();
-        if trimmed.is_empty() || trimmed.len() < 10 { continue; }
+        if trimmed.is_empty() || trimmed.len() < 10 {
+            continue;
+        }
 
         let block_start = block.as_ptr() as usize - text.as_ptr() as usize;
-        let section_id = sections.iter().rev()
+        let section_id = sections
+            .iter()
+            .rev()
             .find(|s| block_start >= s.start_offset && block_start < s.end_offset)
             .map(|s| s.id.clone())
             .unwrap_or_else(|| "s0".to_string());
@@ -332,7 +488,8 @@ fn detect_paragraphs(text: &str, sections: &[StructureSection]) -> Vec<Structure
 
 fn detect_figures_tables(text: &str) -> Vec<FigureTableRef> {
     let mut refs = Vec::new();
-    let re = regex::Regex::new(r"(?mi)^\s*(Figure|Table)\s+(\d+(?:\.\d+)?)\s*[:.]\s*(.{10,300})$").unwrap();
+    let re = regex::Regex::new(r"(?mi)^\s*(Figure|Table)\s+(\d+(?:\.\d+)?)\s*[:.]\s*(.{10,300})$")
+        .unwrap();
 
     for caps in re.captures_iter(text) {
         let kind = match caps.get(1).unwrap().as_str().to_lowercase().as_str() {
@@ -348,7 +505,12 @@ fn detect_figures_tables(text: &str) -> Vec<FigureTableRef> {
             FigureTableKind::Table => format!("tab{num}"),
         };
 
-        refs.push(FigureTableRef { id, kind, caption, caption_offset: offset });
+        refs.push(FigureTableRef {
+            id,
+            kind,
+            caption,
+            caption_offset: offset,
+        });
     }
 
     refs
@@ -381,8 +543,12 @@ Table 1: Comparison of convergence rates across optimizers.\n\n\
     #[test]
     fn detects_figures_and_tables() {
         let refs = detect_figures_tables(SAMPLE);
-        assert!(refs.iter().any(|r| r.id == "fig1" && r.kind == FigureTableKind::Figure));
-        assert!(refs.iter().any(|r| r.id == "tab1" && r.kind == FigureTableKind::Table));
+        assert!(refs
+            .iter()
+            .any(|r| r.id == "fig1" && r.kind == FigureTableKind::Figure));
+        assert!(refs
+            .iter()
+            .any(|r| r.id == "tab1" && r.kind == FigureTableKind::Table));
     }
 
     #[test]
@@ -390,14 +556,20 @@ Table 1: Comparison of convergence rates across optimizers.\n\n\
         let sections = detect_sections(SAMPLE);
         let paragraphs = detect_paragraphs(SAMPLE, &sections);
         assert!(!paragraphs.is_empty());
-        for p in &paragraphs { assert!(!p.section_id.is_empty()); }
+        for p in &paragraphs {
+            assert!(!p.section_id.is_empty());
+        }
     }
 
     #[test]
     fn document_map_resolves_offsets() {
         let sections = detect_sections(SAMPLE);
         let paragraphs = detect_paragraphs(SAMPLE, &sections);
-        let pages = vec![PageText { page_number: 1, text: SAMPLE.to_string(), char_count: SAMPLE.chars().count() }];
+        let pages = vec![PageText {
+            page_number: 1,
+            text: SAMPLE.to_string(),
+            char_count: SAMPLE.chars().count(),
+        }];
         let map = DocumentMap::build(&sections, &paragraphs, &pages);
 
         let target = SAMPLE.find("novel approach").expect("find");
@@ -415,24 +587,69 @@ Table 1: Comparison of convergence rates across optimizers.\n\n\
     fn needs_ocr_detection() {
         let sparse = ExtractedText {
             full_text: "short".into(),
-            pages: vec![PageText { page_number: 1, text: "short".into(), char_count: 5 }],
+            pages: vec![PageText {
+                page_number: 1,
+                text: "short".into(),
+                char_count: 5,
+            }],
             total_chars: 5,
         };
         assert!(PdfPipeline::needs_ocr(&sparse));
 
         let sufficient = ExtractedText {
             full_text: "a".repeat(1000),
-            pages: vec![PageText { page_number: 1, text: "a".repeat(1000), char_count: 1000 }],
+            pages: vec![PageText {
+                page_number: 1,
+                text: "a".repeat(1000),
+                char_count: 1000,
+            }],
             total_chars: 1000,
         };
         assert!(!PdfPipeline::needs_ocr(&sufficient));
     }
 
     #[test]
+    fn provider_text_preserves_form_feed_pages() {
+        let extracted = PdfPipeline::from_plain_text("第一\u{000c}第二".to_string());
+        assert_eq!(extracted.total_chars, 5);
+        assert_eq!(extracted.pages.len(), 2);
+        assert_eq!(extracted.pages[0].text, "第一");
+        assert_eq!(extracted.pages[1].text, "第二");
+    }
+
+    #[test]
+    fn text_chunks_are_unicode_safe_and_bounded() {
+        let text = "甲乙\n丙丁戊\n己庚辛壬癸";
+        let chunks = PdfPipeline::chunk_text(text, 4);
+        assert!(!chunks.is_empty());
+        assert!(chunks.iter().all(|chunk| chunk.text.chars().count() <= 4));
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.start_offset <= chunk.end_offset));
+        assert_eq!(chunks[0].index, 0);
+    }
+
+    #[test]
+    fn bounded_context_does_not_include_unbounded_pdf_text() {
+        let context = PdfPipeline::bounded_llm_context(&"x".repeat(MAX_LLM_CONTEXT_CHARS + 10_000));
+        let content_chars = context
+            .lines()
+            .filter(|line| !line.starts_with("[TEXT_CHUNK "))
+            .map(str::chars)
+            .map(Iterator::count)
+            .sum::<usize>();
+        assert_eq!(content_chars, MAX_LLM_CONTEXT_CHARS);
+    }
+
+    #[test]
     fn ocr_fallback_reuses_extracted_text_without_re_parsing() {
         let sufficient = ExtractedText {
             full_text: "a".repeat(1000),
-            pages: vec![PageText { page_number: 1, text: "a".repeat(1000), char_count: 1000 }],
+            pages: vec![PageText {
+                page_number: 1,
+                text: "a".repeat(1000),
+                char_count: 1000,
+            }],
             total_chars: 1000,
         };
         let result = PdfPipeline::ocr_fallback(&sufficient).expect("sufficient text needs no OCR");
@@ -440,7 +657,11 @@ Table 1: Comparison of convergence rates across optimizers.\n\n\
 
         let sparse = ExtractedText {
             full_text: "short".into(),
-            pages: vec![PageText { page_number: 1, text: "short".into(), char_count: 5 }],
+            pages: vec![PageText {
+                page_number: 1,
+                text: "short".into(),
+                char_count: 5,
+            }],
             total_chars: 5,
         };
         assert!(PdfPipeline::ocr_fallback(&sparse).is_err());
@@ -450,7 +671,11 @@ Table 1: Comparison of convergence rates across optimizers.\n\n\
     fn build_structured_document_from_extracted_text_preserves_ocr_state() {
         let extracted = ExtractedText {
             full_text: "a".repeat(1000),
-            pages: vec![PageText { page_number: 1, text: "a".repeat(1000), char_count: 1000 }],
+            pages: vec![PageText {
+                page_number: 1,
+                text: "a".repeat(1000),
+                char_count: 1000,
+            }],
             total_chars: 1000,
         };
         let doc = PdfPipeline::build_structured_document(extracted, true, Some(0.95));
@@ -461,8 +686,18 @@ Table 1: Comparison of convergence rates across optimizers.\n\n\
     #[test]
     fn binary_search_correctness() {
         let spans = vec![
-            ParagraphSpan { paragraph_id: "p1".into(), section_id: "s1".into(), start_offset: 0, end_offset: 100 },
-            ParagraphSpan { paragraph_id: "p2".into(), section_id: "s2".into(), start_offset: 100, end_offset: 200 },
+            ParagraphSpan {
+                paragraph_id: "p1".into(),
+                section_id: "s1".into(),
+                start_offset: 0,
+                end_offset: 100,
+            },
+            ParagraphSpan {
+                paragraph_id: "p2".into(),
+                section_id: "s2".into(),
+                start_offset: 100,
+                end_offset: 200,
+            },
         ];
         assert_eq!(binary_search_span(&spans, 50).unwrap().paragraph_id, "p1");
         assert_eq!(binary_search_span(&spans, 150).unwrap().paragraph_id, "p2");

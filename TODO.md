@@ -4,7 +4,7 @@ Branch: `codex/responsive-i18n-myc`
 
 ## Responsive desktop UI
 
-- [x] Contain the React Flow minimap at every supported viewport size.
+- [x] Contain the Vue Flow minimap at every supported viewport size.
 - [x] Keep top-bar, canvas-toolbar, panel-tab, and inspector actions reachable while resizing.
 - [x] Replace accidental responsive hiding with compact labels or horizontal overflow.
 - [x] Verify 760×560, 1024×720, 1280×800, and 1440×900 layouts.
@@ -30,7 +30,7 @@ Branch: `codex/responsive-i18n-myc`
 
 - [x] Separate i18n, plugin contracts, built-in catalogs, responsive styles, and Tauri plugin commands.
 - [x] Document module boundaries and package-building commands.
-- [x] Keep graph semantics independent from React Flow, Tauri, and plugin UI code.
+- [x] Keep graph semantics independent from Vue Flow, Tauri, and plugin UI code.
 
 ## Verification and delivery
 
@@ -78,3 +78,24 @@ retaining green support, red dashed refutation, and muted control semantics.
 - [x] Add native validation/persistence tests and Vue/SDK rendering tests.
 - [x] Run Vue typecheck, frontend tests/build, Rust tests, and SDK checks.
 - [x] Update `HANDOFF.md` with final implementation state, known limitations, and verification results.
+
+## Provider settings, PDF execution, and Vite cold start
+
+- [x] Verify from the official DeepSeek compatibility documentation that
+  response streaming is supported but PDF/document upload is not.
+- [x] Verify the official Kimi Files workflow: multipart `file-extract` upload,
+  extracted-content retrieval, text-message injection, and remote-file cleanup.
+- [x] Extend the declarative plugin SDK with API URL, OpenAI/Anthropic format,
+  credential source, and a host-rendered connection-test action.
+- [x] Keep connection-test results bounded and redacted so API keys never cross
+  the host-to-renderer boundary.
+- [x] Make the PDF Agent consume host-validated settings and use a portable
+  local-PDF-to-text path, with an explicit Kimi Files adapter where configured.
+- [x] Add regression tests for provider payloads, PDF text handoff, settings
+  rendering, secret handling, and connection-test feedback.
+- [x] Pre-bundle the Vue canvas cold-start dependency set and lazy-load hidden
+  dialogs without delaying the first canvas render.
+- [x] Run focused Vue, SDK, Rust, and production-build gates; do not create a
+  desktop installer in this pass.
+- [x] Record the final verification results in the Vue migration handoff and
+  commit the integrated change set.

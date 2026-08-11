@@ -13,6 +13,7 @@ const props = defineProps<PluginSettingsDialogProps>();
 const { t } = usePanelI18n();
 const draft = ref<PluginSettingsDraft>(clonePluginSettingsDraft(props.draft));
 const errors = ref<Record<string, string>>({});
+const connectionTests = ref<Record<string, { status: "running" | "success" | "error"; message: string }>>({});
 
 watch(
   () => props.draft,
@@ -76,6 +77,34 @@ const save = async () => {
 const reset = async () => {
   errors.value = {};
   await props.onReset();
+};
+
+const testConnection = async (connectionId: string) => {
+  const connection = props.target.connections.find((candidate) => candidate.id === connectionId);
+  if (!connection?.testAction || !props.onTestConnection) return;
+  if (!validate()) return;
+  connectionTests.value = {
+    ...connectionTests.value,
+    [connectionId]: { status: "running", message: t("plugins.connectionTesting") },
+  };
+  try {
+    const result = await props.onTestConnection(connectionId, clonePluginSettingsDraft(draft.value));
+    connectionTests.value = {
+      ...connectionTests.value,
+      [connectionId]: {
+        status: result.ok ? "success" : "error",
+        message: result.message,
+      },
+    };
+  } catch (cause) {
+    connectionTests.value = {
+      ...connectionTests.value,
+      [connectionId]: {
+        status: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      },
+    };
+  }
 };
 </script>
 
@@ -205,6 +234,22 @@ const reset = async () => {
                 </div>
                 <p v-if="errors[definition.id]" class="mt-2 font-serif text-[9px] text-alert" role="alert">{{ errors[definition.id] }}</p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="target.connections.some((connection) => connection.testAction) && props.onTestConnection" class="mt-5 rounded-[6px] border border-blue/20 bg-blue-soft/30 p-4" aria-labelledby="plugin-connection-actions-title">
+          <h3 id="plugin-connection-actions-title" class="font-sans text-[8px] uppercase tracking-[0.16em] text-blue">{{ t('plugins.connectionActions') }}</h3>
+          <div class="mt-3 space-y-2">
+            <div v-for="connection in target.connections.filter((candidate) => candidate.testAction)" :key="connection.id" class="flex flex-wrap items-center gap-3 rounded-[5px] border border-blue/15 bg-paper px-3 py-3">
+              <div class="min-w-0 flex-1">
+                <p class="font-serif text-[11px] text-ink/80">{{ connection.testAction?.label }}</p>
+                <p v-if="connection.testAction?.description" class="mt-1 font-serif text-[9px] text-ink/50">{{ connection.testAction.description }}</p>
+                <p v-if="connectionTests[connection.id]" class="mt-1 font-serif text-[9px]" :class="connectionTests[connection.id].status === 'error' ? 'text-alert' : connectionTests[connection.id].status === 'running' ? 'text-blue' : 'text-emerald-700'" role="status" aria-live="polite">{{ connectionTests[connection.id].message }}</p>
+              </div>
+              <button type="button" class="button-secondary px-3" :disabled="saving || loading || connectionTests[connection.id]?.status === 'running'" @click="void testConnection(connection.id)">
+                {{ connectionTests[connection.id]?.status === 'running' ? t('plugins.connectionTesting') : connection.testAction?.label }}
+              </button>
             </div>
           </div>
         </section>

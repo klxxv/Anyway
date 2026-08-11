@@ -106,6 +106,46 @@ pub struct PluginSettingDefinition {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "source")]
+pub enum PluginApiKeySource {
+    #[serde(rename = "host-secret")]
+    HostSecret {
+        #[serde(rename = "settingId")]
+        setting_id: String,
+    },
+    Environment {
+        name: String,
+        #[serde(rename = "fallbackSettingId", default, skip_serializing_if = "Option::is_none")]
+        fallback_setting_id: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginConnectionTestAction {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginConnectionDefinition {
+    pub id: String,
+    pub label: String,
+    pub url_setting_id: String,
+    pub format_setting_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_setting_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_source_setting_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_env_var_setting_id: Option<String>,
+    pub api_key: PluginApiKeySource,
+    pub test_action: Option<PluginConnectionTestAction>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginContextMenuContribution {
     pub id: String,
@@ -152,6 +192,8 @@ pub struct MycPluginSpec {
     pub contributes: Option<MycPluginContributions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<Vec<PluginSettingDefinition>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections: Option<Vec<PluginConnectionDefinition>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -323,7 +365,8 @@ fn validate_slug(value: &str, label: &str) -> Result<(), String> {
 fn validate_plugin_settings(manifest: &MycPluginManifest) -> Result<(), String> {
     crate::plugin_settings::validate_definitions(
         manifest.spec.settings.as_deref().unwrap_or_default(),
-    )
+    )?;
+    crate::plugin_settings::validate_connections(manifest)
 }
 
 fn validate_developer_uuid(value: &str) -> Result<(), String> {
@@ -1180,18 +1223,93 @@ fn read_installed_plugin_by_identity(
 }
 
 /// 将用户传入的插件路径解析为允许的 packages 目录下的真实路径。
-/// Resolves a caller-supplied plugin path to a real path inside the configured
-/// `packages` directory. Rejects paths that escape the directory.
+/// Stages an external package into the configured packages directory.
+///
+/// The destination is created with `create_new`, so an existing package or
+/// symlink is never overwritten. The source is opened only after canonical
+/// resolution and is copied with the archive-size bound applied.
+fn stage_external_myc_package(base: &Path, path: &Path) -> Result<PathBuf, String> {
+    let source = path
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve plugin path: {error}"))?;
+    let mut source_file = File::open(&source).map_err(|error| error.to_string())?;
+    let source_metadata = source_file.metadata().map_err(|error| error.to_string())?;
+    if !source_metadata.is_file() {
+        return Err("Plugin package must be a regular file".to_string());
+    }
+    if !source
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("myc"))
+    {
+        return Err("Plugin package must use the .myc extension".to_string());
+    }
+    if source_metadata.len() > MAX_ARCHIVE_BYTES {
+        return Err("Plugin package exceeds the 16 MB archive limit".to_string());
+    }
+
+    let packages = base.join("packages");
+    fs::create_dir_all(&packages).map_err(|error| error.to_string())?;
+    let packages = packages
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve packages directory: {error}"))?;
+    if !packages.is_dir() {
+        return Err("Configured packages path is not a directory".to_string());
+    }
+
+    let source_name = source
+        .file_name()
+        .ok_or_else(|| "Plugin package path has no file name".to_string())?;
+    for attempt in 0_u32.. {
+        let destination = if attempt == 0 {
+            packages.join(source_name)
+        } else {
+            packages.join(format!(".imported-{}-{attempt}.myc", std::process::id()))
+        };
+        let mut destination_file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+
+        let copy_result = (|| -> Result<(), String> {
+            let mut bounded_source = source_file.by_ref().take(MAX_ARCHIVE_BYTES + 1);
+            let copied = io::copy(&mut bounded_source, &mut destination_file)
+                .map_err(|error| error.to_string())?;
+            if copied > MAX_ARCHIVE_BYTES {
+                return Err("Plugin package exceeds the 16 MB archive limit".to_string());
+            }
+            destination_file
+                .sync_all()
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })();
+        if let Err(error) = copy_result {
+            let _ = fs::remove_file(&destination);
+            return Err(error);
+        }
+        return Ok(destination);
+    }
+    unreachable!("u32 staging attempts are exhausted")
+}
+
+/// Resolves a caller-supplied plugin path. Existing paths inside the
+/// configured `packages` directory retain their current behavior; external
+/// files are canonicalized, validated, and copied into that directory first.
 fn resolve_package_path(base: &Path, path: &Path) -> Result<PathBuf, String> {
     let allowed = base.join("packages");
     let input = path
         .canonicalize()
         .map_err(|error| format!("Cannot resolve plugin path: {error}"))?;
     let normalized_allowed = allowed.canonicalize().unwrap_or(allowed);
-    if !input.starts_with(&normalized_allowed) {
-        return Err("Plugin path must be inside the configured packages directory".to_string());
+    if input.starts_with(&normalized_allowed) {
+        return Ok(input);
     }
-    Ok(input)
+    stage_external_myc_package(base, &input)
 }
 
 #[tauri::command]
@@ -1281,6 +1399,29 @@ pub fn reset_plugin_settings(
 }
 
 /** 原生动作前解析已安装包并验证一个命名能力 / Resolve an installed package and prove one capability. */
+#[tauri::command]
+pub async fn test_plugin_connection(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    connection_id: String,
+    values: BTreeMap<String, serde_json::Value>,
+    secrets: BTreeMap<String, crate::plugin_settings::PluginSecretMutationInput>,
+) -> Result<crate::plugin_settings::PluginConnectionTestResult, String> {
+    let (_directory, installed) =
+        read_installed_plugin_by_identity(&app, &plugin_id, &plugin_version)?;
+    crate::plugin_settings::test_connection(
+        &app,
+        &installed.manifest,
+        &plugin_id,
+        &plugin_version,
+        &connection_id,
+        values,
+        secrets,
+    )
+    .await
+}
+
 pub fn require_plugin_capability(
     app: &AppHandle,
     plugin_id: &str,
@@ -2627,35 +2768,76 @@ signature: {}
     }
 
     #[test]
-    fn resolve_package_path_restricts_to_packages_directory() {
-        let base = tempdir().expect("temp base").path().to_path_buf();
-        let packages = base.join("packages");
+    fn external_myc_package_is_staged_and_installed() {
+        let base = tempdir().expect("temp base");
+        let external = tempdir().expect("external root");
+        let theme_json = valid_theme_json().to_string();
+        let package = theme_package_with_payloads(
+            external.path(),
+            "external.myc",
+            &format!("payloads:\n  theme.json: {}\n", theme_payload_hash()),
+            theme_json.as_bytes(),
+            None,
+        );
+
+        let staged =
+            resolve_package_path(base.path(), &package).expect("external package should be staged");
+        let packages = base
+            .path()
+            .join("packages")
+            .canonicalize()
+            .expect("packages");
+        assert!(
+            staged.starts_with(&packages),
+            "staged package must be inside packages"
+        );
+        assert_ne!(staged, package.canonicalize().expect("source path"));
+        assert_eq!(
+            fs::read(&staged).expect("staged bytes"),
+            fs::read(&package).expect("source bytes")
+        );
+
+        let installed = install_archive_into(base.path(), &staged)
+            .expect("staged external package should install");
+        assert_eq!(installed.manifest.metadata.id, "myc.payload-theme");
+        assert!(base
+            .path()
+            .join("installed/myc.payload-theme@1.0.0")
+            .is_dir());
+    }
+
+    #[test]
+    fn escaping_external_path_is_staged_without_trusting_or_overwriting_destination() {
+        let base = tempdir().expect("temp base");
+        let packages = base.path().join("packages");
         fs::create_dir_all(&packages).expect("create packages");
         let inside = packages.join("inside.myc");
         fs::write(&inside, b"dummy").expect("write inside");
 
         assert!(
-            resolve_package_path(&base, &inside).is_ok(),
+            resolve_package_path(base.path(), &inside).is_ok(),
             "path inside packages must be allowed"
         );
 
-        let outside = base.join("outside.myc");
-        fs::write(&outside, b"dummy").expect("write outside");
-        let result = resolve_package_path(&base, &outside);
-        assert!(
-            result.is_err(),
-            "path outside packages must be rejected: {result:?}"
-        );
-        assert!(
-            result.unwrap_err().contains("packages directory"),
-            "error should mention packages directory"
-        );
+        let outside = base.path().join("outside");
+        fs::create_dir_all(&outside).expect("create outside");
+        let escaped_source = outside.join("escaped.myc");
+        fs::write(&escaped_source, b"external package").expect("write outside");
+        let existing_destination = packages.join("escaped.myc");
+        fs::write(&existing_destination, b"keep me").expect("write destination sentinel");
 
-        let escaped = packages.join("..").join("escaped.myc");
-        let result = resolve_package_path(&base, &escaped);
-        assert!(
-            result.is_err(),
-            "path escaping packages via .. must be rejected: {result:?}"
+        let escaped = packages.join("..").join("outside").join("escaped.myc");
+        let staged = resolve_package_path(base.path(), &escaped)
+            .expect("escaping external path should be staged safely");
+        assert!(staged.starts_with(&packages.canonicalize().expect("packages")));
+        assert_ne!(staged, existing_destination);
+        assert_eq!(
+            fs::read(&existing_destination).expect("sentinel bytes"),
+            b"keep me"
+        );
+        assert_eq!(
+            fs::read(&staged).expect("staged bytes"),
+            b"external package"
         );
     }
 }

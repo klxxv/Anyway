@@ -24,7 +24,9 @@ import {
   getPluginSettings,
   resetPluginSettings as resetPluginSettingsNative,
   savePluginSettings as savePluginSettingsNative,
+  testPluginConnection as testPluginConnectionNative,
   uninstallMycPlugin,
+  type PluginConnectionTestResult,
   type PluginSettingsSnapshot,
   type PluginSettingsWrite,
 } from "../../../app/plugins/tauri-client";
@@ -175,6 +177,23 @@ export const useRuntimePluginHostStore = defineStore("runtime-plugin-host", () =
     }
   };
 
+  const testPluginConnection = async (
+    plugin: PluginReference,
+    connectionId: string,
+    write: PluginSettingsWrite,
+    native = true,
+  ): Promise<PluginConnectionTestResult> => {
+    if (!native) throw new Error("MYC_DESKTOP_REQUIRED");
+    try {
+      return await testPluginConnectionNative(plugin, connectionId, write, { native });
+    } catch (cause) {
+      const key = settingsKey(plugin);
+      const message = cause instanceof Error ? cause.message : String(cause);
+      pluginSettingsErrors.value = { ...pluginSettingsErrors.value, [key]: message };
+      throw cause;
+    }
+  };
+
   const install = async (path: string): Promise<InstalledMycPlugin> => {
     const plugin = await installMycPlugin(path);
     installedPlugins.value = await listInstalledMycPlugins();
@@ -235,6 +254,7 @@ export const useRuntimePluginHostStore = defineStore("runtime-plugin-host", () =
     loadPluginSettings,
     savePluginSettings,
     resetPluginSettings,
+    testPluginConnection,
     uninstall,
     start,
     stop,

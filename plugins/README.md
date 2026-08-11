@@ -112,7 +112,7 @@ spec:
 
 When selected, the app invokes that same plugin with `operation:
 "context-menu"` plus a bounded context containing only the project id, target
-id, scope, and canvas position. Plugins never receive a React callback or a
+id, scope, and canvas position. Plugins never receive a renderer callback or a
 reference to the workspace store.
 
 ## Theme component surfaces

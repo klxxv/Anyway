@@ -42,6 +42,7 @@ pub fn run() {
             plugins::get_plugin_settings,
             plugins::set_plugin_settings,
             plugins::reset_plugin_settings,
+            plugins::test_plugin_connection,
             plugins::execute_myc_plugin,
             projects::save_project_file,
             projects::import_project_file,
@@ -67,7 +68,7 @@ pub fn run() {
         .setup(|app| {
             #[cfg(debug_assertions)]
             let url = tauri::WebviewUrl::External(
-                "http://localhost:3000/"
+                "http://127.0.0.1:5173/"
                     .parse()
                     .expect("valid Research Canvas development URL"),
             );

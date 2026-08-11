@@ -13,6 +13,8 @@ from typing import Any, Literal, Mapping, Protocol
 
 GRAPH_PATCH_API_VERSION = "researchcanvas.dev/graph-patch/v1alpha1"
 PluginSettingType = Literal["boolean", "number", "text", "select"]
+PluginApiFormat = Literal["openai", "anthropic"]
+PluginCredentialSource = Literal["host-secret", "environment"]
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,53 @@ class PluginSetting:
 
 
 @dataclass(frozen=True)
+class PluginConnection:
+    """Host-mediated API connection with a declarative, non-secret test action."""
+
+    connection_id: str
+    label: str
+    url_setting_id: str
+    format_setting_id: str
+    model_setting_id: str | None = None
+    credential_source_setting_id: str | None = None
+    credential_env_var_setting_id: str | None = None
+    credential_source: PluginCredentialSource = "environment"
+    credential_env_var: str | None = None
+    host_secret_setting_id: str | None = None
+    test_action_id: str = "test-connection"
+    test_action_label: str = "Test connection"
+
+    def to_mapping(self) -> Mapping[str, Any]:
+        api_key: dict[str, Any]
+        if self.credential_source == "host-secret":
+            api_key = {
+                "source": "host-secret",
+                "settingId": self.host_secret_setting_id,
+            }
+        else:
+            api_key = {
+                "source": "environment",
+                "name": self.credential_env_var,
+                "fallbackSettingId": self.host_secret_setting_id,
+            }
+        result: dict[str, Any] = {
+            "id": self.connection_id,
+            "label": self.label,
+            "urlSettingId": self.url_setting_id,
+            "formatSettingId": self.format_setting_id,
+            "apiKey": api_key,
+            "testAction": {"id": self.test_action_id, "label": self.test_action_label},
+        }
+        if self.model_setting_id:
+            result["modelSettingId"] = self.model_setting_id
+        if self.credential_source_setting_id:
+            result["credentialSourceSettingId"] = self.credential_source_setting_id
+        if self.credential_env_var_setting_id:
+            result["credentialEnvVarSettingId"] = self.credential_env_var_setting_id
+        return result
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     plugin_id: str
     name: str
@@ -86,6 +135,7 @@ class PluginManifest:
     permissions: tuple[str, ...] = ()
     update: PluginUpdateInfo | None = None
     settings: tuple[PluginSetting, ...] = ()
+    connections: tuple[PluginConnection, ...] = ()
 
 
 class SettingReader(Protocol):

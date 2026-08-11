@@ -11,6 +11,32 @@ pub enum PluginSettingType {
     Select,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PluginApiFormat {
+    OpenAi,
+    Anthropic,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum PluginApiKeySource<'a> {
+    HostSecret { setting_id: &'a str },
+    Environment { name: &'a str, fallback_setting_id: Option<&'a str> },
+}
+
+/// Declarative connection metadata rendered and tested by the native host.
+#[derive(Clone, Copy, Debug)]
+pub struct PluginConnectionDefinition<'a> {
+    pub id: &'a str,
+    pub label: &'a str,
+    pub url_setting_id: &'a str,
+    pub format_setting_id: &'a str,
+    pub model_setting_id: Option<&'a str>,
+    pub credential_source_setting_id: Option<&'a str>,
+    pub credential_env_var_setting_id: Option<&'a str>,
+    pub api_key: PluginApiKeySource<'a>,
+    pub test_action_id: Option<&'a str>,
+}
+
 /// Stable plugin identity metadata. `developer_id` is optional for legacy
 /// manifests and should contain a UUID when present.
 #[derive(Clone, Copy, Debug)]

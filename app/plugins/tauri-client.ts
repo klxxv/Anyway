@@ -24,6 +24,11 @@ export type PluginSettingsWrite = {
   secrets: Record<string, PluginSecretMutation>;
 };
 
+export type PluginConnectionTestResult = {
+  ok: boolean;
+  message: string;
+};
+
 type PluginSettingDefinitionLike = {
   id?: unknown;
   type?: unknown;
@@ -257,6 +262,30 @@ export async function resetPluginSettings(
     pluginVersion: plugin.version,
   });
   return normalizePluginSettingsSnapshot(raw ?? defaults, plugin, definitions, defaults);
+}
+
+/**
+ * Tests a manifest-declared connection in the native host. The request may
+ * contain unsaved secret text, but the native command only returns a boolean
+ * result and a redacted status message.
+ */
+export async function testPluginConnection(
+  plugin: PluginReference,
+  connectionId: string,
+  write: PluginSettingsWrite,
+  options: { native?: boolean } = {},
+): Promise<PluginConnectionTestResult> {
+  if (!hasTauriRuntime() || options.native === false) {
+    throw new Error("MYC_DESKTOP_REQUIRED");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<PluginConnectionTestResult>("test_plugin_connection", {
+    pluginId: plugin.id,
+    pluginVersion: plugin.version,
+    connectionId,
+    values: write.values,
+    secrets: write.secrets,
+  });
 }
 
 /**

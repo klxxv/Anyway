@@ -49,7 +49,7 @@ export function useCanvasDiff(
       });
 
       if (!nextEnabled || !nextBase || !nextCompare) {
-        // Keep reset asynchronous, matching the React effect boundary.
+        // Keep reset asynchronous so the rendered dialog can settle first.
         queueMicrotask(() => {
           if (cancelled || request !== requestRef.value) return;
           result.value = null;

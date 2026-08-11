@@ -7,6 +7,12 @@ import type {
   ResearchNodeType,
 } from "../../../app/lib/research-types";
 import type { DiffState } from "../../../app/lib/graph/canvas-diff";
+import type {
+  RadialMenuAction as WorkspaceRadialMenuAction,
+  RadialMenuItem as WorkspaceRadialMenuItem,
+  RadialMenuPosition as WorkspaceRadialMenuPosition,
+  RadialMenuPreferences as WorkspaceRadialMenuPreferences,
+} from "../../../app/features/research-workspace/workspace-radial-menu";
 
 export type LinkLegendFilter = "causal" | "control" | "derived" | "contradicts";
 
@@ -51,28 +57,10 @@ export type ResolvedPluginContextMenuAction = {
   capability?: string;
 };
 
-export type RadialMenuPosition =
-  | "north"
-  | "north-east"
-  | "east"
-  | "south-east"
-  | "south"
-  | "south-west"
-  | "west"
-  | "north-west";
-
-export type RadialMenuAction =
-  | `create:${ResearchNodeType}`
-  | "canvas:fit"
-  | "canvas:default-layout";
-
-export type RadialMenuItem = {
-  id: string;
-  position: RadialMenuPosition;
-  action: RadialMenuAction;
-};
-
-export type RadialMenuPreferences = { items: RadialMenuItem[] };
+export type RadialMenuPosition = WorkspaceRadialMenuPosition;
+export type RadialMenuAction = WorkspaceRadialMenuAction;
+export type RadialMenuItem = WorkspaceRadialMenuItem;
+export type RadialMenuPreferences = WorkspaceRadialMenuPreferences;
 
 export type PieMenuState = {
   screenX: number;
@@ -104,6 +92,12 @@ export type CanvasTrackpadGesture = {
   frame: CanvasTrackpadFrame;
   viewport?: { x: number; y: number; zoom: number };
   radial?: PieMenuState;
+};
+
+export type CanvasNodeMove = {
+  nodeId: string;
+  x: number;
+  y: number;
 };
 
 export type WorkspaceNodeData = {
@@ -150,7 +144,7 @@ export type ResearchGraphCanvasProps = {
   pluginContextMenuActions: ResolvedPluginContextMenuAction[];
   diffOverlay?: import("../../../app/lib/graph/canvas-diff").DiffOverlayState | null;
   diffFocus?: { id: string; kind: "node" | "edge"; nonce: number } | null;
-  /** Optional host translation bridge. The Vue worker has no dependency on the React provider. */
+  /** Optional host translation bridge. The Vue worker has no dependency on a renderer provider. */
   translate?: (key: string) => string;
   /** Native frames can be forwarded by the platform/runtime layer without coupling this component to it. */
   trackpadFrame?: CanvasTrackpadFrame | null;
@@ -160,7 +154,11 @@ export type ResearchGraphCanvasProps = {
   onSelectNode?: (nodeId: string) => void;
   onNodeDoubleClick?: (nodeId: string) => void;
   onSelectEdge?: (edgeId: string) => void;
+  onClearSelection?: () => void;
   onMoveNode?: (nodeId: string, x: number, y: number) => void;
+  onMoveNodes?: (moves: readonly CanvasNodeMove[]) => void;
+  onSelectionCopy?: () => void;
+  onSelectionDelete?: () => void;
   onCreateEdge?: (source: string, target: string) => void;
   onRequestCreate?: (type: ResearchNodeType, x: number, y: number) => void;
   onRequestConnect?: (nodeId: string) => void;
@@ -185,7 +183,12 @@ export type ResearchGraphCanvasEmits = {
   (event: "select-node", nodeId: string): void;
   (event: "node-double-click", nodeId: string): void;
   (event: "select-edge", edgeId: string): void;
+  (event: "clear-selection"): void;
   (event: "move-node", nodeId: string, x: number, y: number): void;
+  (event: "move-nodes", moves: readonly CanvasNodeMove[]): void;
+  (event: "selection-copy"): void;
+  (event: "selection-delete"): void;
+  (event: "selection-mode-change", active: boolean): void;
   (event: "create-edge", source: string, target: string): void;
   (event: "request-create", type: ResearchNodeType, x: number, y: number): void;
   (event: "request-connect", nodeId: string): void;

@@ -16,6 +16,31 @@ enum class PluginSettingType {
   Select,
 };
 
+enum class PluginApiFormat {
+  OpenAi,
+  Anthropic,
+};
+
+enum class PluginApiKeySource {
+  HostSecret,
+  Environment,
+};
+
+// Declarative connection metadata is rendered and tested by the native host.
+struct PluginConnectionDefinition {
+  const char* id = nullptr;
+  const char* label = nullptr;
+  const char* urlSettingId = nullptr;
+  const char* formatSettingId = nullptr;
+  const char* modelSettingId = nullptr;
+  const char* credentialSourceSettingId = nullptr;
+  const char* credentialEnvVarSettingId = nullptr;
+  PluginApiKeySource apiKeySource = PluginApiKeySource::Environment;
+  const char* credentialEnvVar = nullptr;
+  const char* fallbackSettingId = nullptr;
+  const char* testActionId = nullptr;
+};
+
 // Stable plugin identity metadata. developerId is optional for legacy
 // manifests and should contain a UUID when present.
 struct PluginIdentity {

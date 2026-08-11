@@ -22,11 +22,13 @@ import type { AgentJobStage, AgentJobStatus } from "../../../app/plugins/agent-c
 import type {
   GraphPatchOperation,
   InstalledMycPlugin,
+  PluginConnectionDefinition,
   PluginGraphPatch,
   PluginReference,
 } from "../../../app/plugins/contracts";
 import type {
   PluginSecretMutation,
+  PluginConnectionTestResult,
   PluginSettingsSnapshot,
   PluginSettingsWrite,
 } from "../../../app/plugins/tauri-client";
@@ -42,7 +44,7 @@ import type {
 import type { ShortcutAction, WorkspaceShortcuts } from "../../../app/features/research-workspace/workspace-shortcuts";
 
 /** Shared Vue-side bridge for the existing i18n catalog. It keeps message keys
- * and interpolation identical while avoiding a dependency on the React provider. */
+ * and interpolation identical while avoiding a dependency on a renderer provider. */
 export function usePanelI18n() {
   const locale = ref<Locale>("en");
   const syncLocale = () => {
@@ -114,6 +116,7 @@ export type PluginSettingsTarget = {
   signaturePresent?: boolean;
   update?: { latestVersion?: string; url?: string; releaseNotes?: string };
   definitions: HostPluginSettingDefinition[];
+  connections: PluginConnectionDefinition[];
   /** Built-in catalog entries use the browser-safe store until native installation exists. */
   native: boolean;
   uninstallable: boolean;
@@ -397,6 +400,10 @@ export type PluginSettingsDialogProps = {
   onClose: () => void;
   onSave: (draft: PluginSettingsDraft) => Promise<void>;
   onReset: () => Promise<void>;
+  onTestConnection?: (
+    connectionId: string,
+    draft: PluginSettingsDraft,
+  ) => Promise<PluginConnectionTestResult>;
   onUninstall?: () => Promise<void>;
 };
 

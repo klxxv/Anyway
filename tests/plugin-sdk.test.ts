@@ -49,10 +49,16 @@ test("SDK setting declarations keep credentials host-owned and write-only", () =
   const python = read("plugins/sdk/python/research_canvas.py");
 
   assert.match(rust, /pub struct PluginSettingDefinition/);
+  assert.match(rust, /pub enum PluginApiKeySource/);
+  assert.match(rust, /pub struct PluginConnectionDefinition/);
   assert.match(rust, /pub trait SettingReader/);
   assert.match(cpp, /struct PluginSettingDefinition/);
+  assert.match(cpp, /struct PluginConnectionDefinition/);
+  assert.match(cpp, /PluginApiKeySource/);
   assert.match(cpp, /class SettingsReader/);
   assert.match(python, /class PluginSetting/);
+  assert.match(python, /class PluginConnection/);
+  assert.match(python, /credential_env_var/);
   assert.match(python, /class SettingReader\(Protocol\)/);
   assert.match(python, /"writeOnly": self\.write_only or self\.is_secret/);
   assert.doesNotMatch(rust, /get_secret/i);

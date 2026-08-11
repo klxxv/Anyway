@@ -35,6 +35,19 @@
   cursor: grabbing;
 }
 
+.zen-flow.is-selection-mode .vue-flow__pane {
+  cursor: crosshair;
+}
+
+.zen-flow.is-selection-mode .vue-flow__pane:active {
+  cursor: crosshair;
+}
+
+.zen-flow .vue-flow__selection {
+  border: 1px solid color-mix(in srgb, #2457d6 68%, transparent);
+  background: color-mix(in srgb, #2457d6 10%, transparent);
+}
+
 .zen-flow .vue-flow__node {
   border: 0;
   background: transparent;

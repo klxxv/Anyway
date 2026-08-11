@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import type { ThemeManifest } from "../lib/research-types";
 import type { InstalledMycPlugin } from "./contracts";
 import { normalizeInstalledTheme } from "./contracts";
@@ -15,7 +14,8 @@ export function resolveTheme(
   return null;
 }
 
-type ThemeVariables = CSSProperties & Record<`--${string}`, string>;
+/** Portable inline-style map; it deliberately has no renderer dependency. */
+type ThemeVariables = Record<`--${string}`, string>;
 
 /**
  * 拒绝可终止 CSS 值或引入额外规则/函数的注入尝试。

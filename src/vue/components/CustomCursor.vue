@@ -1,10 +1,17 @@
 <script lang="ts">
 type LongPressListener = (active: boolean) => void;
 const longPressListeners = new Set<LongPressListener>();
+type SelectionModeListener = (active: boolean) => void;
+const selectionModeListeners = new Set<SelectionModeListener>();
 
 /** Call from the canvas gesture handler when long-press starts or ends. */
 export function setCursorLongPress(active: boolean) {
   for (const listener of longPressListeners) listener(active);
+}
+
+/** Call from the canvas when box-selection mode is entered or exited. */
+export function setCursorSelectionMode(active: boolean) {
+  for (const listener of selectionModeListeners) listener(active);
 }
 </script>
 
@@ -23,7 +30,6 @@ const INTERACTIVE_SELECTOR = [
   "[data-cursor-hover]",
   ".clickable",
   ".zen-pie-item",
-  ".react-flow__node",
   ".vue-flow__node",
 ].join(",");
 
@@ -36,6 +42,7 @@ const position = ref({ x: -100, y: -100 });
 const hover = ref(false);
 const visible = ref(false);
 const longPress = ref(false);
+const selectionMode = ref(false);
 const enabled = ref(!isTouchDevice());
 
 let animationFrame = 0;
@@ -71,6 +78,10 @@ function onLongPress(active: boolean) {
   longPress.value = active;
 }
 
+function onSelectionMode(active: boolean) {
+  selectionMode.value = active;
+}
+
 onMounted(() => {
   if (enabled.value) {
     document.documentElement.classList.add("custom-cursor-active");
@@ -80,6 +91,7 @@ onMounted(() => {
     document.addEventListener("mouseover", onMouseOver);
   }
   longPressListeners.add(onLongPress);
+  selectionModeListeners.add(onSelectionMode);
 });
 
 onBeforeUnmount(() => {
@@ -92,6 +104,7 @@ onBeforeUnmount(() => {
     if (animationFrame) window.cancelAnimationFrame(animationFrame);
   }
   longPressListeners.delete(onLongPress);
+  selectionModeListeners.delete(onSelectionMode);
 });
 </script>
 
@@ -99,13 +112,13 @@ onBeforeUnmount(() => {
   <template v-if="enabled">
     <div
       class="custom-cursor-ring"
-      :class="{ 'is-hover': hover, 'is-longpress': longPress }"
+      :class="{ 'is-hover': hover, 'is-longpress': longPress, 'is-selection': selectionMode }"
       :style="{ translate: `${position.x}px ${position.y}px`, opacity: visible ? 1 : 0 }"
       aria-hidden="true"
     />
     <div
       class="custom-cursor-dot"
-      :class="{ 'is-longpress': longPress }"
+      :class="{ 'is-longpress': longPress, 'is-selection': selectionMode }"
       :style="{ transform: `translate(${position.x}px, ${position.y}px)`, opacity: visible ? 1 : 0 }"
       aria-hidden="true"
     />

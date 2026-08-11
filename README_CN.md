@@ -19,7 +19,7 @@
 
 ```bash
 npm install
-npm run dev:desktop-web    # 启动 Next.js 开发服务器
+npm run dev:desktop-web    # 启动 Vite 开发服务器
 npm run desktop:dev        # 启动 Tauri 桌面应用
 ```
 
@@ -29,7 +29,7 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 
 | 命令 | 说明 |
 |---|---|
-| `npm run dev:desktop-web` | Next.js 开发服务器 |
+| `npm run dev:desktop-web` | Vite 开发服务器 |
 | `npm run build:desktop` | Tauri 生产构建 |
 | `npm run desktop:dev` | Tauri 桌面开发模式 |
 | `npm test` | 完整测试套件 |
@@ -67,7 +67,9 @@ python scripts/build_myc_plugin.py \
 ## 架构
 
 ```
-app/                  TypeScript 前端（Next.js + React Flow）
+src/                  Vue 3 渲染层（Vite + Vue Flow + Pinia）
+  vue/                工作区组件、组合式函数与状态仓库
+app/                  与渲染层无关的 TypeScript 领域与平台层
   lib/
     graph/            图算法（遍历、环、路径、可达性）
     layout/           确定性布局投影
@@ -90,7 +92,7 @@ TypeScript 和 Rust 两端图算法实现通过编译器逐位比对测试（`te
 
 | 层 | 技术 |
 |---|---|
-| 前端 | Next.js、React、React Flow、Tailwind CSS |
+| 前端 | Vue 3、Vite、Vue Flow、Pinia、Tailwind CSS |
 | 桌面 | Tauri 2、WebView2（Windows） |
 | 图算法（TS） | TypeScript，纯函数 |
 | 图算法（Rust） | Rust、serde、sha2 |

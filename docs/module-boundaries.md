@@ -64,7 +64,7 @@ verified metadata to the Webview.
 `src-tauri/src/plugin_vm.rs` is the only executable plugin boundary. A new
 `wasmi` store and instance are created for every invocation. Guest modules have
 no host imports, receive JSON through linear memory, and are bounded by memory,
-fuel, input, and output limits. Neither graph stores nor React components can
+fuel, input, and output limits. Neither graph stores nor renderer components can
 load native libraries or execute guest bytes directly.
 
 `src-tauri/src/projects.rs` owns validated native `.mycproj`/JSON persistence.

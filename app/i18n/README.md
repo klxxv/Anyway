@@ -1,8 +1,9 @@
 # Internationalization boundary
 
-`catalog.ts` owns locale normalization and typed message lookup. `provider.tsx`
-owns the device-local `research-canvas.locale.v1` preference, keeps the document
-language synchronized, and exposes `useI18n()` to the workspace.
+`catalog.ts` owns locale normalization and typed message lookup.
+`src/vue/runtime/i18n.ts` owns the device-local `research-canvas.locale.v1`
+preference, keeps the document language synchronized, and exposes `useI18n()`
+to the workspace.
 
 UI components depend on typed message keys rather than an i18n framework.
 English and Simplified Chinese are the only host-bundled languages and remain

@@ -22,11 +22,19 @@ export const useCanvasInteractionStore = defineStore("canvas-interaction", () =>
   const draggingNodeId = ref<string | null>(null);
   const manualMove = ref<ManualNodeMove | null>(null);
   const lastTrackpadFrameId = ref<number | null>(null);
+  const selectedNodeIds = ref<string[]>([]);
+  const selectedEdgeIds = ref<string[]>([]);
+  const selectionMode = ref(false);
 
-  const interactionMode = computed<"idle" | "context-menu" | "radial-menu" | "dragging">(() => {
+  const selectedElementCount = computed(
+    () => selectedNodeIds.value.length + selectedEdgeIds.value.length,
+  );
+
+  const interactionMode = computed<"idle" | "context-menu" | "radial-menu" | "dragging" | "selecting">(() => {
     if (draggingNodeId.value) return "dragging";
     if (radialMenu.value) return "radial-menu";
     if (contextMenu.value) return "context-menu";
+    if (selectionMode.value) return "selecting";
     return "idle";
   });
 
@@ -79,6 +87,23 @@ export const useCanvasInteractionStore = defineStore("canvas-interaction", () =>
     lastTrackpadFrameId.value = frameId;
   }
 
+  function setSelectedElements(
+    nodeIds: Iterable<string>,
+    edgeIds: Iterable<string>,
+  ) {
+    selectedNodeIds.value = [...new Set([...nodeIds].filter(Boolean))];
+    selectedEdgeIds.value = [...new Set([...edgeIds].filter(Boolean))];
+  }
+
+  function clearSelectedElements() {
+    selectedNodeIds.value = [];
+    selectedEdgeIds.value = [];
+  }
+
+  function setSelectionMode(active: boolean) {
+    selectionMode.value = active;
+  }
+
   return {
     viewport,
     contextMenu,
@@ -87,6 +112,10 @@ export const useCanvasInteractionStore = defineStore("canvas-interaction", () =>
     draggingNodeId,
     manualMove,
     lastTrackpadFrameId,
+    selectedNodeIds,
+    selectedEdgeIds,
+    selectedElementCount,
+    selectionMode,
     interactionMode,
     setViewport,
     openContextMenu,
@@ -99,5 +128,8 @@ export const useCanvasInteractionStore = defineStore("canvas-interaction", () =>
     setDraggingNode,
     setManualMove,
     setLastTrackpadFrameId,
+    setSelectedElements,
+    clearSelectedElements,
+    setSelectionMode,
   };
 });

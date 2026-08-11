@@ -21,6 +21,11 @@
     "invocation": "host-model-gateway",
     "settingIds": [
       "api-key",
+      "api-url",
+      "api-format",
+      "credential-source",
+      "credential-env-var",
+      "pdf-transport",
       "model",
       "thinking"
     ],

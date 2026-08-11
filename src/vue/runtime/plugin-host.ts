@@ -9,13 +9,14 @@ import {
 import type { InstalledMycPlugin } from "../../../app/plugins/contracts";
 import type {
   PluginSecretMutation,
+  PluginConnectionTestResult,
   PluginSettingsSnapshot,
 } from "../../../app/plugins/tauri-client";
 import { useRuntimePluginHostStore } from "../stores/runtime-plugin-host";
 import type { HostPluginSettingDefinition } from "../components/panel-types";
 
 /**
- * Vue equivalent of the React plugin-host context value. The fields are
+ * Vue host state for plugins. The fields are
  * exposed as live properties so Vue consumers can use the same snapshot shape
  * without reaching into implementation refs.
  */
@@ -50,6 +51,12 @@ export type PluginHostValue = {
     definitions: readonly HostPluginSettingDefinition[],
     native?: boolean,
   ) => Promise<PluginSettingsSnapshot>;
+  testPluginConnection: (
+    plugin: { id: string; version: string; name: string },
+    connectionId: string,
+    write: { values: Record<string, unknown>; secrets: Record<string, PluginSecretMutation> },
+    native?: boolean,
+  ) => Promise<PluginConnectionTestResult>;
   uninstall: (plugin: InstalledMycPlugin) => Promise<void>;
 };
 
@@ -58,7 +65,7 @@ export const pluginHostKey: InjectionKey<PluginHostValue> = Symbol("research-can
 type RuntimePluginHostStore = ReturnType<typeof useRuntimePluginHostStore>;
 
 /** Creates the legacy context-shaped value from the Pinia source of truth. */
-function createPluginHostValue(store: RuntimePluginHostStore): PluginHostValue {
+export function createPluginHostValue(store: RuntimePluginHostStore): PluginHostValue {
   return reactive<PluginHostValue>({
     get installedPlugins() {
       return store.installedPlugins;
@@ -95,6 +102,7 @@ function createPluginHostValue(store: RuntimePluginHostStore): PluginHostValue {
     loadPluginSettings: store.loadPluginSettings,
     savePluginSettings: store.savePluginSettings,
     resetPluginSettings: store.resetPluginSettings,
+    testPluginConnection: store.testPluginConnection,
     uninstall: store.uninstall,
   });
 }

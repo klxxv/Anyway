@@ -104,6 +104,7 @@ function defaultEdgeLabel(type: ResearchEdgeType): string {
 
 export type BuildCanvasNodeOptions = {
   selectedNodeId: string;
+  selectedNodeIds?: ReadonlySet<string>;
   filter: LinkLegendFilter | null;
   expandedNodeIds: ReadonlySet<string>;
   onToggleExpanded?: (nodeId: string) => void;
@@ -133,7 +134,9 @@ export function buildCanvasNodeModels(
       height: expanded
         ? Math.max(placement?.height ?? 0, 132 + Math.max(branchCount, 2) * 25)
         : placement?.height ?? (circle ? 136 : 116),
-      selected: record.id === options.selectedNodeId,
+      selected:
+        record.id === options.selectedNodeId ||
+        options.selectedNodeIds?.has(record.id) === true,
       data: {
         record,
         shape: circle ? "circle" : "card",
@@ -176,6 +179,7 @@ export function buildCanvasNodeModels(
 
 export type BuildCanvasEdgeOptions = {
   selectedEdgeId: string;
+  selectedEdgeIds?: ReadonlySet<string>;
   filter: LinkLegendFilter | null;
   edgeTypeLabel?: (type: ResearchEdgeType) => string;
   edgeStyle: EdgeStyleManifest;
@@ -199,7 +203,9 @@ export function buildCanvasEdgeModels(
       sourceHandle: route?.sourceHandle,
       targetHandle: route?.targetHandle,
       type: "researchEdge",
-      selected: record.id === options.selectedEdgeId,
+      selected:
+        record.id === options.selectedEdgeId ||
+        options.selectedEdgeIds?.has(record.id) === true,
       markerEnd: markerForEdge(record, options.edgeStyle),
       data: {
         record,

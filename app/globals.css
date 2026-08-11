@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "@xyflow/react/dist/style.css";
 
 @theme {
   --color-paper: #ffffff;
@@ -144,24 +143,6 @@
     background: var(--color-canvas);
   }
 
-  .zen-flow .react-flow__pane {
-    cursor: default;
-  }
-
-  .zen-flow.is-connecting .react-flow__pane,
-  .zen-flow.is-connecting .react-flow__node {
-    cursor: crosshair;
-  }
-
-  .zen-flow .react-flow__node {
-    font-family: var(--font-serif);
-  }
-
-  .zen-flow .react-flow__node:focus-visible {
-    outline: 2px solid var(--color-blue);
-    outline-offset: 3px;
-  }
-
   .zen-handle {
     width: 7px !important;
     height: 7px !important;
@@ -200,13 +181,6 @@
     contain: paint;
     max-width: calc(100% - 82px) !important;
     box-sizing: border-box;
-  }
-
-  .zen-minimap .react-flow__minimap-svg {
-    width: 100% !important;
-    height: 100% !important;
-    overflow: hidden;
-    border-radius: inherit;
   }
 
   .zen-controls {
@@ -546,6 +520,40 @@ html.custom-cursor-active * {
     opacity 0.5s ease;
 }
 
+/* Box selection turns the custom cursor into an explicit crosshair. */
+.custom-cursor-ring.is-selection {
+  width: 30px;
+  height: 30px;
+  margin-left: -15px;
+  margin-top: -15px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  transform: none;
+}
+
+.custom-cursor-ring.is-selection::before,
+.custom-cursor-ring.is-selection::after {
+  position: absolute;
+  content: "";
+  background: var(--color-blue, #2457d6);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-paper, #fbfaf7) 72%, transparent);
+}
+
+.custom-cursor-ring.is-selection::before {
+  top: 14px;
+  left: 0;
+  width: 30px;
+  height: 1px;
+}
+
+.custom-cursor-ring.is-selection::after {
+  top: 0;
+  left: 14px;
+  width: 1px;
+  height: 30px;
+}
+
 /* The central dot – marks absolute cursor position. */
 .custom-cursor-dot {
   position: fixed;
@@ -577,6 +585,14 @@ html.custom-cursor-active * {
   margin-top: -18px;
   background: color-mix(in srgb, var(--color-blue, #2457d6) 12%, transparent);
   border: 1.5px solid var(--color-blue, #2457d6);
+}
+
+.custom-cursor-dot.is-selection {
+  opacity: 0 !important;
+}
+
+.custom-cursor-dot.is-selection.is-longpress {
+  opacity: 1 !important;
 }
 
 /* Restore native cursor on touch / coarse-pointer devices. */

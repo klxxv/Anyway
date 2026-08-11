@@ -3,10 +3,6 @@ import type {
   PluginManifest,
   ThemeManifest,
 } from "../lib/research-types";
-import {
-  AGENT_CAPABILITIES,
-  AGENT_PERMISSIONS,
-} from "./agent-contracts";
 
 export const builtInPluginCatalog: PluginManifest[] = [
   {
@@ -30,18 +26,6 @@ export const builtInPluginCatalog: PluginManifest[] = [
     status: "reserved",
     permissions: ["Local process access (future opt-in)"],
     capabilities: ["run.manifest", "run.result"],
-    publisher: "Research Canvas",
-  },
-  {
-    id: "pdf-canvas-agent",
-    name: "PDF Canvas Agent",
-    version: "0.1.0",
-    category: "agent",
-    description:
-      "从 PDF 论文中提取 DocumentMap → 语义结构 → 审阅门控的 GraphPatch。Agent 不持有 API Key、文件句柄或网络权限；宿主管理一切，Agent 输出仅可进入 reviewRequired GraphPatch。",
-    status: "installed",
-    permissions: [...AGENT_PERMISSIONS],
-    capabilities: [...AGENT_CAPABILITIES],
     publisher: "Research Canvas",
   },
   {

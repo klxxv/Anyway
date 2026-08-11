@@ -11,12 +11,16 @@ import {
   cloneProject,
   createEdgeInDraft,
   createNodeInDraft,
+  createSelectionClipboard,
   duplicateNodeInDraft,
   moveNodeInDraft,
+  moveNodesInDraft,
+  pasteSelectionClipboardInDraft,
   pushHistoryEntry,
   redoHistory,
   removeEdgeInDraft,
   removeNodeInDraft,
+  removeSelectionInDraft,
   reverseEdgeInDraft,
   stampDraftRevision,
   undoHistory,
@@ -188,6 +192,26 @@ test("moveNodeInDraft repositions only the matching placement", () => {
   assert.equal(draft.placements.length, cloneFixture().placements.length);
 });
 
+test("moveNodesInDraft repositions a group atomically", () => {
+  const draft = cloneFixture();
+  const first = draft.placements[0]!;
+  const second = draft.placements[1]!;
+
+  moveNodesInDraft(draft, [
+    { nodeId: first.nodeId, x: 321, y: 654 },
+    { nodeId: second.nodeId, x: 987, y: 123 },
+  ]);
+
+  assert.deepEqual(
+    draft.placements.find((item) => item.nodeId === first.nodeId),
+    { ...first, x: 321, y: 654 },
+  );
+  assert.deepEqual(
+    draft.placements.find((item) => item.nodeId === second.nodeId),
+    { ...second, x: 987, y: 123 },
+  );
+});
+
 test("createEdgeInDraft pushes a directed edge with polarity derived from type", () => {
   const draft = cloneFixture();
   createEdgeInDraft(draft, "edge-new", "variable-canopy", "paper-landsat", "contradicts");
@@ -218,6 +242,73 @@ test("removeNodeInDraft cascades incident edges and placements", () => {
   );
   assert.equal(draft.edges.length, beforeEdges - 5);
   assert.equal(draft.placements.some((p) => p.nodeId === "variable-canopy"), false);
+});
+
+test("selection clipboard remaps copied graph fragments and offsets their placements", () => {
+  const draft = cloneFixture();
+  const sourceEdge = draft.edges[0]!;
+  const clipboard = createSelectionClipboard(draft, [], [sourceEdge.id]);
+  assert.ok(clipboard);
+  assert.equal(clipboard.nodes.length, 2);
+  assert.ok(clipboard.edges.some((edge) => edge.id === sourceEdge.id));
+
+  clipboard.nodes[0]!.title = "clipboard-only change";
+  assert.notEqual(
+    draft.nodes.find((node) => node.id === sourceEdge.source)?.title,
+    "clipboard-only change",
+  );
+
+  const pasted = pasteSelectionClipboardInDraft(
+    draft,
+    clipboard,
+    40,
+    now,
+  );
+  assert.equal(pasted.nodeIds.length, 2);
+  assert.ok(pasted.edgeIds.length >= 1);
+  const pastedNodeIds = new Set(pasted.nodeIds);
+  assert.ok(
+    draft.edges
+      .filter((edge) => pasted.edgeIds.includes(edge.id))
+      .every((edge) => pastedNodeIds.has(edge.source) && pastedNodeIds.has(edge.target)),
+  );
+  const copiedNode = clipboard.nodes[0]!;
+  const originalPlacement = clipboard.placements.find(
+    (placement) => placement.nodeId === copiedNode.id,
+  );
+  const pastedNode = draft.nodes.find(
+    (node) => node.title === `${copiedNode.title} copy`,
+  );
+  const pastedPlacement = draft.placements.find(
+    (placement) => placement.nodeId === pastedNode?.id,
+  );
+  assert.ok(originalPlacement);
+  assert.ok(pastedPlacement);
+  assert.equal(pastedPlacement.x, originalPlacement.x + 40);
+  assert.equal(pastedPlacement.y, originalPlacement.y + 40);
+});
+
+test("removeSelectionInDraft deletes selected relations and cascades selected nodes", () => {
+  const draft = cloneFixture();
+  const selectedNodeId = draft.edges[0]!.source;
+  const explicitEdgeId = draft.edges.find(
+    (edge) => edge.source !== selectedNodeId && edge.target !== selectedNodeId,
+  )?.id;
+  assert.ok(explicitEdgeId);
+
+  removeSelectionInDraft(draft, [selectedNodeId], [explicitEdgeId]);
+
+  assert.equal(draft.nodes.some((node) => node.id === selectedNodeId), false);
+  assert.equal(draft.placements.some((placement) => placement.nodeId === selectedNodeId), false);
+  assert.equal(
+    draft.edges.some(
+      (edge) =>
+        edge.id === explicitEdgeId ||
+        edge.source === selectedNodeId ||
+        edge.target === selectedNodeId,
+    ),
+    false,
+  );
 });
 
 test("duplicateNodeInDraft clones the node with an offset placement", () => {
