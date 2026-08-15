@@ -15,6 +15,7 @@ The bus owns these invariants:
 - Each principal has a bounded number of pending calls; an operation may impose a tighter per-principal limit.
 - The lease must belong to the attributed principal, be active at the supplied deterministic clock value, and cover the operation capability and scope.
 - A pending call can finish once or be cancelled once. Deadline cancellation releases the same quota as explicit cancellation.
+- Terminal request tombstones are bounded; write routes require a separate durable idempotency record before this recent-request window can be treated as replay protection.
 - `BusPayload` contains metadata or `BlobRef`; it has no raw-byte variant.
 
 ## 🔗 Runtime boundary
@@ -51,6 +52,7 @@ sequenceDiagram
 | `HostBus::finish` | Marks a pending call finished and releases quota |
 | `HostBus::cancel` | Marks a pending call cancelled and releases quota |
 | `HostBus::cancel_expired` | Applies deterministic-clock deadline cancellation |
+| `HostBusConfig` | Bounds per-principal inflight work and retained terminal request tombstones |
 | `KernelState` | Wraps `HostBus` in `Arc<RwLock<_>>` for managed application state |
 
 `deadline_from_relative(now_ms, relative_deadline_ms)` converts transport-relative timeouts to the absolute `Deadline` used by the bus. The caller supplies `now_ms`, so tests and transports can use one explicit monotonic clock model without putting a clock implementation inside the bus.
@@ -65,4 +67,4 @@ The request constructor exposes the principal because the pure model must repres
 
 The module contains unit tests for registration, unknown and duplicate requests, deadline expiry and overflow, capability checks, per-principal quota, route lookup, lifecycle transitions, cancellation, shared state, and the absence of a raw-byte `BusPayload` variant.
 
-Because Phase 2 intentionally keeps this module out of `kernel/mod.rs` until the host gateway integration lands, the tests become runnable after the main line adds the module declarations. The integration step should run `cargo test --manifest-path src-tauri/Cargo.toml` and keep this file free of Tauri dependencies.
+The module is now wired through `kernel/mod.rs` and managed by the Tauri Gateway, while remaining free of Tauri dependencies itself. The Phase 2 integration run passed the complete Rust test suite after route registration and Gateway admission were added.

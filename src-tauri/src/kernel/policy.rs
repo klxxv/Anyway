@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn grants_and_leases_cannot_expand_capability_scope_or_expiry() {
-        let mut policy = CapabilityPolicy::new();
+        let policy = CapabilityPolicy::new();
         let plugin = PrincipalId::new("plugin.example").expect("plugin principal");
         let kernel = policy.kernel_principal().clone();
 
@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn plugin_lease_must_be_explicit_and_bounded() {
-        let mut policy = CapabilityPolicy::new();
+        let policy = CapabilityPolicy::new();
         let plugin = PrincipalId::new("plugin.example").expect("plugin principal");
         let request = policy
             .request(

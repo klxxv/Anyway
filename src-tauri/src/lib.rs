@@ -4,6 +4,7 @@ pub mod deepseek_client;
 mod graph_cmds;
 pub mod graph_compiler;
 pub mod kernel;
+mod kernel_commands;
 pub mod llm_client;
 pub mod llm_plugin;
 pub mod llm_provider_registry;
@@ -31,7 +32,12 @@ pub fn run() {
             agent_host::AgentHost::new(std::env::temp_dir()),
         ))
         .manage(llm_provider_registry::ProviderRegistryState::default())
+        .manage(
+            kernel_commands::create_kernel_state().expect("kernel Host Bus routes must be valid"),
+        )
+        .manage(kernel_commands::CapabilityPolicyState::default())
         .invoke_handler(tauri::generate_handler![
+            kernel_commands::kernel_host_call,
             graph_cmds::compute_graph_layout,
             graph_cmds::layout_project_view,
             graph_cmds::compile_project,
@@ -75,6 +81,10 @@ pub fn run() {
             llm_provider_registry::clear_llm_api_key
         ])
         .setup(|app| {
+            if let Err(error) = plugins::install_pending_packages(app.handle()) {
+                eprintln!("Startup plugin package discovery failed: {error}");
+            }
+
             #[cfg(debug_assertions)]
             let url = tauri::WebviewUrl::External(
                 "http://127.0.0.1:5173/"

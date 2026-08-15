@@ -5,7 +5,10 @@
 //! compiled while the migration proceeds without a flag-day rewrite.
 
 pub mod blob;
+pub mod bus;
 pub mod identity;
 pub mod lifecycle;
+pub mod policy;
 pub mod rpc;
+pub mod state;
 pub mod supervisor;

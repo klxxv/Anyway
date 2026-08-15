@@ -6,6 +6,8 @@ import type {
 } from "./contracts";
 import type { NativeVsixImportReport } from "./vsix-contracts";
 import { PLUGIN_CALL_API_VERSION } from "./contracts";
+import { HostSdk } from "../platform/host-sdk";
+import { createDefaultTauriHostSdkTransport } from "../platform/host-sdk-tauri";
 
 export type PluginSettingsSnapshot = {
   pluginId: string;
@@ -164,11 +166,17 @@ function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+let desktopHostSdk: HostSdk | undefined;
+
+function getDesktopHostSdk(): HostSdk {
+  desktopHostSdk ??= new HostSdk(createDefaultTauriHostSdkTransport());
+  return desktopHostSdk;
+}
+
 /** 桌面端列出安装包；Web 环境返回空列表 / Lists installed packages on desktop; returns empty in web environments. */
 export async function listInstalledMycPlugins(): Promise<InstalledMycPlugin[]> {
   if (!hasTauriRuntime()) return [];
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<InstalledMycPlugin[]>("list_installed_plugins");
+  return getDesktopHostSdk().call<InstalledMycPlugin[]>("plugin.list", {});
 }
 
 /** 委托 Rust 安装器校验和提取包，前端绝不自行解压 / Delegates validation and extraction to Rust; frontend never unpacks archives. */

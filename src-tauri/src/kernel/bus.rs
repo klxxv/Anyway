@@ -4,7 +4,7 @@
 //! operation, deadline, payload shape, and quotas, then returns a route for a
 //! later dispatcher. It never invokes a handler and it never carries raw data.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 use super::blob::BlobRef;
@@ -15,6 +15,7 @@ pub const MAX_OPERATION_NAME: usize = 128;
 pub const MAX_METADATA_ENTRIES: usize = 32;
 pub const MAX_METADATA_TEXT_LENGTH: usize = 256;
 pub const DEFAULT_MAX_INFLIGHT_PER_PRINCIPAL: usize = 64;
+pub const DEFAULT_MAX_TERMINAL_RECORDS: usize = 4096;
 
 /// Errors raised while admitting or completing a host-bus call.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -332,19 +333,41 @@ struct CallRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostBusConfig {
-    pub max_inflight_per_principal: usize,
+    max_inflight_per_principal: usize,
+    max_terminal_records: usize,
 }
 
 impl HostBusConfig {
     pub const fn new(max_inflight_per_principal: usize) -> Result<Self, BusError> {
+        Self::with_limits(max_inflight_per_principal, DEFAULT_MAX_TERMINAL_RECORDS)
+    }
+
+    pub const fn with_limits(
+        max_inflight_per_principal: usize,
+        max_terminal_records: usize,
+    ) -> Result<Self, BusError> {
         if max_inflight_per_principal == 0 {
             return Err(BusError::InvalidArgument(
                 "bus max inflight must be non-zero",
             ));
         }
+        if max_terminal_records == 0 {
+            return Err(BusError::InvalidArgument(
+                "bus terminal record limit must be non-zero",
+            ));
+        }
         Ok(Self {
             max_inflight_per_principal,
+            max_terminal_records,
         })
+    }
+
+    pub const fn max_inflight_per_principal(self) -> usize {
+        self.max_inflight_per_principal
+    }
+
+    pub const fn max_terminal_records(self) -> usize {
+        self.max_terminal_records
     }
 }
 
@@ -352,6 +375,7 @@ impl Default for HostBusConfig {
     fn default() -> Self {
         Self {
             max_inflight_per_principal: DEFAULT_MAX_INFLIGHT_PER_PRINCIPAL,
+            max_terminal_records: DEFAULT_MAX_TERMINAL_RECORDS,
         }
     }
 }
@@ -363,6 +387,7 @@ pub struct HostBus {
     config: HostBusConfig,
     operations: BTreeMap<OperationId, OperationDescriptor>,
     calls: BTreeMap<RequestId, CallRecord>,
+    terminal_order: VecDeque<RequestId>,
     inflight_by_principal: BTreeMap<PrincipalId, usize>,
     inflight_by_operation: BTreeMap<(PrincipalId, OperationId), usize>,
 }
@@ -491,6 +516,10 @@ impl HostBus {
             .unwrap_or_default()
     }
 
+    pub fn tracked_request_count(&self) -> usize {
+        self.calls.len()
+    }
+
     pub fn finish(&mut self, handle: &AdmissionHandle) -> Result<(), BusError> {
         let (principal, operation) = {
             let record = self
@@ -507,6 +536,7 @@ impl HostBus {
             (record.principal.clone(), record.operation.clone())
         };
         self.release_inflight(&principal, &operation);
+        self.record_terminal(handle.request_id);
         Ok(())
     }
 
@@ -530,6 +560,7 @@ impl HostBus {
             (record.principal.clone(), record.operation.clone())
         };
         self.release_inflight(&principal, &operation);
+        self.record_terminal(handle.request_id);
         Ok(())
     }
 
@@ -554,6 +585,7 @@ impl HostBus {
             let principal = record.principal.clone();
             let operation = record.operation.clone();
             self.release_inflight(&principal, &operation);
+            self.record_terminal(request_id);
             cancelled += 1;
         }
         cancelled
@@ -565,6 +597,22 @@ impl HostBus {
             &mut self.inflight_by_operation,
             &(principal.clone(), operation.clone()),
         );
+    }
+
+    fn record_terminal(&mut self, request_id: RequestId) {
+        self.terminal_order.push_back(request_id);
+        while self.terminal_order.len() > self.config.max_terminal_records {
+            let Some(expired_id) = self.terminal_order.pop_front() else {
+                break;
+            };
+            if self
+                .calls
+                .get(&expired_id)
+                .is_some_and(|record| record.state != AdmissionState::Pending)
+            {
+                self.calls.remove(&expired_id);
+            }
+        }
     }
 }
 
@@ -726,5 +774,37 @@ mod tests {
         )
         .expect("blob ref");
         assert!(matches!(BusPayload::Blob(blob), BusPayload::Blob(_)));
+    }
+
+    #[test]
+    fn terminal_request_ledger_is_bounded() {
+        let mut bus = HostBus::new(HostBusConfig::with_limits(1, 2).expect("valid limits"));
+        bus.register_operation(
+            OperationDescriptor::new(
+                "graph.read",
+                RpcTarget::new("graph", "read").expect("valid route"),
+                Capability::GraphRead,
+                CapabilityScope::Global,
+                1,
+            )
+            .expect("valid operation"),
+        )
+        .expect("registered operation");
+
+        for id in 1..=3 {
+            let handle = bus.begin(request(id, 100), 10).expect("admitted");
+            bus.finish(&handle).expect("finished");
+        }
+
+        assert_eq!(bus.tracked_request_count(), 2);
+        assert_eq!(bus.state(RequestId::new(1).unwrap()), None);
+        assert_eq!(
+            bus.state(RequestId::new(2).unwrap()),
+            Some(AdmissionState::Finished)
+        );
+        assert_eq!(
+            bus.state(RequestId::new(3).unwrap()),
+            Some(AdmissionState::Finished)
+        );
     }
 }

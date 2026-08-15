@@ -1621,7 +1621,7 @@ fn install_pending_from(
     Ok(())
 }
 
-fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     let base = plugin_base(app)?;
     let removed = read_removed_plugins(&base)?;
     #[cfg(debug_assertions)]
@@ -1793,6 +1793,23 @@ pub fn list_installed_plugins(app: AppHandle) -> Result<Vec<InstalledMycPlugin>,
     install_pending_packages(&app)?;
     let root = plugin_base(&app)?.join("installed");
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    query_installed_plugins(&app)
+}
+
+/// Read-only catalog query used after startup package discovery has completed.
+/// It never scans package candidates, creates directories, or activates code.
+pub(crate) fn query_installed_plugins(
+    app: &AppHandle,
+) -> Result<Vec<InstalledMycPlugin>, String> {
+    let base = plugin_base(app)?;
+    query_installed_plugins_from(&base)
+}
+
+fn query_installed_plugins_from(base: &Path) -> Result<Vec<InstalledMycPlugin>, String> {
+    let root = base.join("installed");
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
     let mut plugins = Vec::new();
     for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
         let path = entry.map_err(|error| error.to_string())?.path();
@@ -2193,6 +2210,16 @@ mod tests {
     use std::io::Write;
     use tempfile::tempdir;
     use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+
+    #[test]
+    fn read_only_catalog_query_does_not_create_an_installed_directory() {
+        let base = tempdir().expect("temp plugin base");
+
+        assert!(query_installed_plugins_from(base.path())
+            .expect("empty catalog")
+            .is_empty());
+        assert!(!base.path().join("installed").exists());
+    }
 
     fn runtime_manifest(language: &str) -> String {
         format!(

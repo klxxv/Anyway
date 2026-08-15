@@ -52,11 +52,26 @@ The first code slice intentionally avoids changing product behavior:
 4. Keep the current PDF agent, WASM executor, plugin installer, and Vue store operational.
 5. Document every temporary bypass in the migration ledger below.
 
+## 🔗 Phase 2 vertical slice
+
+The first runtime route is now complete for the read-only plugin catalog:
+
+1. Vue calls `HostSdk.call("plugin.list", {})` through the lazy Tauri transport.
+2. The single `kernel_host_call` Gateway rejects unknown DTO fields and binds `native.ui` from the `main` WebView.
+3. Capability Policy resolves `plugin.list` to `plugin.catalog.read` and returns the explicit native bootstrap proof.
+4. The Gateway attenuates that proof into a deadline-bounded lease.
+5. Host Bus admission validates the lease, deadline, duplicate request ID, and per-principal limits.
+6. A read-only Rust plugin catalog query executes behind the admitted route.
+7. The old `list_installed_plugins` command remains registered only as a rollback adapter.
+
+This slice proves the common path without combining a new security boundary with a high-risk write operation. Plugin installation and settings mutation remain on legacy commands until their transaction and audit contracts are defined.
+
 ## 🔐 Migration ledger
 
 | Temporary behavior | Risk | Removal phase |
 | --- | --- | --- |
-| Tauri invokes commands directly | Inconsistent envelope and identity | Phase 2 |
+| Most Tauri operations still invoke commands directly; `plugin.list` is migrated | Inconsistent envelope and identity outside the first route | Phase 2–8 |
+| Pending package discovery runs during kernel startup | Package activation is not yet a Policy/AnMarket transaction | Phase 7 |
 | Frontend passes plugin ID/version | Possible confused identity if host validation regresses | Phase 2 |
 | Manifest declarations act as grants | No separate user/policy grant | Phase 2 |
 | Agent jobs use one global async mutex | Avoidable serialization | Phase 4 |

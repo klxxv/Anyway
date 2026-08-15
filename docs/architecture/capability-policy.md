@@ -86,7 +86,7 @@ The gateway may use `CapabilityPolicy::with_principals` when the transport binds
 
 ### Plugin leases
 
-An extension cannot authorize itself by naming a capability. The issuer passed to `request`, `grant`, `issue_lease`, and `revoke_lease` is checked against the policy's kernel principal where authority is created or changed. Plugins must use selected lease IDs, and every plugin lease has an expiry and can be revoked by the kernel.
+An extension cannot authorize itself by naming a capability. `request` only validates intent; the issuer passed to `grant`, `issue_lease`, and `revoke_lease` is checked against the policy's kernel principal wherever authority is created or changed. Plugins must use selected lease IDs, and every plugin lease has an expiry and can be revoked by the kernel.
 
 Scope attenuation follows two rules:
 
