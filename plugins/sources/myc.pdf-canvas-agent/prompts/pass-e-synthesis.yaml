@@ -22,6 +22,8 @@ system:
 
 user_template:
   zh: |
+    {public_progress_protocol}
+
     ## 论文元数据
     Title: {title}
     Authors: {authors}
@@ -43,6 +45,8 @@ user_template:
 
     请识别主要结论、消融设计、交互效应、混杂因素、缺失对照和内部冲突。
   en: |
+    {public_progress_protocol}
+
     ## Paper Metadata
     Title: {title}
     Authors: {authors}

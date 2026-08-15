@@ -86,7 +86,12 @@ pub(crate) fn scenario<'a>(project: &'a Value, scenario_id: Option<&str>) -> Opt
 pub(crate) fn string_set(value: Option<&Value>) -> HashSet<String> {
     value
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -95,10 +100,16 @@ pub(crate) fn resolve_edges_view(project: &Value, scenario_id: Option<&str>) -> 
     let scenario = scenario(project, scenario_id);
     let disabled_nodes = string_set(scenario.and_then(|s| s.get("disabledNodeIds")));
     let disabled_edges = string_set(scenario.and_then(|s| s.get("disabledEdgeIds")));
-    let overrides = scenario.and_then(|s| s.get("edgeOverrides")).and_then(Value::as_object);
+    let overrides = scenario
+        .and_then(|s| s.get("edgeOverrides"))
+        .and_then(Value::as_object);
     let empty = Vec::new();
     let mut views = Vec::new();
-    for edge in project.get("edges").and_then(Value::as_array).unwrap_or(&empty) {
+    for edge in project
+        .get("edges")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty)
+    {
         let merged = overrides
             .and_then(|map| map.get(edge.get("id").and_then(Value::as_str).unwrap_or("")))
             .map(|extra| {
@@ -118,7 +129,10 @@ pub(crate) fn resolve_edges_view(project: &Value, scenario_id: Option<&str>) -> 
         ) else {
             continue;
         };
-        if disabled_edges.contains(id) || disabled_nodes.contains(source) || disabled_nodes.contains(target) {
+        if disabled_edges.contains(id)
+            || disabled_nodes.contains(source)
+            || disabled_nodes.contains(target)
+        {
             continue;
         }
         let experiment = merged.get("experiment");
@@ -126,13 +140,34 @@ pub(crate) fn resolve_edges_view(project: &Value, scenario_id: Option<&str>) -> 
             id: id.to_string(),
             source: source.to_string(),
             target: target.to_string(),
-            edge_type: merged.get("type").and_then(Value::as_str).unwrap_or("").to_string(),
-            directed: merged.get("directed").and_then(Value::as_bool).unwrap_or(false),
-            confidence: merged.get("confidence").and_then(Value::as_f64).unwrap_or(0.5),
-            outcome: experiment.and_then(|e| e.get("outcome")).and_then(Value::as_str).map(str::to_string),
-            status: experiment.and_then(|e| e.get("status")).and_then(Value::as_str).map(str::to_string),
-            delta: experiment.and_then(|e| e.get("delta")).and_then(Value::as_f64),
-            experiment_id: experiment.and_then(|e| e.get("id")).and_then(Value::as_str).map(str::to_string),
+            edge_type: merged
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            directed: merged
+                .get("directed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            confidence: merged
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.5),
+            outcome: experiment
+                .and_then(|e| e.get("outcome"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            status: experiment
+                .and_then(|e| e.get("status"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            delta: experiment
+                .and_then(|e| e.get("delta"))
+                .and_then(Value::as_f64),
+            experiment_id: experiment
+                .and_then(|e| e.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
         });
     }
     views.sort_by(|a, b| a.id.cmp(&b.id));
@@ -141,7 +176,8 @@ pub(crate) fn resolve_edges_view(project: &Value, scenario_id: Option<&str>) -> 
 
 /// 场景启用的节点集合（对齐 TS resolvedNodeIds）。
 pub(crate) fn resolved_node_ids(project: &Value, scenario_id: Option<&str>) -> HashSet<String> {
-    let disabled = string_set(scenario(project, scenario_id).and_then(|s| s.get("disabledNodeIds")));
+    let disabled =
+        string_set(scenario(project, scenario_id).and_then(|s| s.get("disabledNodeIds")));
     let empty = Vec::new();
     project
         .get("nodes")
@@ -167,7 +203,10 @@ fn active_node_ids(
     };
     let allowed: HashSet<&str> = types.iter().map(String::as_str).collect();
     let empty = Vec::new();
-    let nodes = project.get("nodes").and_then(Value::as_array).unwrap_or(&empty);
+    let nodes = project
+        .get("nodes")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
     resolved
         .into_iter()
         .filter(|id| {
@@ -191,12 +230,17 @@ fn build_neighbor_index(
     direction: TraversalDirection,
     edge_types: Option<&[String]>,
 ) -> HashMap<String, Vec<Neighbor>> {
-    let allowed: Option<HashSet<&str>> = edge_types.map(|types| types.iter().map(String::as_str).collect());
+    let allowed: Option<HashSet<&str>> =
+        edge_types.map(|types| types.iter().map(String::as_str).collect());
     let mut index: HashMap<String, Vec<Neighbor>> = HashMap::new();
     let mut seen: HashMap<String, HashSet<(String, String)>> = HashMap::new();
     let mut add = |source: &str, target: &str, edge_id: &str| {
         let key = (target.to_string(), edge_id.to_string());
-        if !seen.entry(source.to_string()).or_default().insert(key.clone()) {
+        if !seen
+            .entry(source.to_string())
+            .or_default()
+            .insert(key.clone())
+        {
             return;
         }
         index.entry(source.to_string()).or_default().push(key);
@@ -242,7 +286,12 @@ fn neighbors_at<'a>(
 ) -> Vec<&'a Neighbor> {
     neighbors
         .get(current)
-        .map(|items| items.iter().filter(|(node, _)| active.contains(node)).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter(|(node, _)| active.contains(node))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -250,7 +299,12 @@ fn neighbors_at<'a>(
 pub fn traverse_graph(project: &Value, request: &TraversalRequest) -> TraversalResult {
     let started = std::time::Instant::now();
     let edges = resolve_edges_view(project, request.scenario_id.as_deref());
-    let active = active_node_ids(project, request.scenario_id.as_deref(), &request.start_id, request.node_types.as_deref());
+    let active = active_node_ids(
+        project,
+        request.scenario_id.as_deref(),
+        &request.start_id,
+        request.node_types.as_deref(),
+    );
     let neighbors = build_neighbor_index(&edges, request.direction, request.edge_types.as_deref());
     let mut result = TraversalResult {
         strategy: request.strategy,
@@ -294,7 +348,10 @@ fn bfs(
         let current_depth = result.depth[&current];
         let list = neighbors_at(neighbors, active, &current);
         if current_depth >= request.max_depth {
-            if list.iter().any(|(node, _)| !visited.contains(node.as_str())) {
+            if list
+                .iter()
+                .any(|(node, _)| !visited.contains(node.as_str()))
+            {
                 result.stopped_by_depth.push(current.clone());
             }
             continue;
@@ -339,7 +396,10 @@ fn dfs(
         let current_depth = ctx.result.depth[current];
         let list = neighbors_at(ctx.neighbors, ctx.active, current);
         if current_depth >= ctx.request.max_depth {
-            if list.iter().any(|(node, _)| ctx.colors.get(node.as_str()).copied().unwrap_or(0) == 0) {
+            if list
+                .iter()
+                .any(|(node, _)| ctx.colors.get(node.as_str()).copied().unwrap_or(0) == 0)
+            {
                 ctx.result.stopped_by_depth.push(current.to_string());
             }
             ctx.colors.insert(current.to_string(), 2);
@@ -352,7 +412,9 @@ fn dfs(
             }
             match ctx.colors.get(node_id.as_str()).copied().unwrap_or(0) {
                 0 => {
-                    ctx.result.parent.insert(node_id.clone(), Some(current.to_string()));
+                    ctx.result
+                        .parent
+                        .insert(node_id.clone(), Some(current.to_string()));
                     ctx.result.depth.insert(node_id.clone(), current_depth + 1);
                     ctx.result.tree_edge_ids.push(edge_id.clone());
                     ctx.tree_edges.insert(edge_id.clone());
@@ -383,7 +445,12 @@ fn dfs(
 }
 
 /// 用 BFS 返回一条稳定最短路径，沿用有向边语义（对齐 TS shortestPath）。
-pub fn shortest_path(project: &Value, source_id: &str, target_id: &str, scenario_id: Option<&str>) -> Vec<String> {
+pub fn shortest_path(
+    project: &Value,
+    source_id: &str,
+    target_id: &str,
+    scenario_id: Option<&str>,
+) -> Vec<String> {
     let traversal = traverse_graph(
         project,
         &TraversalRequest {
@@ -401,7 +468,12 @@ pub fn shortest_path(project: &Value, source_id: &str, target_id: &str, scenario
     }
     let mut path = vec![target_id.to_string()];
     let mut cursor = target_id.to_string();
-    while let Some(parent) = traversal.parent.get(&cursor).and_then(Option::as_ref).cloned() {
+    while let Some(parent) = traversal
+        .parent
+        .get(&cursor)
+        .and_then(Option::as_ref)
+        .cloned()
+    {
         cursor = parent;
         path.insert(0, cursor.clone());
     }
@@ -434,9 +506,15 @@ pub fn all_shortest_paths(
     let edges = resolve_edges_view(project, scenario_id);
     let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
     for edge in &edges {
-        outgoing.entry(edge.source.clone()).or_default().push(edge.target.clone());
+        outgoing
+            .entry(edge.source.clone())
+            .or_default()
+            .push(edge.target.clone());
         if !edge.directed {
-            outgoing.entry(edge.target.clone()).or_default().push(edge.source.clone());
+            outgoing
+                .entry(edge.target.clone())
+                .or_default()
+                .push(edge.source.clone());
         }
     }
     for list in outgoing.values_mut() {

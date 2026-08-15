@@ -1,154 +1,430 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { isJobTerminal } from "../../../app/plugins/agent-contracts";
-import type { AgentJobStatus } from "../../../app/plugins/agent-contracts";
+import {
+  isJobTerminal,
+  type AgentJobStatus,
+  type PublicProgressEvent,
+} from "../../../app/plugins/agent-contracts";
+import {
+  canvasDiffDocumentFromAgentResult,
+  computeCanvasDiffBatch,
+} from "../../../app/domain/canvas-diff";
 import {
   cancelPdfJob,
   getPdfJobStatus,
-  listenForPdfDrops,
-  pickPdfFile,
-  startPdfJob,
+  listImportJobs,
+  listenForDocumentDrops,
+  pickImportFiles,
+  startDocumentBatch,
 } from "../../../app/platform/agent-client";
-import {
-  PDF_PIPELINE_STAGES,
-  deriveUploadProgress,
-  jobStageIndex,
-  usePanelI18n,
-  type PdfUploadDialogProps,
-} from "./panel-types";
+import { deriveUploadProgress, usePanelI18n, type PdfUploadDialogProps } from "./panel-types";
+
+type ImportListItem = {
+  key: string;
+  path: string;
+  job: AgentJobStatus | null;
+  error: string;
+};
 
 const props = defineProps<PdfUploadDialogProps>();
 const { t } = usePanelI18n();
-const pdfPath = ref<string | null>(null);
-const status = ref<AgentJobStatus | null>(null);
-const error = ref("");
+const items = ref<ImportListItem[]>([]);
+const picking = ref(false);
 const starting = ref(false);
 const dragOver = ref(false);
 const pollTimer = ref<number | null>(null);
-const jobId = ref<string | null>(null);
-const dropped = ref(false);
+const globalError = ref("");
+const comparing = ref(false);
 
-const progress = computed(() => (status.value ? deriveUploadProgress(status.value) : null));
-const finished = computed(() => status.value?.state === "awaiting_review");
+const pendingItems = computed(() => items.value.filter((item) => !item.job));
+const submittedItems = computed(() => items.value.filter((item) => item.job));
+const hasActiveJobs = computed(() =>
+  submittedItems.value.some(
+    (item) => item.job && item.job.state !== "awaiting_review" && !isJobTerminal(item.job.state),
+  ),
+);
+const reviewableItems = computed(() =>
+  submittedItems.value.filter((item) => item.job?.state === "awaiting_review" && item.job.result),
+);
 
-const stopPolling = () => {
-  if (pollTimer.value !== null) {
-    window.clearInterval(pollTimer.value);
-    pollTimer.value = null;
+function normalizedPath(path: string): string {
+  return path.replaceAll("\\", "/").toLocaleLowerCase();
+}
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
+function appendPaths(paths: string[]) {
+  const existing = new Set(items.value.map((item) => normalizedPath(item.path)));
+  for (const path of paths) {
+    if (!/\.(pdf|docx|md)$/i.test(path) || existing.has(normalizedPath(path))) continue;
+    existing.add(normalizedPath(path));
+    items.value.push({ key: crypto.randomUUID(), path, job: null, error: "" });
   }
-};
+  globalError.value = "";
+}
 
-const watchJob = (nextJobId: string) => {
-  stopPolling();
-  jobId.value = nextJobId;
-  pollTimer.value = window.setInterval(async () => {
-    try {
-      const next = await getPdfJobStatus(nextJobId);
-      status.value = next;
-      if (next.state === "awaiting_review") {
-        stopPolling();
-        props.onReady(nextJobId, next);
-      } else if (isJobTerminal(next.state)) {
-        stopPolling();
-        jobId.value = null;
-        error.value = next.error ?? `Unexpected terminal state: ${next.state}`;
-      }
-    } catch (cause) {
-      stopPolling();
-      jobId.value = null;
-      error.value = cause instanceof Error ? cause.message : String(cause);
-    }
-  }, 700);
-};
-
-const chooseFile = async () => {
+async function chooseFiles() {
+  picking.value = true;
   try {
-    const path = await pickPdfFile();
-    if (path) {
-      pdfPath.value = path;
-      error.value = "";
-    }
+    appendPaths(await pickImportFiles());
   } catch (cause) {
-    error.value = cause instanceof Error && cause.message === "DESKTOP_REQUIRED"
-      ? t("agent.desktopOnly")
-      : cause instanceof Error ? cause.message : String(cause);
+    globalError.value =
+      cause instanceof Error && cause.message === "DESKTOP_REQUIRED"
+        ? t("agent.desktopOnly")
+        : cause instanceof Error
+          ? cause.message
+          : String(cause);
+  } finally {
+    picking.value = false;
   }
-};
+}
 
-const beginParse = async () => {
-  if (!pdfPath.value || starting.value) return;
+function mergeStatuses(statuses: AgentJobStatus[]) {
+  for (const status of statuses) {
+    const byJob = items.value.find((item) => item.job?.jobId === status.jobId);
+    if (byJob) {
+      byJob.job = status;
+      byJob.error = status.error ?? "";
+      continue;
+    }
+    items.value.push({
+      key: status.jobId,
+      path: status.filePath || status.pdfPath,
+      job: status,
+      error: status.error ?? "",
+    });
+  }
+}
+
+async function refreshActiveJobs() {
+  const active = submittedItems.value.filter(
+    (item) => item.job && item.job.state !== "awaiting_review" && !isJobTerminal(item.job.state),
+  );
+  if (active.length === 0) return;
+  const results = await Promise.allSettled(
+    active.map((item) => getPdfJobStatus(item.job!.jobId)),
+  );
+  results.forEach((result, index) => {
+    const item = active[index];
+    if (result.status === "fulfilled") {
+      item.job = result.value;
+      item.error = result.value.error ?? "";
+    } else {
+      item.error = result.reason instanceof Error ? result.reason.message : String(result.reason);
+    }
+  });
+}
+
+async function startPending() {
+  const pending = pendingItems.value.slice();
+  if (pending.length === 0 || starting.value) return;
   starting.value = true;
-  error.value = "";
-  dropped.value = false;
+  globalError.value = "";
   try {
-    const job = await startPdfJob(pdfPath.value);
-    status.value = job;
-    jobId.value = job.jobId;
-    if (job.state === "awaiting_review") props.onReady(job.jobId, job);
-    else if (isJobTerminal(job.state)) {
-      jobId.value = null;
-      error.value = job.error ?? `Unexpected terminal state: ${job.state}`;
-    } else watchJob(job.jobId);
+    const batch = await startDocumentBatch(pending.map((item) => item.path));
+    pending.forEach((item, index) => {
+      item.job = batch.jobs[index] ?? null;
+      item.error = item.job?.error ?? "";
+    });
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause);
+    globalError.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
     starting.value = false;
   }
-};
+}
 
-const reset = () => {
-  stopPolling();
-  status.value = null;
-  pdfPath.value = null;
-  jobId.value = null;
-  error.value = "";
-  starting.value = false;
-};
+async function cancelItem(item: ImportListItem) {
+  if (!item.job || isJobTerminal(item.job.state) || item.job.state === "awaiting_review") return;
+  try {
+    item.job = await cancelPdfJob(item.job.jobId);
+    item.error = item.job.error ?? "";
+  } catch (cause) {
+    item.error = cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
+async function retryItem(item: ImportListItem) {
+  item.error = "";
+  try {
+    const batch = await startDocumentBatch([item.path]);
+    item.job = batch.jobs[0] ?? null;
+  } catch (cause) {
+    item.error = cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
+async function compareReviewableCanvases() {
+  if (reviewableItems.value.length < 2 || comparing.value) return;
+  comparing.value = true;
+  globalError.value = "";
+  try {
+    const [baselineItem, ...comparisonItems] = reviewableItems.value;
+    const baselineStatus = baselineItem.job!;
+    const baselinePath = baselineStatus.filePath || baselineStatus.pdfPath;
+    const baselineProject = canvasDiffDocumentFromAgentResult(baselineStatus.result, {
+      documentId: baselineStatus.fileHash || baselineStatus.jobId,
+      provenance: { origin: "ai", fileName: fileName(baselinePath), sourcePath: baselinePath },
+    });
+    if (!baselineProject) throw new Error(t("agent.diffUnavailable"));
+    const baselineDocuments = [];
+    const comparisonDocuments = [];
+    for (const item of comparisonItems) {
+      const status = item.job!;
+      const path = status.filePath || status.pdfPath;
+      const pairId = status.fileHash || status.jobId;
+      const comparison = canvasDiffDocumentFromAgentResult(status.result, {
+        documentId: pairId,
+        provenance: { origin: "ai", fileName: fileName(path), sourcePath: path },
+      });
+      if (!comparison) continue;
+      baselineDocuments.push({
+        ...baselineProject,
+        documentId: pairId,
+        provenance: {
+          ...baselineProject.provenance,
+          documentId: pairId,
+          fileName: fileName(baselinePath),
+          sourcePath: baselinePath,
+        },
+      });
+      comparisonDocuments.push(comparison);
+    }
+    if (!comparisonDocuments.length) throw new Error(t("agent.diffUnavailable"));
+    const result = await computeCanvasDiffBatch({
+      baseline: { groupId: baselineStatus.jobId, label: fileName(baselinePath), documents: baselineDocuments },
+      comparison: { groupId: "import-batch", label: t("agent.diffComparisonGroup"), documents: comparisonDocuments },
+    });
+    props.onDiffReady?.(result);
+  } catch (cause) {
+    globalError.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    comparing.value = false;
+  }
+}
+
+function removePending(item: ImportListItem) {
+  if (item.job) return;
+  items.value = items.value.filter((candidate) => candidate.key !== item.key);
+}
+
+function progressFor(item: ImportListItem) {
+  return item.job ? deriveUploadProgress(item.job) : { done: 0, total: 0, percent: 0 };
+}
+
+function formatActivityBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function uploadPercent(job: AgentJobStatus): number {
+  return job.uploadTotalBytes
+    ? Math.min(100, Math.round((job.uploadBytes / job.uploadTotalBytes) * 100))
+    : 0;
+}
+
+function formatElapsed(milliseconds: number): string {
+  return `${Math.max(0, Math.round(milliseconds / 1000))}s`;
+}
+
+function latestPublicProgress(job: AgentJobStatus): PublicProgressEvent | null {
+  const events = job.publicProgress;
+  return events && events.length > 0 ? events[events.length - 1] ?? null : null;
+}
+
+function latestRepairAudit(job: AgentJobStatus) {
+  const records = job.repairAudit;
+  return records && records.length > 0 ? records[records.length - 1] ?? null : null;
+}
+
+function repairEntryCount(job: AgentJobStatus): number {
+  return (job.repairAudit ?? []).reduce((total, record) => total + record.entries.length, 0);
+}
 
 let disposeDropListener: (() => void) | undefined;
 onMounted(async () => {
-  const cleanup = await listenForPdfDrops((paths) => {
-    const first = paths[0];
-    if (first) {
-      dropped.value = true;
-      pdfPath.value = first;
-      error.value = "";
-    }
-  });
-  disposeDropListener = cleanup;
+  try {
+    mergeStatuses(await listImportJobs());
+  } catch {
+    // A fresh host has no import history; selection remains available.
+  }
+  disposeDropListener = await listenForDocumentDrops(appendPaths);
+  pollTimer.value = window.setInterval(() => void refreshActiveJobs(), 700);
 });
 
 onUnmounted(() => {
   disposeDropListener?.();
-  stopPolling();
-  if (jobId.value && status.value && !isJobTerminal(status.value.state)) {
-    void cancelPdfJob(jobId.value);
-  }
+  if (pollTimer.value !== null) window.clearInterval(pollTimer.value);
+  // Jobs are host-owned and intentionally continue after the dialog closes.
 });
 </script>
 
 <template>
   <div class="fixed inset-0 z-[97] grid place-items-center bg-ink/10 backdrop-blur-[2px]">
-    <section class="flex w-[min(560px,calc(100vw-32px))] flex-col overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)]">
+    <section class="flex max-h-[min(760px,calc(100vh-32px))] w-[min(680px,calc(100vw-32px))] flex-col overflow-hidden rounded-[7px] border border-ink/30 bg-paper shadow-[0_18px_60px_rgba(30,32,35,.15)]">
       <header class="flex items-start justify-between border-b border-ink/15 px-7 py-5">
-        <div><span class="font-sans text-[8px] uppercase tracking-[0.18em] text-blue">{{ t('agent.eyebrow') }}</span><h2 class="mt-1 font-serif text-[21px]">{{ t('agent.importPdf') }}</h2><p class="mt-1 max-w-[460px] font-serif text-[10px] leading-[1.5] text-ink/50">{{ t('agent.importPdfHint') }}</p></div>
-        <button class="icon-quiet" @click="props.onClose" :aria-label="t('menu.close')">×</button>
+        <div>
+          <span class="font-sans text-[8px] uppercase tracking-[0.18em] text-blue">{{ t('agent.eyebrow') }}</span>
+          <h2 class="mt-1 font-serif text-[21px]">{{ t('agent.importDocuments') }}</h2>
+          <p class="mt-1 max-w-[520px] font-serif text-[10px] leading-[1.5] text-ink/50">{{ t('agent.importDocumentsHint') }}</p>
+        </div>
+        <button class="icon-quiet" :aria-label="t('menu.close')" @click="props.onClose">×</button>
       </header>
 
-      <div class="min-h-0 flex-1 overflow-y-auto p-6">
-        <div v-if="!status" class="grid place-items-center rounded-[6px] border border-dashed p-8 text-center transition" :class="dragOver ? 'border-blue bg-blue-soft' : 'border-ink/25 bg-canvas'" @dragenter.prevent="dragOver = true" @dragover.prevent @dragleave.prevent="dragOver = false" @drop.prevent="dragOver = false">
-          <div><span class="mx-auto block text-3xl text-ink/35" aria-hidden="true">▧</span><h3 class="mt-4 font-serif text-[15px]">{{ t('agent.dropTitle') }}</h3><p class="mx-auto mt-2 max-w-[360px] font-serif text-[10px] leading-[1.55] text-ink/50">{{ t('agent.dropHint') }}</p><button class="button-primary mt-5 justify-center" @click="void chooseFile()">↑ {{ t('agent.browse') }}</button></div>
+      <div class="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+        <div
+          class="grid place-items-center rounded-[6px] border border-dashed p-6 text-center transition"
+          :class="dragOver ? 'border-blue bg-blue-soft' : 'border-ink/25 bg-canvas'"
+          @dragenter.prevent="dragOver = true"
+          @dragover.prevent
+          @dragleave.prevent="dragOver = false"
+          @drop.prevent="dragOver = false"
+        >
+          <p class="font-serif text-[12px] text-ink/65">{{ t('agent.dropDocuments') }}</p>
+          <p class="mt-1 font-serif text-[9px] text-ink/45">{{ t('agent.allowedDocuments') }}</p>
+          <button class="button-primary mt-4" :disabled="picking" @click="void chooseFiles()">
+            ＋ {{ picking ? t('agent.choosingFiles') : t('agent.addFiles') }}
+          </button>
         </div>
-        <div v-else class="space-y-5">
-          <div class="flex items-center gap-3 rounded-[5px] border border-ink/15 bg-canvas px-4 py-3"><span class="shrink-0 text-blue" aria-hidden="true">▧</span><div class="min-w-0 flex-1"><p class="truncate font-mono text-[9px] text-ink/70" :title="status.pdfPath">{{ status.pdfPath }}</p><p class="mt-0.5 font-serif text-[9px] text-ink/45">{{ status.jobId.slice(0, 12) }} · {{ t('agent.fileSelected') }}</p></div><span v-if="finished" class="text-olive" aria-hidden="true">✓</span></div>
-          <div><div class="flex items-baseline justify-between"><p class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">{{ t('agent.stage') }} · {{ t(`agent.stage.${status.state}` as any) }}</p><p v-if="progress" class="font-serif text-[9px] text-ink/50">{{ t('agent.stageOf', { done: progress.done, total: progress.total }) }}</p></div><div class="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10"><div class="h-full rounded-full transition-all duration-500" :class="error ? 'bg-alert' : finished ? 'bg-olive' : 'bg-blue'" :style="{ width: `${progress?.percent ?? 0}%` }" /></div></div>
-          <ol class="space-y-1"><li v-for="(stage, index) in PDF_PIPELINE_STAGES" :key="stage" class="flex items-center gap-2 rounded-[3px] px-2 py-1 font-serif text-[10px]" :class="jobStageIndex(status.state) === index && !finished && !error ? 'bg-blue-soft text-blue' : jobStageIndex(status.state) > index || finished ? 'text-olive' : 'text-ink/40'"><span class="grid size-4 shrink-0 place-items-center rounded-full border text-[8px]">{{ jobStageIndex(status.state) > index || finished ? '✓' : index + 1 }}</span>{{ t(`agent.stage.${stage}` as any) }}</li></ol>
-          <p v-if="error" class="flex items-start gap-2 rounded-[4px] border border-alert/40 bg-alert/5 px-3 py-2 font-serif text-[10px] leading-[1.5] text-alert">⚠ <span class="min-w-0 break-words">{{ error }}</span></p>
-        </div>
+
+        <section v-if="pendingItems.length" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">{{ t('agent.pendingFiles') }}</h3>
+            <span class="font-mono text-[9px] text-ink/40">{{ pendingItems.length }}</span>
+          </div>
+          <div v-for="item in pendingItems" :key="item.key" class="flex items-center gap-3 rounded-[5px] border border-ink/15 bg-canvas px-4 py-3">
+            <span class="text-blue" aria-hidden="true">◇</span>
+            <div class="min-w-0 flex-1">
+              <p class="truncate font-mono text-[9px] text-ink/70" :title="item.path">{{ fileName(item.path) }}</p>
+              <p class="mt-0.5 truncate font-serif text-[8px] text-ink/40">{{ item.path }}</p>
+            </div>
+            <button class="icon-quiet" :aria-label="t('agent.removeFile')" @click="removePending(item)">×</button>
+          </div>
+        </section>
+
+        <section v-if="submittedItems.length" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">{{ t('agent.importedFiles') }}</h3>
+            <span class="font-mono text-[9px] text-ink/40">{{ submittedItems.length }}</span>
+          </div>
+          <article v-for="item in submittedItems" :key="item.key" class="rounded-[5px] border border-ink/15 bg-canvas px-4 py-3">
+            <div class="flex items-start gap-3">
+              <span class="mt-0.5 text-blue" aria-hidden="true">▧</span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="truncate font-mono text-[9px] text-ink/70" :title="item.path">{{ fileName(item.path) }}</p>
+                  <span class="shrink-0 font-sans text-[8px] uppercase tracking-[0.12em] text-ink/45">{{ t(`agent.stage.${item.job!.state}` as any) }}</span>
+                </div>
+                <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
+                  <div
+                    class="h-full rounded-full transition-all duration-500"
+                    :class="item.error ? 'bg-alert' : item.job!.state === 'awaiting_review' ? 'bg-olive' : 'bg-blue'"
+                    :style="{ width: `${progressFor(item).percent}%` }"
+                  />
+                </div>
+                <div v-if="item.job!.uploadTotalBytes" class="mt-2">
+                  <div class="flex justify-between font-mono text-[8px] text-ink/45">
+                    <span>{{ t('agent.uploadProgress') }}</span>
+                    <span>{{ formatActivityBytes(item.job!.uploadBytes) }} / {{ formatActivityBytes(item.job!.uploadTotalBytes!) }}</span>
+                  </div>
+                  <div class="mt-1 h-1 overflow-hidden rounded-full bg-ink/10">
+                    <div class="h-full rounded-full bg-blue transition-all duration-200" :style="{ width: `${uploadPercent(item.job!)}%` }" />
+                  </div>
+                </div>
+                <div
+                  v-if="item.job!.reasoningActivity?.currentPass"
+                  class="mt-2 rounded-[4px] border border-blue/15 bg-blue-soft/40 px-2.5 py-2"
+                >
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[8px] text-ink/55">
+                    <span>{{ item.job!.reasoningActivity.currentPass }}</span>
+                    <span>{{ t('agent.reasoningChunks', { count: item.job!.reasoningActivity.chunkCount }) }}</span>
+                    <span>{{ formatActivityBytes(item.job!.reasoningActivity.bytes) }}</span>
+                    <span>{{ formatElapsed(item.job!.reasoningActivity.elapsedMs) }}</span>
+                    <span v-if="item.job!.reasoningActivity.retryCount">{{ t('agent.reasoningRetries', { count: item.job!.reasoningActivity.retryCount }) }}</span>
+                  </div>
+                  <p v-if="item.job!.reasoningActivity.safeSummary" class="mt-1 font-serif text-[9px] text-ink/50">
+                    {{ item.job!.reasoningActivity.safeSummary }}
+                  </p>
+                  <p class="mt-1 font-serif text-[8px] text-ink/35">{{ t('agent.reasoningPrivacy') }}</p>
+                </div>
+                <div
+                  v-if="latestPublicProgress(item.job!)"
+                  class="mt-2 rounded-[4px] border border-olive/25 bg-olive/5 px-2.5 py-2"
+                  data-testid="public-progress"
+                  aria-live="polite"
+                >
+                  <div class="font-mono text-[8px] uppercase tracking-[0.1em] text-olive">
+                    {{ latestPublicProgress(item.job!)!.stage }}
+                  </div>
+                  <p class="mt-1 font-serif text-[9px] text-ink/60">
+                    {{ latestPublicProgress(item.job!)!.summary }}
+                  </p>
+                  <div v-if="latestPublicProgress(item.job!)!.evidenceCount !== undefined || latestPublicProgress(item.job!)!.warningCount !== undefined" class="mt-1 flex gap-3 font-mono text-[8px] text-ink/40">
+                    <span v-if="latestPublicProgress(item.job!)!.evidenceCount !== undefined">{{ t('agent.publicProgressEvidence', { count: latestPublicProgress(item.job!)!.evidenceCount ?? 0 }) }}</span>
+                    <span v-if="latestPublicProgress(item.job!)!.warningCount !== undefined">{{ t('agent.publicProgressWarnings', { count: latestPublicProgress(item.job!)!.warningCount ?? 0 }) }}</span>
+                  </div>
+                </div>
+                <details
+                  v-if="latestRepairAudit(item.job!)"
+                  class="mt-2 rounded-[4px] border border-ink/15 bg-paper/70 px-2.5 py-2"
+                  data-testid="repair-audit"
+                >
+                  <summary class="cursor-pointer font-mono text-[8px] text-ink/55">
+                    {{ t('agent.repairAuditSummary', { count: repairEntryCount(item.job!), status: latestRepairAudit(item.job!)!.status }) }}
+                  </summary>
+                  <ol class="mt-2 space-y-1">
+                    <li v-for="(entry, index) in latestRepairAudit(item.job!)!.entries" :key="`${entry.code}:${entry.path}:${index}`" class="font-mono text-[8px] leading-[1.45] text-ink/50">
+                      {{ entry.code }} · {{ entry.path }} · {{ entry.beforeSummary }} → {{ entry.afterSummary }}
+                    </li>
+                  </ol>
+                  <p v-if="latestRepairAudit(item.job!)!.status === 'model-recovered'" class="mt-2 font-serif text-[8px] text-alert/80">
+                    {{ t('agent.repairAuditModelRecovery') }}
+                  </p>
+                </details>
+                <p v-if="item.error" class="mt-2 break-words font-serif text-[9px] text-alert">{{ item.error }}</p>
+              </div>
+              <button
+                v-if="item.job!.state === 'awaiting_review'"
+                class="button-primary shrink-0"
+                @click="props.onReady(item.job!.jobId, item.job!)"
+              >{{ t('agent.reviewFile') }}</button>
+              <button
+                v-else-if="item.job!.state === 'failed' || item.job!.state === 'cancelled'"
+                class="button-secondary shrink-0"
+                @click="void retryItem(item)"
+              >{{ t('agent.retry') }}</button>
+              <button
+                v-else-if="!isJobTerminal(item.job!.state)"
+                class="button-secondary shrink-0"
+                @click="void cancelItem(item)"
+              >{{ t('agent.cancel') }}</button>
+            </div>
+          </article>
+        </section>
+
+        <p v-if="globalError" class="rounded-[4px] border border-alert/40 bg-alert/5 px-3 py-2 font-serif text-[10px] text-alert">{{ globalError }}</p>
+        <button
+          v-if="reviewableItems.length >= 2 && props.onDiffReady"
+          type="button"
+          class="button-secondary w-full"
+          :disabled="comparing"
+          @click="void compareReviewableCanvases()"
+        >
+          {{ comparing ? t('agent.comparingCanvases') : t('agent.compareCanvases', { count: reviewableItems.length }) }}
+        </button>
+        <p v-if="hasActiveJobs" class="font-serif text-[9px] text-ink/45">{{ t('agent.serialQueueHint') }}</p>
       </div>
 
-      <footer class="flex shrink-0 justify-end gap-2 border-t border-ink/15 px-6 py-4">
-        <template v-if="status"><button class="button-secondary" @click="reset">{{ t('agent.retry') }}</button><button class="button-primary" :disabled="finished" @click="props.onClose">{{ finished ? t('agent.awaitingReview') : t('agent.cancel') }}</button></template>
-        <template v-else><button class="button-secondary" @click="props.onClose">{{ t('agent.cancel') }}</button><button class="button-primary" :disabled="!pdfPath || starting" @click="void beginParse()">↻ {{ starting ? t('agent.starting') : t('agent.start') }}</button></template>
+      <footer class="flex shrink-0 items-center justify-between gap-2 border-t border-ink/15 px-6 py-4">
+        <span class="font-serif text-[9px] text-ink/40">{{ t('agent.queueCount', { count: items.length }) }}</span>
+        <div class="flex gap-2">
+          <button class="button-secondary" @click="props.onClose">{{ t('menu.close') }}</button>
+          <button class="button-primary" :disabled="pendingItems.length === 0 || starting" @click="void startPending()">
+            {{ starting ? t('agent.starting') : t('agent.startQueued') }}
+          </button>
+        </div>
       </footer>
     </section>
   </div>

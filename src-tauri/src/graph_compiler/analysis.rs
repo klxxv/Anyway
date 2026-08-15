@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 use super::algorithms::{
-    bfs_request, resolved_node_ids, resolve_edges_view, scenario, shortest_path, string_set,
+    bfs_request, resolve_edges_view, resolved_node_ids, scenario, shortest_path, string_set,
     traverse_graph,
 };
 
@@ -24,7 +24,9 @@ pub struct Cycle {
 pub fn detect_cycles(project: &Value, scenario_id: Option<&str>) -> Vec<Cycle> {
     let edges = resolve_edges_view(project, scenario_id);
     let directed: Vec<_> = edges.into_iter().filter(|edge| edge.directed).collect();
-    let mut node_ids: Vec<String> = resolved_node_ids(project, scenario_id).into_iter().collect();
+    let mut node_ids: Vec<String> = resolved_node_ids(project, scenario_id)
+        .into_iter()
+        .collect();
     node_ids.sort();
     find_cycles(&directed, &node_ids)
         .into_iter()
@@ -33,7 +35,10 @@ pub fn detect_cycles(project: &Value, scenario_id: Option<&str>) -> Vec<Cycle> {
 }
 
 /// 三色 DFS 核心：`edges` 为参与环检测的边（按 id 排序），`node_ids` 为遍历起点。
-fn find_cycles(edges: &[super::algorithms::EdgeView], node_ids: &[String]) -> Vec<(Vec<String>, Vec<String>)> {
+fn find_cycles(
+    edges: &[super::algorithms::EdgeView],
+    node_ids: &[String],
+) -> Vec<(Vec<String>, Vec<String>)> {
     let mut outgoing: HashMap<String, Vec<&super::algorithms::EdgeView>> = HashMap::new();
     for edge in edges {
         outgoing.entry(edge.source.clone()).or_default().push(edge);
@@ -58,7 +63,10 @@ fn find_cycles(edges: &[super::algorithms::EdgeView], node_ids: &[String]) -> Ve
             match colors.get(&next).copied().unwrap_or(0) {
                 0 => visit(&next, edges, outgoing, colors, stack, cycles),
                 1 => {
-                    let index = stack.iter().rposition(|item| item == &next).expect("on stack");
+                    let index = stack
+                        .iter()
+                        .rposition(|item| item == &next)
+                        .expect("on stack");
                     let mut node_cycle: Vec<String> = stack[index..].to_vec();
                     node_cycle.push(next.clone());
                     let edge_cycle: Vec<String> = node_cycle
@@ -66,7 +74,9 @@ fn find_cycles(edges: &[super::algorithms::EdgeView], node_ids: &[String]) -> Ve
                         .filter_map(|pair| {
                             edges
                                 .iter()
-                                .find(|candidate| candidate.source == pair[0] && candidate.target == pair[1])
+                                .find(|candidate| {
+                                    candidate.source == pair[0] && candidate.target == pair[1]
+                                })
                                 .map(|candidate| candidate.id.clone())
                         })
                         .collect();
@@ -127,7 +137,9 @@ pub fn contradiction_chains(project: &Value, scenario_id: Option<&str>) -> Contr
                 && (edge.edge_type == "contradicts" || edge.outcome.as_deref() == Some("refutes"))
         })
         .collect();
-    let mut node_ids: Vec<String> = resolved_node_ids(project, scenario_id).into_iter().collect();
+    let mut node_ids: Vec<String> = resolved_node_ids(project, scenario_id)
+        .into_iter()
+        .collect();
     node_ids.sort();
     let mut cycles: Vec<ContradictionCycle> = find_cycles(&contradiction_edges, &node_ids)
         .into_iter()
@@ -146,7 +158,10 @@ pub fn contradiction_chains(project: &Value, scenario_id: Option<&str>) -> Contr
             .then_with(|| a.node_ids.join("|").cmp(&b.node_ids.join("|")))
     });
     let minimal_size = cycles.first().map(&unique_count);
-    let mut considered: Vec<String> = contradiction_edges.iter().map(|edge| edge.id.clone()).collect();
+    let mut considered: Vec<String> = contradiction_edges
+        .iter()
+        .map(|edge| edge.id.clone())
+        .collect();
     considered.sort();
     ContradictionChains {
         cycles,
@@ -167,7 +182,11 @@ pub struct LogicChainResult {
 }
 
 /// 按边类型与实验极性构建有效链并评分（对齐 TS computeLogicChain）。
-pub fn compute_logic_chain(project: &Value, mode: &str, target_id: Option<&str>) -> LogicChainResult {
+pub fn compute_logic_chain(
+    project: &Value,
+    mode: &str,
+    target_id: Option<&str>,
+) -> LogicChainResult {
     let edges = resolve_edges_view(project, None);
     let completed: Vec<_> = edges
         .iter()
@@ -176,13 +195,18 @@ pub fn compute_logic_chain(project: &Value, mode: &str, target_id: Option<&str>)
     let chosen: Vec<_> = match mode {
         "refutation" => edges
             .iter()
-            .filter(|edge| edge.edge_type == "contradicts" || edge.outcome.as_deref() == Some("refutes"))
+            .filter(|edge| {
+                edge.edge_type == "contradicts" || edge.outcome.as_deref() == Some("refutes")
+            })
             .collect(),
         "effective" => completed
             .into_iter()
             .filter(|edge| {
                 edge.outcome.as_deref() == Some("supports")
-                    && edge.delta.map(|delta| delta.abs() >= 0.005).unwrap_or(false)
+                    && edge
+                        .delta
+                        .map(|delta| delta.abs() >= 0.005)
+                        .unwrap_or(false)
             })
             .collect(),
         _ => edges
@@ -205,7 +229,11 @@ pub fn compute_logic_chain(project: &Value, mode: &str, target_id: Option<&str>)
             .collect(),
         None => Vec::new(),
     };
-    let selected = if target_filtered.is_empty() { chosen } else { target_filtered };
+    let selected = if target_filtered.is_empty() {
+        chosen
+    } else {
+        target_filtered
+    };
     let edge_ids: Vec<String> = selected.iter().map(|edge| edge.id.clone()).collect();
     let mut node_ids: Vec<String> = Vec::new();
     for edge in &selected {
@@ -221,7 +249,8 @@ pub fn compute_logic_chain(project: &Value, mode: &str, target_id: Option<&str>)
         .filter_map(|edge| edge.experiment_id.as_ref())
         .collect::<HashSet<_>>()
         .len();
-    let mean_confidence = selected.iter().map(|edge| edge.confidence).sum::<f64>() / (selected.len().max(1) as f64);
+    let mean_confidence =
+        selected.iter().map(|edge| edge.confidence).sum::<f64>() / (selected.len().max(1) as f64);
     let summary = match mode {
         "effective" => format!("{experiment_count} completed experiments changed the target metric by at least 0.5 percentage points."),
         "refutation" => format!(
@@ -252,7 +281,11 @@ pub struct ScenarioDiff {
 
 /// 对比基础图与消融场景，区分直接禁用与意外失去可达性
 /// （对齐 TS compareScenarioReachability）。
-pub fn compare_scenario_reachability(project: &Value, root_id: &str, scenario_id: &str) -> ScenarioDiff {
+pub fn compare_scenario_reachability(
+    project: &Value,
+    root_id: &str,
+    scenario_id: &str,
+) -> ScenarioDiff {
     let base = traverse_graph(project, &bfs_request(root_id, None));
     let ablated = traverse_graph(project, &bfs_request(root_id, Some(scenario_id)));
     let scenario = scenario(project, Some(scenario_id));
@@ -266,7 +299,12 @@ pub fn compare_scenario_reachability(project: &Value, root_id: &str, scenario_id
         .filter(|id| !ablated_set.contains(id.as_str()) && !disabled_nodes.contains(*id))
         .cloned()
         .collect();
-    let retained: Vec<String> = ablated.order.iter().filter(|id| base_set.contains(id.as_str())).cloned().collect();
+    let retained: Vec<String> = ablated
+        .order
+        .iter()
+        .filter(|id| base_set.contains(id.as_str()))
+        .cloned()
+        .collect();
     let alternate: Vec<String> = retained
         .iter()
         .filter(|id| base.parent.get(*id) != ablated.parent.get(*id))
@@ -308,14 +346,10 @@ pub fn graph_patch_from_diff(
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
 
-    let old_ids: std::collections::HashSet<&str> = old_nodes
-        .iter()
-        .filter_map(|n| n["id"].as_str())
-        .collect();
-    let new_ids: std::collections::HashSet<&str> = new_nodes
-        .iter()
-        .filter_map(|n| n["id"].as_str())
-        .collect();
+    let old_ids: std::collections::HashSet<&str> =
+        old_nodes.iter().filter_map(|n| n["id"].as_str()).collect();
+    let new_ids: std::collections::HashSet<&str> =
+        new_nodes.iter().filter_map(|n| n["id"].as_str()).collect();
 
     // added nodes
     for n in new_nodes {
@@ -387,14 +421,10 @@ pub fn graph_patch_from_diff(
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
 
-    let old_edge_ids: std::collections::HashSet<&str> = old_edges
-        .iter()
-        .filter_map(|e| e["id"].as_str())
-        .collect();
-    let new_edge_ids: std::collections::HashSet<&str> = new_edges
-        .iter()
-        .filter_map(|e| e["id"].as_str())
-        .collect();
+    let old_edge_ids: std::collections::HashSet<&str> =
+        old_edges.iter().filter_map(|e| e["id"].as_str()).collect();
+    let new_edge_ids: std::collections::HashSet<&str> =
+        new_edges.iter().filter_map(|e| e["id"].as_str()).collect();
 
     for e in new_edges {
         if let Some(id) = e["id"].as_str() {
@@ -441,9 +471,18 @@ pub fn graph_patch_from_diff(
         }
     }
 
-    let add_count = operations.iter().filter(|op| op["op"] == "add-node").count();
-    let update_count = operations.iter().filter(|op| op["op"] == "update-node").count();
-    let remove_count = operations.iter().filter(|op| op["op"] == "remove-node").count();
+    let add_count = operations
+        .iter()
+        .filter(|op| op["op"] == "add-node")
+        .count();
+    let update_count = operations
+        .iter()
+        .filter(|op| op["op"] == "update-node")
+        .count();
+    let remove_count = operations
+        .iter()
+        .filter(|op| op["op"] == "remove-node")
+        .count();
     let edge_count = operations
         .iter()
         .filter(|op| op["op"] == "add-edge" || op["op"] == "remove-edge")

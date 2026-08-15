@@ -17,6 +17,7 @@ A `.myc` file is a ZIP archive with `plugin.yml` and one kind-specific entry:
 ```text
 plugin.yml             identity, contributions, capabilities, no ambient permissions
 theme.json             ThemePlugin entry
+icon-theme.json        IconThemePlugin entry (declarative VSIX adapter)
 edge-style.json        EdgeStylePlugin entry
 plugin.wasm            AnalysisPlugin entry
 workspace-plugin.json  host-mediated WorkspacePlugin entry
@@ -39,6 +40,20 @@ install each immutable `id@version` once into application data. Dropping a
 Removing incompatible packages records an exact `id@version` tombstone, so an
 embedded package is not silently reinstalled on the next discovery pass.
 Explicitly installing that package again clears its tombstone.
+
+VSIX theme import is a separate conversion step:
+
+```bash
+npm run import:vsix -- path/to/theme.vsix output/vsix-adapter
+```
+
+The importer reads only `package.json` theme/icon-theme contributions and
+referenced JSON, SVG, PNG, and font assets. It never loads VS Code extension
+JavaScript. Commands, activation/main/browser entries, native binaries,
+symbolic links, traversal paths, and unsafe archive ratios are rejected. The
+generated `ThemePlugin`/`IconThemePlugin` resources can be reviewed and
+packaged as normal declarative MYC resources; the importer does not install or
+execute a VSIX.
 
 Theme and edge-style plugins remain declarative. `AnalysisPlugin` packages may
 contain `plugin.wasm` produced by Rust or C++; they execute in the native Rust

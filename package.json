@@ -13,6 +13,7 @@
     "typecheck:vue": "vue-tsc --noEmit -p tsconfig.vue.json",
     "start": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "desktop:dev": "tauri dev",
+    "import:vsix": "python scripts/import_vscode_vsix.py",
     "tauri": "tauri",
     "test": "npm run build && npm run test:core && npm run test:platform && npm run test:workspace && npm run test:sdk && npm run test:native && npm run test:compiler",
     "test:core": "tsx --test tests/research-core.test.ts",

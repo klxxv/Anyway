@@ -6,6 +6,7 @@ import {
   type MessageKey,
 } from "../../../app/i18n/catalog";
 import type { CanvasDiffResult, DiffState } from "../../../app/lib/graph/canvas-diff";
+import type { CanvasDiffBatchResult } from "../../../app/domain/canvas-diff";
 import type {
   ProjectState,
   ResearchEdge,
@@ -75,16 +76,24 @@ export function usePanelI18n() {
 
 export type HostPluginSettingType = "boolean" | "number" | "text" | "select" | "secret";
 
+export type PluginPrivateI18n = {
+  defaultLocale?: string;
+  resources?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+};
+
 export type HostPluginSettingOption = {
   value: string;
   label: string;
+  labelKey?: string;
 };
 
 /** UI-side compatibility shape; `secret` is accepted without changing the shared install contract. */
 export type HostPluginSettingDefinition = {
   id: string;
   label: string;
+  labelKey?: string;
   description?: string;
+  descriptionKey?: string;
   type: HostPluginSettingType;
   default?: boolean | number | string;
   min?: number;
@@ -92,8 +101,10 @@ export type HostPluginSettingDefinition = {
   step?: number;
   options?: HostPluginSettingOption[];
   placeholder?: string;
+  placeholderKey?: string;
   required?: boolean;
   group?: string;
+  i18n?: PluginPrivateI18n;
 };
 
 export type PluginSecretDraft = {
@@ -102,6 +113,26 @@ export type PluginSecretDraft = {
 };
 
 export type PluginSettingsDraft = Record<string, boolean | number | string | PluginSecretDraft>;
+
+export type PluginConnectionTestAction = {
+  id: string;
+  label: string;
+  description?: string;
+  labelKey?: string;
+  descriptionKey?: string;
+};
+
+/** UI compatibility for the new array form; old manifests still expose testAction. */
+export type HostPluginConnectionDefinition = PluginConnectionDefinition & {
+  testActions?: PluginConnectionTestAction[];
+};
+
+export const PLUGIN_TEST_ACTION_IDS = {
+  connection: "test-connection",
+  pdfExtraction: "test-pdf-extraction",
+} as const;
+
+export type PluginTestActionId = (typeof PLUGIN_TEST_ACTION_IDS)[keyof typeof PLUGIN_TEST_ACTION_IDS];
 
 export type PluginSettingsTarget = {
   source: "builtin" | "installed";
@@ -116,7 +147,8 @@ export type PluginSettingsTarget = {
   signaturePresent?: boolean;
   update?: { latestVersion?: string; url?: string; releaseNotes?: string };
   definitions: HostPluginSettingDefinition[];
-  connections: PluginConnectionDefinition[];
+  connections: HostPluginConnectionDefinition[];
+  i18n?: PluginPrivateI18n;
   /** Built-in catalog entries use the browser-safe store until native installation exists. */
   native: boolean;
   uninstallable: boolean;
@@ -139,18 +171,26 @@ export function normalizePluginSettingDefinitions(input: unknown): HostPluginSet
           if (!option || typeof option !== "object") return [];
           const item = option as Record<string, unknown>;
           return typeof item.value === "string" && typeof item.label === "string"
-            ? [{ value: item.value, label: item.label }]
+            ? [{
+                value: item.value,
+                label: item.label,
+                labelKey: typeof item.labelKey === "string" ? item.labelKey : undefined,
+              }]
             : [];
         })
       : undefined;
     const definition: HostPluginSettingDefinition = {
       id,
       label: typeof source.label === "string" && source.label.trim() ? source.label : id,
+      labelKey: typeof source.labelKey === "string" ? source.labelKey : undefined,
       description: typeof source.description === "string" ? source.description : undefined,
+      descriptionKey: typeof source.descriptionKey === "string" ? source.descriptionKey : undefined,
       type,
       placeholder: typeof source.placeholder === "string" ? source.placeholder : undefined,
+      placeholderKey: typeof source.placeholderKey === "string" ? source.placeholderKey : undefined,
       required: source.required === true,
       group: typeof source.group === "string" ? source.group : undefined,
+      i18n: normalizePluginPrivateI18n(source.i18n),
       default: type !== "secret" && (
         typeof source.default === "boolean" || typeof source.default === "number" || typeof source.default === "string"
       )
@@ -164,6 +204,64 @@ export function normalizePluginSettingDefinitions(input: unknown): HostPluginSet
     if (definition.type === "select" && !definition.options?.length) return [];
     return [definition];
   });
+}
+
+export function normalizePluginPrivateI18n(input: unknown): PluginPrivateI18n | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const source = input as Record<string, unknown>;
+  const resources: Record<string, Record<string, string>> = {};
+  if (source.resources && typeof source.resources === "object" && !Array.isArray(source.resources)) {
+    for (const [locale, value] of Object.entries(source.resources as Record<string, unknown>)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const messages = Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([, message]) => typeof message === "string")
+          .map(([key, message]) => [key, message as string]),
+      );
+      if (Object.keys(messages).length) resources[locale] = messages;
+    }
+  }
+  const defaultLocale = typeof source.defaultLocale === "string" && source.defaultLocale.trim()
+    ? source.defaultLocale
+    : undefined;
+  return Object.keys(resources).length || defaultLocale
+    ? { defaultLocale, resources }
+    : undefined;
+}
+
+function localeCandidates(locale: Locale, defaultLocale?: string): string[] {
+  const candidates = [locale, locale.split("-")[0], defaultLocale, "en"]
+    .filter((value): value is string => Boolean(value));
+  return [...new Set(candidates)];
+}
+
+/** Resolves plugin-private copy before falling back to the manifest string. */
+export function resolvePluginPrivateText(
+  target: Pick<PluginSettingsTarget, "i18n">,
+  locale: Locale,
+  key: string | undefined,
+  fallback: string,
+  localI18n?: PluginPrivateI18n,
+): string {
+  if (!key) return fallback;
+  const bundles = [localI18n, target.i18n].filter(Boolean) as PluginPrivateI18n[];
+  for (const bundle of bundles) {
+    for (const candidate of localeCandidates(locale, bundle.defaultLocale)) {
+      const message = bundle.resources?.[candidate]?.[key];
+      if (message) return message;
+    }
+  }
+  return fallback;
+}
+
+export function connectionTestActions(
+  connection: HostPluginConnectionDefinition,
+): PluginConnectionTestAction[] {
+  const declared = Array.isArray(connection.testActions)
+    ? connection.testActions.filter((action) => action && typeof action.id === "string")
+    : [];
+  if (declared.length) return declared;
+  return connection.testAction ? [connection.testAction] : [];
 }
 
 function defaultForSetting(definition: HostPluginSettingDefinition): boolean | number | string | undefined {
@@ -194,7 +292,12 @@ export function defaultPluginSettingsDraft(
       draft[definition.id] = { action: configuredSecrets[definition.id] ? "keep" : "clear", value: "" };
       continue;
     }
-    const value = defaultForSetting(definition);
+    const value = definition.id === "credential-source"
+      && definition.type === "select"
+      && definition.options?.some((option) => option.value === "host-secret")
+      && definition.options.some((option) => option.value === "environment")
+      ? "host-secret"
+      : defaultForSetting(definition);
     if (value !== undefined) draft[definition.id] = value;
   }
   return draft;
@@ -234,7 +337,7 @@ export function validatePluginSettingsDraft(
         ? value as PluginSecretDraft
         : { action: "keep", value: "" };
       if (!["keep", "set", "clear"].includes(secret.action)) errors[definition.id] = "Invalid secret action.";
-      if (secret.action === "set" && !secret.value.trim()) errors[definition.id] = "Enter a value or choose Clear.";
+      if (secret.action === "set" && !secret.value.trim()) errors[definition.id] = "Enter a value or choose Delete.";
       if (
         definition.required &&
         (secret.action === "clear" || (secret.action === "keep" && !configuredSecrets[definition.id]))
@@ -330,6 +433,8 @@ export type DiffPanelProps = {
   compareId: string;
   mode: DiffMode;
   result: CanvasDiffResult | null;
+  /** Optional multi-document result supplied by a batch import/review host. */
+  batch?: CanvasDiffBatchResult | null;
   loading: boolean;
   error: string | null;
   onBaseChange: (id: string) => void;
@@ -353,11 +458,13 @@ export type AgentReviewPanelProps = {
 export type PdfUploadDialogProps = {
   onClose: () => void;
   onReady: (jobId: string, status: AgentJobStatus) => void;
+  onDiffReady?: (result: CanvasDiffBatchResult) => void;
 };
 
 export type FolderWorkspaceDialogProps = {
   root: string;
   projects: FolderProjectSummary[];
+  command?: import("../../../app/plugins/workspace").EnabledWorkspaceCommand;
   onClose: () => void;
   onOpen: (path: string) => void;
 };
@@ -400,10 +507,10 @@ export type PluginSettingsDialogProps = {
   onClose: () => void;
   onSave: (draft: PluginSettingsDraft) => Promise<void>;
   onReset: () => Promise<void>;
-  onTestConnection?: (
-    connectionId: string,
-    draft: PluginSettingsDraft,
-  ) => Promise<PluginConnectionTestResult>;
+  /** The three-argument form is the canonical action-aware API; the legacy form remains accepted during rollout. */
+  onTestConnection?:
+    | ((connectionId: string, actionId: string, draft: PluginSettingsDraft) => Promise<PluginConnectionTestResult>)
+    | ((connectionId: string, draft: PluginSettingsDraft) => Promise<PluginConnectionTestResult>);
   onUninstall?: () => Promise<void>;
 };
 
@@ -522,6 +629,7 @@ export function countAccepted(decisions: Record<number, ReviewDecision>, total: 
 }
 
 export const PDF_PIPELINE_STAGES: readonly AgentJobStage[] = [
+  "queued",
   "created",
   "validating_file",
   "extracting_text",

@@ -344,7 +344,7 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
         let mut depth = 0i32;
         let mut in_string = false;
         let mut escape = false;
-        for (i, ch) in text[start..].chars().enumerate() {
+        for (byte_offset, ch) in text[start..].char_indices() {
             if escape {
                 escape = false;
                 continue;
@@ -356,7 +356,8 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
                 '}' if !in_string => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(text[start..start + i + 1].to_string());
+                        let end = start + byte_offset + ch.len_utf8();
+                        return Some(text[start..end].to_string());
                     }
                 }
                 _ => {}
@@ -367,7 +368,7 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
         let mut depth = 0i32;
         let mut in_string = false;
         let mut escape = false;
-        for (i, ch) in text[start..].chars().enumerate() {
+        for (byte_offset, ch) in text[start..].char_indices() {
             if escape {
                 escape = false;
                 continue;
@@ -379,7 +380,8 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
                 ']' if !in_string => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(text[start..start + i + 1].to_string());
+                        let end = start + byte_offset + ch.len_utf8();
+                        return Some(text[start..end].to_string());
                     }
                 }
                 _ => {}
@@ -1594,6 +1596,15 @@ mod tests {
         let text = r#"{"outer": {"inner": [1, 2, 3]}}"#;
         let extracted = extract_json_substring(text).unwrap();
         assert_eq!(extracted, r#"{"outer": {"inner": [1, 2, 3]}}"#);
+    }
+
+    #[test]
+    fn extract_json_substring_uses_utf8_byte_boundaries() {
+        let text = "说明：{\"summary\":\"正在分析中文论文\",\"count\":2} 完成";
+        let extracted = extract_json_substring(text).expect("extract Unicode JSON");
+        let value: Value = serde_json::from_str(&extracted).expect("parse Unicode JSON");
+        assert_eq!(value["summary"], "正在分析中文论文");
+        assert_eq!(value["count"], 2);
     }
 
     #[test]

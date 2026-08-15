@@ -180,12 +180,13 @@ export const useRuntimePluginHostStore = defineStore("runtime-plugin-host", () =
   const testPluginConnection = async (
     plugin: PluginReference,
     connectionId: string,
+    actionId: string,
     write: PluginSettingsWrite,
     native = true,
   ): Promise<PluginConnectionTestResult> => {
     if (!native) throw new Error("MYC_DESKTOP_REQUIRED");
     try {
-      return await testPluginConnectionNative(plugin, connectionId, write, { native });
+      return await testPluginConnectionNative(plugin, connectionId, actionId, write, { native });
     } catch (cause) {
       const key = settingsKey(plugin);
       const message = cause instanceof Error ? cause.message : String(cause);

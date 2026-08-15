@@ -72,10 +72,10 @@ pub fn read_api_key_from_config(app: &AppHandle) -> Result<String, String> {
     if !config_path.is_file() {
         return Err("API key not configured".to_string());
     }
-    let bytes = std::fs::read(&config_path)
-        .map_err(|error| format!("Cannot read config: {error}"))?;
-    let config: Value = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Parse error: {error}"))?;
+    let bytes =
+        std::fs::read(&config_path).map_err(|error| format!("Cannot read config: {error}"))?;
+    let config: Value =
+        serde_json::from_slice(&bytes).map_err(|error| format!("Parse error: {error}"))?;
     config
         .get("apiKey")
         .and_then(Value::as_str)
@@ -87,14 +87,12 @@ pub fn read_api_key_from_config(app: &AppHandle) -> Result<String, String> {
 /// 将 API key 写入 Tauri app data 目录。
 pub fn write_api_key_to_config(app: &AppHandle, api_key: &str) -> Result<(), String> {
     let base = app_data_base(app)?;
-    std::fs::create_dir_all(&base)
-        .map_err(|error| format!("Cannot create config dir: {error}"))?;
+    std::fs::create_dir_all(&base).map_err(|error| format!("Cannot create config dir: {error}"))?;
     let config_path = base.join(API_KEY_CONFIG_FILE);
     let config = json!({ "apiKey": api_key });
     let bytes = serde_json::to_vec_pretty(&config)
         .map_err(|error| format!("Serialization error: {error}"))?;
-    std::fs::write(&config_path, bytes)
-        .map_err(|error| format!("Cannot write config: {error}"))?;
+    std::fs::write(&config_path, bytes).map_err(|error| format!("Cannot write config: {error}"))?;
     #[cfg(target_family = "unix")]
     {
         use std::os::unix::fs::PermissionsExt;

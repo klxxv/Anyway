@@ -1,12 +1,14 @@
 pub mod agent_commands;
 pub mod agent_host;
 pub mod deepseek_client;
+mod graph_cmds;
 pub mod graph_compiler;
 pub mod llm_client;
 pub mod llm_plugin;
 pub mod llm_provider_registry;
+pub mod native_plugins;
 pub mod pdf_pipeline;
-mod graph_cmds;
+mod vsix_importer;
 mod plugin_settings;
 mod plugin_vm;
 mod plugins;
@@ -24,9 +26,9 @@ pub use semantic_pipeline;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(agent_commands::AgentHostState(std::sync::Mutex::new(
+        .manage(agent_commands::AgentHostState::new(
             agent_host::AgentHost::new(std::env::temp_dir()),
-        )))
+        ))
         .manage(llm_provider_registry::ProviderRegistryState::default())
         .invoke_handler(tauri::generate_handler![
             graph_cmds::compute_graph_layout,
@@ -39,6 +41,8 @@ pub fn run() {
             plugins::install_myc_plugin,
             plugins::uninstall_myc_plugin,
             plugins::list_installed_plugins,
+            plugins::read_icon_theme_asset,
+            vsix_importer::import_vscode_vsix,
             plugins::get_plugin_settings,
             plugins::set_plugin_settings,
             plugins::reset_plugin_settings,
@@ -48,6 +52,7 @@ pub fn run() {
             projects::import_project_file,
             workspace_host::save_plugin_artifact,
             workspace_host::scan_project_folder,
+            workspace_host::list_folder_entries,
             workspace_host::read_git_workspace,
             workspace_host::initialize_git_workspace,
             workspace_host::read_github_account,
@@ -56,6 +61,9 @@ pub fn run() {
             workspace_host::upload_github_ssh_key,
             workspace_host::git_autosave_project,
             agent_commands::start_pdf_job,
+            agent_commands::start_document_batch,
+            agent_commands::get_import_batch_status,
+            agent_commands::list_import_jobs,
             agent_commands::get_job_status,
             agent_commands::review_patch,
             agent_commands::cancel_job,

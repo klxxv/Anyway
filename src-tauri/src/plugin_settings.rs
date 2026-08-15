@@ -212,17 +212,33 @@ pub(crate) fn validate_connections(manifest: &MycPluginManifest) -> Result<(), S
             return Err(format!("Duplicate plugin connection id: {}", connection.id));
         }
         if connection.label.trim().is_empty() || connection.label.chars().count() > 64 {
-            return Err(format!("Plugin connection labels must contain 1 to 64 characters: {}", connection.id));
+            return Err(format!(
+                "Plugin connection labels must contain 1 to 64 characters: {}",
+                connection.id
+            ));
         }
         let url_setting = definitions
             .get(connection.url_setting_id.as_str())
-            .ok_or_else(|| format!("Connection URL setting is not declared: {}", connection.url_setting_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "Connection URL setting is not declared: {}",
+                    connection.url_setting_id
+                )
+            })?;
         if url_setting.setting_type != "text" {
-            return Err(format!("Connection URL setting must be text: {}", connection.id));
+            return Err(format!(
+                "Connection URL setting must be text: {}",
+                connection.id
+            ));
         }
         let format_setting = definitions
             .get(connection.format_setting_id.as_str())
-            .ok_or_else(|| format!("Connection format setting is not declared: {}", connection.format_setting_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "Connection format setting is not declared: {}",
+                    connection.format_setting_id
+                )
+            })?;
         if format_setting.setting_type != "select"
             || !format_setting.options.as_ref().is_some_and(|options| {
                 options.iter().any(|option| option.value == "openai")
@@ -235,17 +251,19 @@ pub(crate) fn validate_connections(manifest: &MycPluginManifest) -> Result<(), S
             ));
         }
         if let Some(model_setting_id) = connection.model_setting_id.as_deref() {
-            let model_setting = definitions
-                .get(model_setting_id)
-                .ok_or_else(|| format!("Connection model setting is not declared: {model_setting_id}"))?;
+            let model_setting = definitions.get(model_setting_id).ok_or_else(|| {
+                format!("Connection model setting is not declared: {model_setting_id}")
+            })?;
             if model_setting.setting_type != "text" && model_setting.setting_type != "select" {
-                return Err(format!("Connection model setting must be text or select: {model_setting_id}"));
+                return Err(format!(
+                    "Connection model setting must be text or select: {model_setting_id}"
+                ));
             }
         }
         if let Some(source_setting_id) = connection.credential_source_setting_id.as_deref() {
-            let source_setting = definitions
-                .get(source_setting_id)
-                .ok_or_else(|| format!("Connection credential source setting is not declared: {source_setting_id}"))?;
+            let source_setting = definitions.get(source_setting_id).ok_or_else(|| {
+                format!("Connection credential source setting is not declared: {source_setting_id}")
+            })?;
             if source_setting.setting_type != "select"
                 || !source_setting.options.as_ref().is_some_and(|options| {
                     options.iter().any(|option| option.value == "host-secret")
@@ -256,38 +274,54 @@ pub(crate) fn validate_connections(manifest: &MycPluginManifest) -> Result<(), S
             }
         }
         if let Some(env_setting_id) = connection.credential_env_var_setting_id.as_deref() {
-            let env_setting = definitions
-                .get(env_setting_id)
-                .ok_or_else(|| format!("Connection credential environment setting is not declared: {env_setting_id}"))?;
+            let env_setting = definitions.get(env_setting_id).ok_or_else(|| {
+                format!(
+                    "Connection credential environment setting is not declared: {env_setting_id}"
+                )
+            })?;
             if env_setting.setting_type != "text" {
-                return Err(format!("Connection credential environment setting must be text: {env_setting_id}"));
+                return Err(format!(
+                    "Connection credential environment setting must be text: {env_setting_id}"
+                ));
             }
         }
         match &connection.api_key {
             crate::plugins::PluginApiKeySource::HostSecret { setting_id } => {
-                let setting = definitions
-                    .get(setting_id.as_str())
-                    .ok_or_else(|| format!("Connection secret setting is not declared: {setting_id}"))?;
+                let setting = definitions.get(setting_id.as_str()).ok_or_else(|| {
+                    format!("Connection secret setting is not declared: {setting_id}")
+                })?;
                 if !setting.secret || setting.setting_type != "text" {
-                    return Err(format!("Connection secret setting must be a secret text field: {setting_id}"));
+                    return Err(format!(
+                        "Connection secret setting must be a secret text field: {setting_id}"
+                    ));
                 }
             }
-            crate::plugins::PluginApiKeySource::Environment { name, fallback_setting_id } => {
+            crate::plugins::PluginApiKeySource::Environment {
+                name,
+                fallback_setting_id,
+            } => {
                 if name.is_empty()
                     || name.len() > 128
                     || !name.chars().enumerate().all(|(index, character)| {
                         (index == 0 && (character.is_ascii_uppercase() || character == '_'))
-                            || (index > 0 && (character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'))
+                            || (index > 0
+                                && (character.is_ascii_uppercase()
+                                    || character.is_ascii_digit()
+                                    || character == '_'))
                     })
                 {
-                    return Err(format!("Invalid connection environment variable name: {name}"));
+                    return Err(format!(
+                        "Invalid connection environment variable name: {name}"
+                    ));
                 }
                 if let Some(setting_id) = fallback_setting_id {
-                    let setting = definitions
-                        .get(setting_id.as_str())
-                        .ok_or_else(|| format!("Connection fallback secret setting is not declared: {setting_id}"))?;
+                    let setting = definitions.get(setting_id.as_str()).ok_or_else(|| {
+                        format!("Connection fallback secret setting is not declared: {setting_id}")
+                    })?;
                     if !setting.secret || setting.setting_type != "text" {
-                        return Err(format!("Connection fallback secret must be a secret text field: {setting_id}"));
+                        return Err(format!(
+                            "Connection fallback secret must be a secret text field: {setting_id}"
+                        ));
                     }
                 }
             }
@@ -295,10 +329,20 @@ pub(crate) fn validate_connections(manifest: &MycPluginManifest) -> Result<(), S
         if let Some(action) = &connection.test_action {
             validate_slug(&action.id, "connection test action id")?;
             if action.label.trim().is_empty() || action.label.chars().count() > 64 {
-                return Err(format!("Connection test action label is invalid: {}", connection.id));
+                return Err(format!(
+                    "Connection test action label is invalid: {}",
+                    connection.id
+                ));
             }
-            if action.description.as_ref().is_some_and(|description| description.chars().count() > 180) {
-                return Err(format!("Connection test action description is too long: {}", connection.id));
+            if action
+                .description
+                .as_ref()
+                .is_some_and(|description| description.chars().count() > 180)
+            {
+                return Err(format!(
+                    "Connection test action description is too long: {}",
+                    connection.id
+                ));
             }
         }
     }
@@ -540,13 +584,15 @@ pub(crate) fn resolve_host_secret(
     secret_values()
         .lock()
         .map_err(|error| format!("Plugin secret settings lock poisoned: {error}"))
-        .map(|values| values.get(&plugin_key).and_then(|settings| settings.get(setting_id)).cloned())
+        .map(|values| {
+            values
+                .get(&plugin_key)
+                .and_then(|settings| settings.get(setting_id))
+                .cloned()
+        })
 }
 
-fn resolve_latest_host_secret(
-    plugin_id: &str,
-    setting_id: &str,
-) -> Result<Option<String>, String> {
+fn resolve_latest_host_secret(plugin_id: &str, setting_id: &str) -> Result<Option<String>, String> {
     secret_values()
         .lock()
         .map_err(|error| format!("Plugin secret settings lock poisoned: {error}"))
@@ -556,7 +602,9 @@ fn resolve_latest_host_secret(
                 .filter(|(plugin_key, settings)| {
                     plugin_key
                         .strip_prefix(&format!("{plugin_id}@"))
-                        .is_some_and(|version| !version.is_empty() && settings.contains_key(setting_id))
+                        .is_some_and(|version| {
+                            !version.is_empty() && settings.contains_key(setting_id)
+                        })
                 })
                 .max_by(|(left, _), (right, _)| left.cmp(right))
                 .and_then(|(_, settings)| settings.get(setting_id))
@@ -817,6 +865,8 @@ pub(crate) fn persisted_values_for_execution(
 #[serde(rename_all = "camelCase")]
 pub struct PluginConnectionTestResult {
     pub ok: bool,
+    /// Stable machine-readable code for plugin-owned/localized UI copy.
+    pub code: String,
     pub message: String,
 }
 
@@ -828,12 +878,12 @@ pub struct PluginSecretMutationInput {
 }
 
 fn connection_endpoint(raw: &str, format: &str) -> Result<reqwest::Url, String> {
-    let mut url = reqwest::Url::parse(raw.trim())
-        .map_err(|_| "Connection URL is not valid".to_string())?;
+    let mut url =
+        reqwest::Url::parse(raw.trim()).map_err(|_| "Connection URL is not valid".to_string())?;
     let is_local_http = url.scheme() == "http"
-        && url.host_str().is_some_and(|host| {
-            matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
-        });
+        && url
+            .host_str()
+            .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1"));
     if url.scheme() != "https" && !is_local_http {
         return Err("Connection URL must use https:// (or localhost for development)".to_string());
     }
@@ -870,15 +920,79 @@ fn connection_value<'a>(
         .ok_or_else(|| format!("Connection {label} is not configured"))
 }
 
-pub(crate) async fn test_connection(
+fn result_ok(code: &str, message: &str) -> PluginConnectionTestResult {
+    PluginConnectionTestResult {
+        ok: true,
+        code: code.to_string(),
+        message: message.to_string(),
+    }
+}
+
+fn result_error(code: &str, message: &str) -> PluginConnectionTestResult {
+    PluginConnectionTestResult {
+        ok: false,
+        code: code.to_string(),
+        message: message.to_string(),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ConnectionTestContext {
+    api_url: String,
+    api_format: String,
+    model: String,
+    transport: String,
+    api_key: Option<String>,
+}
+
+fn connection_test_payload(format: &str, model: &str) -> Value {
+    match format {
+        "anthropic" => serde_json::json!({
+            "model": model,
+            "max_tokens": 1,
+            "stream": false,
+            "messages": [{"role": "user", "content": "Reply with OK."}]
+        }),
+        _ => serde_json::json!({
+            "model": model,
+            "max_tokens": 1,
+            "stream": false,
+            "messages": [{"role": "user", "content": "Reply with OK."}]
+        }),
+    }
+}
+
+fn draft_secret(
+    input_secrets: &BTreeMap<String, PluginSecretMutationInput>,
+    stored_secrets: &BTreeMap<String, String>,
+    setting_id: &str,
+) -> Result<Option<String>, String> {
+    let value = match input_secrets
+        .get(setting_id)
+        .map(|mutation| mutation.action.as_str())
+    {
+        Some("set") => input_secrets
+            .get(setting_id)
+            .and_then(|mutation| mutation.value.clone()),
+        Some("clear") => None,
+        Some("keep") | None => stored_secrets.get(setting_id).cloned(),
+        Some(_) => return Err("Invalid secret mutation".to_string()),
+    };
+    Ok(value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
+}
+
+fn resolve_connection_context(
     app: &AppHandle,
     manifest: &MycPluginManifest,
     plugin_id: &str,
     plugin_version: &str,
     connection_id: &str,
+    action_id: &str,
     input_values: BTreeMap<String, Value>,
-    input_secrets: BTreeMap<String, PluginSecretMutationInput>,
-) -> Result<PluginConnectionTestResult, String> {
+    input_secrets: &BTreeMap<String, PluginSecretMutationInput>,
+) -> Result<ConnectionTestContext, String> {
     validate_connections(manifest)?;
     let connection = manifest
         .spec
@@ -888,7 +1002,13 @@ pub(crate) async fn test_connection(
         .iter()
         .find(|connection| connection.id == connection_id)
         .ok_or_else(|| format!("Unknown plugin connection: {connection_id}"))?;
-    if connection.test_action.is_none() {
+
+    if action_id == "test-connection"
+        && connection
+            .test_action
+            .as_ref()
+            .is_none_or(|action| action.id != "test-connection")
+    {
         return Err("This plugin connection does not declare a test action".to_string());
     }
 
@@ -907,11 +1027,7 @@ pub(crate) async fn test_connection(
     }
 
     let url = connection_value(&effective_values, &connection.url_setting_id, "URL")?;
-    let format = connection_value(
-        &effective_values,
-        &connection.format_setting_id,
-        "format",
-    )?;
+    let format = connection_value(&effective_values, &connection.format_setting_id, "format")?;
     if format != "openai" && format != "anthropic" {
         return Err("Connection format must be openai or anthropic".to_string());
     }
@@ -922,12 +1038,23 @@ pub(crate) async fn test_connection(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("deepseek-v4-flash");
+        .unwrap_or("deepseek-v4-flash")
+        .to_string();
+    let transport = ["pdf-transport", "transport", "file-transport"]
+        .iter()
+        .find_map(|setting_id| effective_values.get(*setting_id).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("local-text")
+        .to_string();
 
     let plugin_key = format!("{plugin_id}@{plugin_version}");
     let stored_secrets = configured_secrets(&plugin_key)?;
     let (static_source, static_env_var, static_host_secret_setting) = match &connection.api_key {
-        crate::plugins::PluginApiKeySource::Environment { name, fallback_setting_id } => (
+        crate::plugins::PluginApiKeySource::Environment {
+            name,
+            fallback_setting_id,
+        } => (
             "environment",
             Some(name.as_str()),
             fallback_setting_id.as_deref(),
@@ -952,68 +1079,255 @@ pub(crate) async fn test_connection(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .or(static_env_var);
-    let host_secret_setting = static_host_secret_setting;
-    let host_secret = || -> Result<Option<String>, String> {
-        let Some(setting_id) = host_secret_setting else {
-            return Ok(None);
+
+    let needs_credential = action_id == "test-connection" || transport == "kimi-file-extract";
+    let api_key = if !needs_credential {
+        None
+    } else {
+        let resolved = match credential_source.to_ascii_lowercase().as_str() {
+            "host-secret" | "host" | "secret" => static_host_secret_setting
+                .map(|setting_id| draft_secret(input_secrets, &stored_secrets, setting_id))
+                .transpose()?
+                .flatten(),
+            "environment" | "env" | "env-var" => credential_env_var
+                .and_then(|name| std::env::var(name).ok())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            _ => return Err("Unsupported credential source".to_string()),
         };
-        let value = match input_secrets.get(setting_id).map(|mutation| mutation.action.as_str()) {
-            Some("set") => input_secrets
-                .get(setting_id)
-                .and_then(|mutation| mutation.value.clone()),
-            Some("clear") => None,
-            Some("keep") | None => stored_secrets.get(setting_id).cloned(),
-            Some(_) => return Err("Invalid secret mutation".to_string()),
-        };
-        Ok(value
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()))
+        let value = resolved
+            .ok_or_else(|| "No API credential is configured for this connection".to_string())?;
+        if value.len() > MAX_SECRET_LENGTH {
+            return Err("API credential is too long".to_string());
+        }
+        Some(value)
     };
-    let environment = || {
-        credential_env_var
-            .and_then(|name| std::env::var(name).ok())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    };
-    let api_key = match credential_source.to_ascii_lowercase().as_str() {
-        "host-secret" | "host" | "secret" => host_secret()?,
-        "environment" | "env" | "env-var" => environment(),
-        "auto" | "" => host_secret()?.or_else(environment),
-        _ => return Err("Unsupported credential source".to_string()),
+
+    Ok(ConnectionTestContext {
+        api_url: url.to_string(),
+        api_format: format.to_string(),
+        model,
+        transport,
+        api_key,
+    })
+}
+
+fn built_in_test_pdf() -> Vec<u8> {
+    let content = b"BT\n/F1 12 Tf\n72 72 Td\n(Research Canvas PDF test) Tj\nET\n";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{}endstream", content.len(), String::from_utf8_lossy(content)),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    let mut bytes = b"%PDF-1.4\n%ResearchCanvas\n".to_vec();
+    let mut offsets = vec![0usize];
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
     }
-    .ok_or_else(|| "No API credential is configured for this connection".to_string())?;
-    if api_key.len() > MAX_SECRET_LENGTH {
-        return Err("API credential is too long".to_string());
+    let xref_offset = bytes.len();
+    bytes.extend_from_slice(format!("xref\n0 {}\n", offsets.len()).as_bytes());
+    bytes.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in offsets.iter().skip(1) {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            offsets.len(),
+            xref_offset
+        )
+        .as_bytes(),
+    );
+    bytes
+}
+
+fn write_built_in_test_pdf() -> Result<PathBuf, String> {
+    let bytes = built_in_test_pdf();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Could not create a temporary PDF".to_string())?
+        .as_nanos();
+    let base = std::env::temp_dir();
+    for attempt in 0..3u8 {
+        let path = base.join(format!(
+            "research-canvas-plugin-test-{}-{stamp}-{attempt}.pdf",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(&bytes)
+                    .map_err(|_| "Could not create a temporary PDF".to_string())?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err("Could not create a temporary PDF".to_string()),
+        }
+    }
+    Err("Could not create a temporary PDF".to_string())
+}
+
+async fn test_pdf_extraction(
+    context: &ConnectionTestContext,
+) -> Result<PluginConnectionTestResult, String> {
+    let path = write_built_in_test_pdf()?;
+    let result = match context.transport.as_str() {
+        "local-text" => match crate::pdf_pipeline::PdfPipeline::extract_text(&path) {
+            Ok(extracted) if extracted.total_chars > 0 => Ok(result_ok(
+                "pdf-local-extraction-succeeded",
+                "Local PDF extraction succeeded.",
+            )),
+            Ok(_) => Err("Local PDF extraction returned no text".to_string()),
+            Err(_) => Err("Local PDF extraction failed".to_string()),
+        },
+        "kimi-file-extract" => {
+            match context.api_key.as_ref() {
+                None => Err("No API credential is configured for this connection".to_string()),
+                Some(api_key) => {
+                    let api_format = crate::llm_client::ApiFormat::parse(Some(&context.api_format))
+                        .map_err(|_| "Kimi parser backend is invalid".to_string())?;
+                    let config = crate::llm_client::PdfAgentLlmConfig {
+                        api_url: context.api_url.clone(),
+                        api_format,
+                        api_key: api_key.clone(),
+                        model: context.model.clone(),
+                        thinking: false,
+                        thinking_level: None,
+                        provider: "moonshot".to_string(),
+                        transport: crate::llm_client::PdfAgentTransport::KimiFileExtract,
+                        timeout_secs: 30,
+                    };
+                    let runtime = crate::native_plugins::pdf_canvas_agent::normalize_config(config)
+                        .map_err(|_| "Kimi PDF extraction could not be initialized".to_string())?;
+                    let crate::native_plugins::pdf_canvas_agent::Backend::KimiK26(config) =
+                        runtime.backend
+                    else {
+                        return Err("Kimi PDF extraction could not be initialized".to_string());
+                    };
+                    let client = crate::native_plugins::pdf_canvas_agent::KimiK26Client::new(config)
+                        .map_err(|_| "Kimi PDF extraction could not be initialized".to_string())?;
+                    match client.extract_pdf_text(&path).await {
+                        Ok(_) => Ok(result_ok(
+                            "pdf-remote-extraction-succeeded",
+                            "Kimi PDF extraction succeeded.",
+                        )),
+                        Err(_) => Err("Kimi PDF extraction failed".to_string()),
+                    }
+                }
+            }
+        }
+        _ => Err("Unsupported PDF extraction mode".to_string()),
+    };
+    let _ = fs::remove_file(path);
+    result
+}
+
+pub(crate) async fn test_connection(
+    app: &AppHandle,
+    manifest: &MycPluginManifest,
+    plugin_id: &str,
+    plugin_version: &str,
+    connection_id: &str,
+    action_id: Option<String>,
+    input_values: BTreeMap<String, Value>,
+    input_secrets: BTreeMap<String, PluginSecretMutationInput>,
+) -> Result<PluginConnectionTestResult, String> {
+    let action_id = action_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("test-connection");
+    if !matches!(action_id, "test-connection" | "test-pdf-extraction") {
+        return Ok(result_error(
+            "unsupported-action",
+            "This test action is not supported.",
+        ));
+    }
+    let context = match resolve_connection_context(
+        app,
+        manifest,
+        plugin_id,
+        plugin_version,
+        connection_id,
+        action_id,
+        input_values,
+        &input_secrets,
+    ) {
+        Ok(context) => context,
+        Err(error) => {
+            let code = if error.contains("credential") {
+                "credential-not-configured"
+            } else {
+                "invalid-settings"
+            };
+            return Ok(result_error(code, &error));
+        }
+    };
+
+    if action_id == "test-pdf-extraction" {
+        return Ok(match test_pdf_extraction(&context).await {
+            Ok(result) => result,
+            Err(error) if error.contains("credential") => {
+                result_error("credential-not-configured", &error)
+            }
+            Err(error) if context.transport == "local-text" => {
+                result_error("pdf-local-extraction-failed", &error)
+            }
+            Err(error) => result_error("pdf-remote-extraction-failed", &error),
+        });
     }
 
-    let endpoint = connection_endpoint(url, format)?;
-    let client = reqwest::Client::builder()
+    let api_key = match context.api_key.as_deref() {
+        Some(value) => value,
+        None => {
+            return Ok(result_error(
+                "credential-not-configured",
+                "No API credential is configured for this connection.",
+            ));
+        }
+    };
+    let endpoint = match connection_endpoint(&context.api_url, &context.api_format) {
+        Ok(endpoint) => endpoint,
+        Err(error) => return Ok(result_error("invalid-url", &error)),
+    };
+    let payload = connection_test_payload(&context.api_format, &context.model);
+    let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
-        .map_err(|_| "Could not initialize the connection test".to_string())?;
-    let response = if format == "anthropic" {
+    {
+        Ok(client) => client,
+        Err(_) => {
+            return Ok(result_error(
+                "client-init-failed",
+                "Could not initialize the connection test.",
+            ));
+        }
+    };
+    let response = if context.api_format == "anthropic"
+        && context.api_url.to_ascii_lowercase().contains("moonshot")
+    {
         client
             .post(endpoint)
-            .header("x-api-key", &api_key)
+            .bearer_auth(api_key)
             .header("anthropic-version", "2023-06-01")
-            .json(&serde_json::json!({
-                "model": model,
-                "max_tokens": 1,
-                "stream": false,
-                "messages": [{"role": "user", "content": "Reply with OK."}]
-            }))
+            .json(&payload)
+            .send()
+            .await
+    } else if context.api_format == "anthropic" {
+        client
+            .post(endpoint)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&payload)
             .send()
             .await
     } else {
         client
             .post(endpoint)
-            .bearer_auth(&api_key)
-            .json(&serde_json::json!({
-                "model": model,
-                "max_tokens": 1,
-                "stream": false,
-                "messages": [{"role": "user", "content": "Reply with OK."}]
-            }))
+            .bearer_auth(api_key)
+            .json(&payload)
             .send()
             .await
     };
@@ -1021,24 +1335,29 @@ pub(crate) async fn test_connection(
     match response {
         Ok(response) if response.status().is_success() => Ok(PluginConnectionTestResult {
             ok: true,
+            code: "connection-succeeded".to_string(),
             message: "Connection succeeded.".to_string(),
         }),
         Ok(response) if response.status().as_u16() == 401 || response.status().as_u16() == 403 => {
             Ok(PluginConnectionTestResult {
                 ok: false,
+                code: "credential-rejected".to_string(),
                 message: "Provider rejected the API credential.".to_string(),
             })
         }
         Ok(response) if response.status().as_u16() == 429 => Ok(PluginConnectionTestResult {
             ok: false,
+            code: "rate-limited".to_string(),
             message: "Provider reached, but rate limited the test request.".to_string(),
         }),
         Ok(response) => Ok(PluginConnectionTestResult {
             ok: false,
+            code: "provider-error".to_string(),
             message: format!("Provider returned HTTP {}.", response.status().as_u16()),
         }),
         Err(_) => Ok(PluginConnectionTestResult {
             ok: false,
+            code: "request-failed".to_string(),
             message: "Connection request could not be completed.".to_string(),
         }),
     }
@@ -1170,8 +1489,7 @@ mod tests {
             );
         }
         assert_eq!(
-            resolve_host_secret("test.settings", "2.0.0", "api-key")
-                .expect("host secret lookup"),
+            resolve_host_secret("test.settings", "2.0.0", "api-key").expect("host secret lookup"),
             Some("host-secret-value".to_string())
         );
         assert_eq!(
@@ -1179,13 +1497,15 @@ mod tests {
                 .expect("missing host secret lookup"),
             None
         );
-        let public = serde_json::to_string(&build_snapshot(
-            &manifest(vec![setting("api-key", "text")]),
-            "test.settings",
-            "2.0.0",
-            BTreeMap::new(),
+        let public = serde_json::to_string(
+            &build_snapshot(
+                &manifest(vec![setting("api-key", "text")]),
+                "test.settings",
+                "2.0.0",
+                BTreeMap::new(),
+            )
+            .expect("snapshot"),
         )
-        .expect("snapshot"))
         .expect("serialize snapshot");
         assert!(!public.contains("host-secret-value"));
         if let Ok(mut values) = secret_values().lock() {
@@ -1214,5 +1534,62 @@ mod tests {
         if let Ok(mut values) = secret_values().lock() {
             values.remove(key);
         }
+    }
+
+    #[test]
+    fn connection_test_payload_is_text_only_and_contains_no_file_upload_shape() {
+        for format in ["openai", "anthropic"] {
+            let payload = connection_test_payload(format, "test-model");
+            let serialized = serde_json::to_string(&payload).expect("serialize test payload");
+            assert!(payload.get("file").is_none());
+            assert!(payload.get("files").is_none());
+            assert!(!serialized.contains("multipart"));
+            assert!(!serialized.contains("%PDF"));
+            assert_eq!(payload["messages"][0]["content"], "Reply with OK.");
+        }
+    }
+
+    #[test]
+    fn built_in_pdf_is_non_empty_valid_and_extractable() {
+        let bytes = built_in_test_pdf();
+        assert!(!bytes.is_empty());
+        assert!(bytes.starts_with(b"%PDF-1.4"));
+
+        let document = lopdf::Document::load_mem(&bytes).expect("valid built-in test PDF");
+        let pages = document.get_pages();
+        assert_eq!(pages.len(), 1);
+        let page_number = pages.keys().next().expect("one test page");
+        let text = document
+            .extract_text(&[*page_number])
+            .expect("extract test PDF text");
+        assert!(text.contains("Research Canvas PDF test"));
+    }
+
+    #[test]
+    fn environment_credentials_are_used_only_when_environment_is_selected() {
+        let variable = "RESEARCH_CANVAS_PLUGIN_TEST_KEY";
+        std::env::set_var(variable, "environment-secret");
+
+        let environment = resolve_connection_credentials(
+            "test.environment-only",
+            None,
+            "environment",
+            variable,
+            "api-key",
+        )
+        .expect("environment credential resolution");
+        assert_eq!(environment.as_deref(), Some("environment-secret"));
+
+        let host_only = resolve_connection_credentials(
+            "test.environment-only",
+            None,
+            "host-secret",
+            variable,
+            "api-key",
+        )
+        .expect("host-only credential resolution");
+        assert_eq!(host_only, None);
+
+        std::env::remove_var(variable);
     }
 }

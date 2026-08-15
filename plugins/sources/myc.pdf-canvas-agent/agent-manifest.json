@@ -19,6 +19,13 @@
   "modelConfiguration": {
     "ownership": "host-managed",
     "invocation": "host-model-gateway",
+    "nativeProviderProfile": {
+      "id": "kimi-k2.6",
+      "declaration": "agent.yml#nativeProvider",
+      "requestPolicy": "agent.yml#nativeProvider.requestPolicy",
+      "credentialOwnership": "host",
+      "reviewGated": true
+    },
     "settingIds": [
       "api-key",
       "api-url",

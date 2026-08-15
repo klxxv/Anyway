@@ -13,6 +13,7 @@
 pub mod config;
 pub mod error;
 pub mod ir;
+pub mod json_repair;
 pub mod pipeline;
 pub mod prompts;
 pub mod validation;
@@ -20,6 +21,11 @@ pub mod validation;
 pub use config::PipelineConfig;
 pub use error::PipelineError;
 pub use ir::*;
+pub use json_repair::{
+    extract_json_fragment, parse_json_with_repair, repair_json, AuditEntry, AuditReport,
+    AuditSeverity, JsonRepairError, JsonRepairErrorKind, ParsedJson, RepairOptions, RepairOutcome,
+    RepairedJson,
+};
 pub use pipeline::{Pipeline, PipelineResult};
 pub use prompts::PromptTemplate;
 pub use validation::ValidationReport;

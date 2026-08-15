@@ -23,17 +23,46 @@ pub enum PluginApiKeySource<'a> {
     Environment { name: &'a str, fallback_setting_id: Option<&'a str> },
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum PluginConnectionTestActionInput<'a> {
+    Text,
+    BundledPdf {
+        fixture: &'a str,
+        file_upload: &'a str,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PluginConnectionTestAction<'a> {
+    pub id: &'a str,
+    pub label: &'a str,
+    pub label_key: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub description_key: Option<&'a str>,
+    pub placeholder: Option<&'a str>,
+    pub placeholder_key: Option<&'a str>,
+    pub kind: Option<&'a str>,
+    pub input: Option<PluginConnectionTestActionInput<'a>>,
+}
+
 /// Declarative connection metadata rendered and tested by the native host.
 #[derive(Clone, Copy, Debug)]
 pub struct PluginConnectionDefinition<'a> {
     pub id: &'a str,
     pub label: &'a str,
+    pub label_key: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub description_key: Option<&'a str>,
+    pub placeholder: Option<&'a str>,
+    pub placeholder_key: Option<&'a str>,
     pub url_setting_id: &'a str,
     pub format_setting_id: &'a str,
     pub model_setting_id: Option<&'a str>,
     pub credential_source_setting_id: Option<&'a str>,
     pub credential_env_var_setting_id: Option<&'a str>,
     pub api_key: PluginApiKeySource<'a>,
+    pub test_actions: &'a [PluginConnectionTestAction<'a>],
+    /// Legacy single-action spelling for older manifests.
     pub test_action_id: Option<&'a str>,
 }
 
@@ -52,6 +81,11 @@ pub struct PluginIdentity<'a> {
 pub struct PluginSettingOption<'a> {
     pub value: &'a str,
     pub label: &'a str,
+    pub label_key: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub description_key: Option<&'a str>,
+    pub placeholder: Option<&'a str>,
+    pub placeholder_key: Option<&'a str>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,17 +101,34 @@ pub enum PluginSettingDefault<'a> {
 pub struct PluginSettingDefinition<'a> {
     pub id: &'a str,
     pub label: &'a str,
+    pub label_key: Option<&'a str>,
     pub setting_type: PluginSettingType,
     pub secret: bool,
     pub required: bool,
     pub description: Option<&'a str>,
+    pub description_key: Option<&'a str>,
     pub placeholder: Option<&'a str>,
+    pub placeholder_key: Option<&'a str>,
     pub group: Option<&'a str>,
     pub default: Option<PluginSettingDefault<'a>>,
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub step: Option<f64>,
     pub options: &'a [PluginSettingOption<'a>],
+}
+
+/// Plugin-owned messages are loaded by the host from locales/<tag>.json and
+/// are never registered in the host's global LocalePlugin catalog.
+#[derive(Clone, Copy, Debug)]
+pub struct PluginPrivateI18n<'a> {
+    pub default_locale: &'a str,
+    pub locales: &'a [PluginPrivateLocale<'a>],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PluginPrivateLocale<'a> {
+    pub locale: &'a str,
+    pub path: &'a str,
 }
 
 /// Values already validated and resolved by the host. Secret values are not a

@@ -10,11 +10,15 @@ import {
 import { pluginReference, type InstalledMycPlugin } from "../../../app/plugins/contracts";
 import type { PluginManifest } from "../../../app/lib/research-types";
 import {
+  importVsixTheme,
   listenForMycDrops,
   pickMycFiles,
+  pickVsixFile,
   runAnalysisPlugin,
 } from "../../../app/plugins/tauri-client";
+import type { NativeVsixImportReport } from "../../../app/plugins/vsix-contracts";
 import { usePluginHost } from "../runtime/plugin-host";
+import { useWorkspaceUiStore } from "../stores/workspace-ui";
 import {
   defaultPluginSettingsDraft,
   draftFromPluginSettings,
@@ -29,6 +33,7 @@ import PluginStoreItem from "./PluginStoreItem.vue";
 const props = defineProps<PluginStoreDialogProps>();
 const { t } = usePanelI18n();
 const pluginHost = usePluginHost();
+const workspaceUi = useWorkspaceUiStore();
 
 type StoreFilter = "all" | "installed" | "runtime" | "workspace" | "locales";
 const filter = ref<StoreFilter>("all");
@@ -45,6 +50,7 @@ const settingsTarget = ref<PluginSettingsTarget | null>(null);
 const settingsSnapshot = ref<Awaited<ReturnType<typeof pluginHost.loadPluginSettings>> | null>(null);
 const settingsError = ref("");
 const settingsSaving = ref(false);
+const vsixReport = ref<NativeVsixImportReport | null>(null);
 
 const latestPlugins = computed(() => latestCompatiblePlugins(installed.value));
 const latestById = computed(() => new Map<string, InstalledMycPlugin>(
@@ -124,6 +130,12 @@ const targetFromInstalled = (plugin: InstalledMycPlugin): PluginSettingsTarget |
     update: plugin.manifest.metadata.update,
     definitions,
     connections: plugin.manifest.spec.connections ?? [],
+    i18n: plugin.privateI18n
+      ? {
+          defaultLocale: plugin.privateI18n.defaultLocale,
+          resources: plugin.privateI18n.locales,
+        }
+      : undefined,
     native: true,
     uninstallable: true,
   };
@@ -151,6 +163,7 @@ const targetFromBuiltIn = (plugin: PluginManifest): PluginSettingsTarget | null 
 
 const testConnection = async (
   connectionId: string,
+  actionId: string,
   draft: Parameters<typeof settingsWriteFromDraft>[1],
 ) => {
   const target = settingsTarget.value;
@@ -158,6 +171,7 @@ const testConnection = async (
   return pluginHost.testPluginConnection(
     target.reference,
     connectionId,
+    actionId,
     settingsWriteFromDraft(target.definitions, draft),
     target.native,
   );
@@ -198,9 +212,9 @@ const saveSettings = async (draft: Parameters<typeof settingsWriteFromDraft>[1])
       target.native,
     );
     message.value = t("plugins.settingsSaved");
+    workspaceUi.showNotice(t("plugins.settingsSaved"));
   } catch (cause) {
     settingsError.value = cause instanceof Error ? cause.message : String(cause);
-    throw cause;
   } finally {
     settingsSaving.value = false;
   }
@@ -285,6 +299,29 @@ const handleBrowse = async () => {
   if (paths?.length) await installPaths(paths);
 };
 
+const handleVsixImport = async () => {
+  const path = await pickVsixFile();
+  if (!path) return;
+  busy.value = true;
+  message.value = "";
+  vsixReport.value = null;
+  try {
+    const report = await importVsixTheme(path);
+    vsixReport.value = report;
+    await refresh();
+    const count = report.imported.length;
+    workspaceUi.showNotice(t("plugins.vsixImportedToast", { count }));
+    message.value = t("plugins.vsixImported", {
+      count,
+      names: report.imported.map((plugin) => plugin.name).join(", "),
+    });
+  } catch (cause) {
+    message.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    busy.value = false;
+  }
+};
+
 const handleDrop = async (event: DragEvent) => {
   event.preventDefault();
   event.stopPropagation();
@@ -359,10 +396,25 @@ onUnmounted(() => disposeDropListener?.());
             <div class="flex items-center gap-3">
               <span class="text-2xl text-blue/70">⇩</span>
               <div class="flex-1"><p class="font-serif text-[13px]">{{ dragOver ? t('plugins.dropActive') : t('plugins.dropTitle') }}</p><p class="mt-0.5 font-serif text-[9px] text-ink/50">{{ t('plugins.dropHint') }}</p></div>
-              <button type="button" class="flex items-center gap-1.5 rounded-[5px] border border-blue/40 bg-blue-soft px-3.5 py-2 font-serif text-[11px] text-blue transition" :disabled="hostBusy" @click.stop="void handleBrowse()">{{ t('plugins.browseFiles') }}</button>
+              <div class="flex items-center gap-2">
+                <button type="button" class="button-secondary min-h-8 px-3 text-[10px]" :disabled="hostBusy" @click.stop="void handleVsixImport()">{{ t('plugins.importVsix') }}</button>
+                <button type="button" class="flex items-center gap-1.5 rounded-[5px] border border-blue/40 bg-blue-soft px-3.5 py-2 font-serif text-[11px] text-blue transition" :disabled="hostBusy" @click.stop="void handleBrowse()">{{ t('plugins.browseFiles') }}</button>
+              </div>
             </div>
           </div>
           <div v-if="message || hostError" class="mt-3 rounded-[4px] border border-blue/20 bg-blue-soft px-3 py-2 font-serif text-[10px] text-blue">{{ message || hostError }}</div>
+          <section v-if="vsixReport" class="mt-3 rounded-[5px] border border-olive/25 bg-olive/5 px-3 py-3" aria-live="polite">
+            <p class="font-sans text-[8px] uppercase tracking-[0.12em] text-olive">{{ t('plugins.vsixImportReport') }}</p>
+            <p class="mt-1 font-serif text-[10px] text-ink/70">{{ vsixReport.packageName }} · {{ vsixReport.version }}</p>
+            <ul class="mt-2 space-y-1">
+              <li v-for="plugin in vsixReport.imported" :key="plugin.id" class="font-mono text-[9px] text-ink/60">
+                {{ plugin.kind }} · {{ plugin.name }} · {{ plugin.assetCount }} {{ t('plugins.vsixAssets') }}
+              </li>
+            </ul>
+            <p v-if="vsixReport.ignoredCodeAssets.length" class="mt-2 font-serif text-[9px] text-ink/50">
+              {{ t('plugins.vsixCodeIgnored', { count: vsixReport.ignoredCodeAssets.length }) }}
+            </p>
+          </section>
           <div v-if="supersededInstalled.length" class="mt-3 rounded-[5px] border border-alert/25 bg-alert/5 px-3 py-2" role="alert">
             <p class="font-sans text-[8px] uppercase tracking-[0.12em] text-alert">{{ t('plugins.versionMismatchTitle') }}</p>
             <p class="mt-1 font-serif text-[10px] leading-[1.4] text-ink/65">{{ t('plugins.versionMismatchHint', { count: supersededInstalled.length }) }}</p>

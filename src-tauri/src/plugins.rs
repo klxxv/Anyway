@@ -4,6 +4,7 @@
 //! Declarative visual packages only expose JSON; analysis packages execute verified WebAssembly
 //! with no host capabilities by default. All archives are bounded and staged before visibility.
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -26,6 +27,7 @@ const PLUGIN_CALL_API_VERSION: &str = "researchcanvas.dev/plugin-call/v1alpha1";
 const MAX_ARCHIVE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 128;
+const MAX_ICON_THEME_ASSET_BYTES: u64 = 4 * 1024 * 1024;
 const REMOVED_PLUGINS_FILE: &str = "removed-plugins.json";
 
 fn is_false(value: &bool) -> bool {
@@ -113,9 +115,14 @@ pub enum PluginApiKeySource {
         #[serde(rename = "settingId")]
         setting_id: String,
     },
+    #[serde(rename = "environment", alias = "Environment")]
     Environment {
         name: String,
-        #[serde(rename = "fallbackSettingId", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "fallbackSettingId",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         fallback_setting_id: Option<String>,
     },
 }
@@ -125,7 +132,31 @@ pub enum PluginApiKeySource {
 pub struct PluginConnectionTestAction {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_key: Option<String>,
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<PluginConnectionTestActionInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum PluginConnectionTestActionInput {
+    #[serde(rename = "text")]
+    Text { file_upload: String },
+    #[serde(rename = "bundled-pdf")]
+    BundledPdf {
+        fixture: String,
+        file_upload: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -133,6 +164,16 @@ pub struct PluginConnectionTestAction {
 pub struct PluginConnectionDefinition {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder_key: Option<String>,
     pub url_setting_id: String,
     pub format_setting_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +183,9 @@ pub struct PluginConnectionDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_env_var_setting_id: Option<String>,
     pub api_key: PluginApiKeySource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_actions: Option<Vec<PluginConnectionTestAction>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_action: Option<PluginConnectionTestAction>,
 }
 
@@ -198,6 +242,13 @@ pub struct MycPluginSpec {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginPrivateI18nDefinition {
+    pub default_locale: String,
+    pub locales: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MycPluginManifest {
     pub api_version: String,
     pub kind: String,
@@ -233,15 +284,35 @@ pub struct ThemeManifest {
     edge_style: Option<serde_json::Value>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IconThemeManifest {
+    schema_version: u64,
+    id: String,
+    name: String,
+    publisher: String,
+    version: String,
+    description: Option<String>,
+    source: String,
+    file_extensions: BTreeMap<String, String>,
+    file_names: BTreeMap<String, String>,
+    folder_names: BTreeMap<String, String>,
+    folder_names_expanded: BTreeMap<String, String>,
+    icon_definitions: BTreeMap<String, serde_json::Value>,
+    fonts: Vec<serde_json::Value>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledMycPlugin {
     pub(crate) manifest: MycPluginManifest,
     pub(crate) install_path: String,
     pub(crate) theme: Option<ThemeManifest>,
+    pub(crate) icon_theme: Option<IconThemeManifest>,
     pub(crate) edge_style: Option<serde_json::Value>,
     pub(crate) runtime: Option<MycPluginRuntime>,
     pub(crate) locales: Option<Vec<InstalledPluginLocale>>,
+    pub(crate) private_i18n: Option<InstalledPluginPrivateI18n>,
     pub(crate) workspace: Option<serde_json::Value>,
     pub provider: Option<ProviderDescriptor>,
     pub(crate) agent: Option<serde_json::Value>,
@@ -257,13 +328,21 @@ pub struct InstalledPluginLocale {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct InstalledPluginPrivateI18n {
+    namespace: String,
+    default_locale: String,
+    locales: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MycPluginRuntime {
     engine: String,
     language: String,
     entry_sha256: String,
 }
 
-fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     {
         let manifest_directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -407,6 +486,111 @@ fn validate_plugin_update(update: Option<&PluginUpdateInfo>) -> Result<(), Strin
     Ok(())
 }
 
+fn validate_locale_tag(locale: &str) -> Result<(), String> {
+    if locale.is_empty()
+        || locale.len() > 35
+        || !locale
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err(format!("Invalid locale tag: {locale}"));
+    }
+    Ok(())
+}
+
+fn validate_private_i18n(private_i18n: Option<&PluginPrivateI18nDefinition>) -> Result<(), String> {
+    let Some(private_i18n) = private_i18n else {
+        return Ok(());
+    };
+    if private_i18n.locales.is_empty() || private_i18n.locales.len() > 16 {
+        return Err("Private i18n must declare 1 to 16 locales".to_string());
+    }
+    validate_locale_tag(&private_i18n.default_locale)?;
+    if !private_i18n
+        .locales
+        .contains_key(&private_i18n.default_locale)
+    {
+        return Err("Private i18n defaultLocale must be declared in locales".to_string());
+    }
+    for (locale, path) in &private_i18n.locales {
+        validate_locale_tag(locale)?;
+        let expected = format!("locales/{locale}.json");
+        if path != &expected {
+            return Err(format!(
+                "Private i18n bundle for {locale} must use {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_connection_test_action(action: &PluginConnectionTestAction) -> Result<(), String> {
+    validate_slug(&action.id, "connection test action id")?;
+    if action.label.trim().is_empty() || action.label.chars().count() > 64 {
+        return Err(format!(
+            "Connection test action label is invalid: {}",
+            action.id
+        ));
+    }
+    if action
+        .description
+        .as_ref()
+        .is_some_and(|description| description.chars().count() > 180)
+    {
+        return Err(format!(
+            "Connection test action description is too long: {}",
+            action.id
+        ));
+    }
+    if let Some(kind) = action.kind.as_deref() {
+        if !matches!(kind, "connection" | "pdf-extraction") {
+            return Err(format!("Unsupported connection test action kind: {kind}"));
+        }
+    }
+    if let Some(input) = action.input.as_ref() {
+        match input {
+            PluginConnectionTestActionInput::Text { file_upload } => {
+                if file_upload != "never" {
+                    return Err("Text connection tests must never upload files".to_string());
+                }
+            }
+            PluginConnectionTestActionInput::BundledPdf {
+                fixture,
+                file_upload,
+            } => {
+                if fixture != "host-minimal-pdf-v1" || file_upload != "may-upload" {
+                    return Err(
+                        "Bundled PDF tests require host-minimal-pdf-v1 and may-upload".to_string(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_connection_test_actions(connection: &PluginConnectionDefinition) -> Result<(), String> {
+    if let Some(action) = connection.test_action.as_ref() {
+        validate_connection_test_action(action)?;
+    }
+    if let Some(actions) = connection.test_actions.as_ref() {
+        if actions.is_empty() || actions.len() > 8 {
+            return Err(format!(
+                "Connection {} must declare 1 to 8 test actions",
+                connection.id
+            ));
+        }
+        let mut ids = HashSet::new();
+        for action in actions {
+            validate_connection_test_action(action)?;
+            if !ids.insert(action.id.as_str()) {
+                return Err(format!("Duplicate connection test action: {}", action.id));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     if manifest.api_version != MYC_API_VERSION {
         return Err(format!(
@@ -421,6 +605,11 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     }
     validate_plugin_update(manifest.metadata.update.as_ref())?;
     validate_plugin_settings(manifest)?;
+    if let Some(connections) = manifest.spec.connections.as_ref() {
+        for connection in connections {
+            validate_connection_test_actions(connection)?;
+        }
+    }
     if let Some(items) = manifest
         .spec
         .contributes
@@ -568,6 +757,26 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 return Err("ThemePlugin must declare theme.register".to_string());
             }
         }
+        "IconThemePlugin" => {
+            if manifest.spec.engine != "declarative" {
+                return Err("IconThemePlugin engine must be declarative".to_string());
+            }
+            if manifest.spec.entry != "icon-theme.json" {
+                return Err("IconThemePlugin entry must be icon-theme.json".to_string());
+            }
+            if manifest.spec.language.is_some()
+                || !manifest
+                    .spec
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability == "icon-theme.register")
+            {
+                return Err(
+                    "IconThemePlugin must declare icon-theme.register and no guest language"
+                        .to_string(),
+                );
+            }
+        }
         "EdgeStylePlugin" => {
             if manifest.spec.entry != "edge-style.json" {
                 return Err("EdgeStylePlugin entry must be edge-style.json".to_string());
@@ -695,7 +904,7 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
         }
         _ => {
             return Err(
-                "Installer accepts ThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, WorkspacePlugin, ProviderPlugin, and AgentPlugin packages"
+                "Installer accepts ThemePlugin, IconThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, WorkspacePlugin, ProviderPlugin, and AgentPlugin packages"
                     .to_string(),
             );
         }
@@ -781,6 +990,54 @@ fn read_locale_bundles(
     Ok(Some(bundles))
 }
 
+fn read_private_i18n_bundles(
+    directory: &Path,
+    manifest: &MycPluginManifest,
+    private_i18n: Option<&PluginPrivateI18nDefinition>,
+) -> Result<Option<InstalledPluginPrivateI18n>, String> {
+    let Some(private_i18n) = private_i18n else {
+        return Ok(None);
+    };
+    let mut locales = BTreeMap::new();
+    for (locale, relative_path) in &private_i18n.locales {
+        let path = directory.join(relative_path);
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("Could not read private i18n {}: {error}", path.display()))?;
+        let messages: BTreeMap<String, String> = serde_json::from_str(&text)
+            .map_err(|error| format!("Invalid private i18n {}: {error}", path.display()))?;
+        if messages.len() > 2_000 {
+            return Err("Private i18n bundle exceeds 2,000 messages".to_string());
+        }
+        if messages.iter().any(|(key, message)| {
+            key.is_empty() || key.chars().count() > 128 || message.chars().count() > 2_000
+        }) {
+            return Err("Private i18n accepts bounded string-to-string messages only".to_string());
+        }
+        locales.insert(locale.clone(), messages);
+    }
+    Ok(Some(InstalledPluginPrivateI18n {
+        namespace: manifest.metadata.id.clone(),
+        default_locale: private_i18n.default_locale.clone(),
+        locales,
+    }))
+}
+
+fn parse_private_i18n_manifest(
+    manifest_text: &str,
+) -> Result<Option<PluginPrivateI18nDefinition>, String> {
+    let document: serde_yaml::Value =
+        serde_yaml::from_str(manifest_text).map_err(|error| error.to_string())?;
+    let Some(spec) = document.get("spec") else {
+        return Ok(None);
+    };
+    let Some(private_i18n) = spec.get("privateI18n") else {
+        return Ok(None);
+    };
+    serde_yaml::from_value(private_i18n.clone())
+        .map(Some)
+        .map_err(|error| format!("Invalid privateI18n declaration: {error}"))
+}
+
 fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String> {
     {
         if let Ok(cache) = manifest_cache().lock() {
@@ -792,24 +1049,37 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     let manifest_path = directory.join("plugin.yml");
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("Could not read {}: {error}", manifest_path.display()))?;
+    let private_i18n = parse_private_i18n_manifest(&manifest_text)?;
     let manifest: MycPluginManifest =
         serde_yaml::from_str(&manifest_text).map_err(|error| error.to_string())?;
     validate_manifest(&manifest)?;
+    validate_private_i18n(private_i18n.as_ref())?;
 
     let entry_path = directory.join(&manifest.spec.entry);
-    let (theme, edge_style, runtime, workspace, provider, agent) = match manifest.kind.as_str() {
+    let (theme, icon_theme, edge_style, runtime, workspace, provider, agent) = match manifest
+        .kind
+        .as_str()
+    {
         "ThemePlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
                 .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
             let theme: ThemeManifest =
                 serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
             let edge_style = theme.edge_style.clone();
-            (Some(theme), edge_style, None, None, None, None)
+            (Some(theme), None, edge_style, None, None, None, None)
+        }
+        "IconThemePlugin" => {
+            let entry_text = fs::read_to_string(&entry_path)
+                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+            let icon_theme: IconThemeManifest =
+                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+            (None, Some(icon_theme), None, None, None, None, None)
         }
         "EdgeStylePlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
                 .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
             (
+                None,
                 None,
                 Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
                 None,
@@ -826,6 +1096,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             }
             let digest = Sha256::digest(&bytes);
             (
+                None,
                 None,
                 None,
                 Some(MycPluginRuntime {
@@ -858,7 +1129,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             {
                 return Err("Invalid workspace-plugin.json descriptor".to_string());
             }
-            (None, None, None, Some(descriptor), None, None)
+            (None, None, None, None, Some(descriptor), None, None)
         }
         "ProviderPlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
@@ -866,7 +1137,7 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             let descriptor: ProviderDescriptor =
                 serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
             llm_plugin::validate_provider_descriptor(&descriptor)?;
-            (None, None, None, None, Some(descriptor), None)
+            (None, None, None, None, None, Some(descriptor), None)
         }
         "AgentPlugin" => {
             let entry_text = fs::read_to_string(&entry_path)
@@ -888,19 +1159,22 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
                         .to_string(),
                 );
             }
-            (None, None, None, None, None, Some(descriptor))
+            (None, None, None, None, None, None, Some(descriptor))
         }
-        _ => (None, None, None, None, None, None),
+        _ => (None, None, None, None, None, None, None),
     };
     let locales = read_locale_bundles(directory, &manifest)?;
+    let private_i18n = read_private_i18n_bundles(directory, &manifest, private_i18n.as_ref())?;
 
     let installed = InstalledMycPlugin {
         manifest,
         install_path: directory.to_string_lossy().into_owned(),
         theme,
+        icon_theme,
         edge_style,
         runtime,
         locales,
+        private_i18n,
         workspace,
         provider,
         agent,
@@ -909,6 +1183,183 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         cache.insert(directory.to_path_buf(), installed.clone());
     }
     Ok(installed)
+}
+
+fn validate_icon_theme_asset_path(asset_path: &str) -> Result<PathBuf, String> {
+    if asset_path.is_empty()
+        || asset_path.starts_with('/')
+        || asset_path.contains('\\')
+        || asset_path.contains(':')
+        || !asset_path.starts_with("assets/")
+    {
+        return Err("Icon theme asset must be a relative path under assets/".to_string());
+    }
+    let relative = PathBuf::from(asset_path);
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Prefix(_)
+                | std::path::Component::RootDir
+                | std::path::Component::CurDir
+                | std::path::Component::ParentDir
+        )
+    }) {
+        return Err("Icon theme asset path contains an unsafe component".to_string());
+    }
+    let extension = relative
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    if !matches!(
+        extension.as_deref(),
+        Some("svg" | "png" | "woff" | "woff2" | "ttf" | "otf")
+    ) {
+        return Err("Icon theme assets must be SVG, PNG, or font files".to_string());
+    }
+    Ok(relative)
+}
+
+fn icon_theme_references_asset(icon_theme: &IconThemeManifest, asset_path: &str) -> bool {
+    let definition_reference = icon_theme.icon_definitions.values().any(|definition| {
+        definition
+            .get("iconPath")
+            .and_then(serde_json::Value::as_str)
+            == Some(asset_path)
+    });
+    if definition_reference {
+        return true;
+    }
+    icon_theme.fonts.iter().any(|font| {
+        font.get("src")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|sources| {
+                sources.iter().any(|source| {
+                    source.as_str() == Some(asset_path)
+                        || source
+                            .get("path")
+                            .and_then(serde_json::Value::as_str)
+                            == Some(asset_path)
+                })
+            })
+    })
+}
+
+fn icon_theme_asset_mime(asset_path: &Path) -> &'static str {
+    match asset_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        _ => "application/octet-stream",
+    }
+}
+
+fn validate_icon_theme_image(asset_path: &Path, bytes: &[u8]) -> Result<(), String> {
+    match asset_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => {
+            if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                return Err("Icon theme PNG has an invalid signature".to_string());
+            }
+        }
+        Some("svg") => {
+            let text = std::str::from_utf8(bytes)
+                .map_err(|_| "Icon theme SVG must be valid UTF-8".to_string())?;
+            let lower = text.to_ascii_lowercase();
+            if !lower.contains("<svg") {
+                return Err("Icon theme SVG has no svg root".to_string());
+            }
+            let forbidden = [
+                "<script",
+                "<foreignobject",
+                "<!doctype",
+                "<!entity",
+                "javascript:",
+                "href=\"http:",
+                "href='http:",
+                "href=\"https:",
+                "href='https:",
+                "href=\"//",
+                "href='//",
+                "url(http:",
+                "url(https:",
+                "url(//",
+                "@import",
+            ];
+            if forbidden.iter().any(|needle| lower.contains(needle))
+                || regex::Regex::new(r"(?i)\son[a-z]+\s*=")
+                    .expect("static SVG event-handler regex")
+                    .is_match(text)
+            {
+                return Err("Icon theme SVG contains active or external content".to_string());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Returns a data URL only for an asset referenced by an installed declarative
+/// IconThemePlugin. No caller can use this command to read arbitrary files.
+#[tauri::command]
+pub fn read_icon_theme_asset(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    asset_path: String,
+) -> Result<String, String> {
+    let directory = installed_plugin_directory(&app, &plugin_id, &plugin_version)?;
+    let installed = read_installed_plugin(&directory)?;
+    if installed.manifest.kind != "IconThemePlugin" {
+        return Err("Plugin is not an IconThemePlugin".to_string());
+    }
+    let icon_theme = installed
+        .icon_theme
+        .as_ref()
+        .ok_or_else(|| "IconThemePlugin has no icon theme descriptor".to_string())?;
+    if !icon_theme_references_asset(icon_theme, &asset_path) {
+        return Err("Asset is not referenced by the installed icon theme".to_string());
+    }
+    let relative = validate_icon_theme_asset_path(&asset_path)?;
+    let canonical_directory = directory
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve icon theme directory: {error}"))?;
+    let candidate = directory.join(&relative);
+    let metadata = fs::symlink_metadata(&candidate)
+        .map_err(|error| format!("Could not read icon theme asset: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("Icon theme asset must be a regular file".to_string());
+    }
+    if metadata.len() > MAX_ICON_THEME_ASSET_BYTES {
+        return Err("Icon theme asset exceeds the 4 MB limit".to_string());
+    }
+    let canonical_candidate = candidate
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve icon theme asset: {error}"))?;
+    if !canonical_candidate.starts_with(&canonical_directory) {
+        return Err("Icon theme asset escaped its installed plugin directory".to_string());
+    }
+    let bytes = fs::read(&canonical_candidate).map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_ICON_THEME_ASSET_BYTES {
+        return Err("Icon theme asset exceeds the 4 MB limit".to_string());
+    }
+    validate_icon_theme_image(&relative, &bytes)?;
+    Ok(format!(
+        "data:{};base64,{}",
+        icon_theme_asset_mime(&relative),
+        BASE64.encode(bytes)
+    ))
 }
 
 /// 将清单序列化为 JSON 并移除 signature 字段，用于签名验证。
@@ -1369,6 +1820,66 @@ pub fn get_plugin_settings(
     crate::plugin_settings::get_snapshot(&app, &installed.manifest, &plugin_id, &plugin_version)
 }
 
+fn select_connection_test_action(
+    plugin_id: &str,
+    connection: &PluginConnectionDefinition,
+    action_id: Option<&str>,
+) -> Result<Option<PluginConnectionTestAction>, String> {
+    let requested = action_id.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(requested) = requested {
+        if let Some(action) = connection
+            .test_actions
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|action| action.id == requested)
+        {
+            return Ok(Some(action.clone()));
+        }
+        if connection
+            .test_action
+            .as_ref()
+            .is_some_and(|action| action.id == requested)
+        {
+            return Ok(connection.test_action.clone());
+        }
+        // The built-in PDF Agent is implemented natively. Development builds
+        // may still have an older 0.3.0 package installed under the same
+        // identity, from before the second action was added to testActions.
+        // Keep that installed package usable while the source manifest remains
+        // the canonical declaration for fresh installs.
+        if plugin_id == "myc.pdf-canvas-agent" && requested == "test-pdf-extraction" {
+            return Ok(Some(PluginConnectionTestAction {
+                id: requested.to_string(),
+                label: "Test PDF extraction".to_string(),
+                label_key: Some("actions.testPdfExtraction.label".to_string()),
+                description: Some(
+                    "Use the built-in non-empty test PDF. It may be uploaded when remote extraction is selected."
+                        .to_string(),
+                ),
+                description_key: Some("actions.testPdfExtraction.description".to_string()),
+                placeholder: None,
+                placeholder_key: None,
+                kind: Some("pdf-extraction".to_string()),
+                input: Some(PluginConnectionTestActionInput::BundledPdf {
+                    fixture: "host-minimal-pdf-v1".to_string(),
+                    file_upload: "may-upload".to_string(),
+                }),
+            }));
+        }
+        return Err(format!(
+            "Plugin connection {} does not declare test action {}",
+            connection.id, requested
+        ));
+    }
+    Ok(connection.test_action.clone().or_else(|| {
+        connection
+            .test_actions
+            .as_ref()
+            .and_then(|actions| actions.first().cloned())
+    }))
+}
+
 #[tauri::command]
 pub fn set_plugin_settings(
     app: AppHandle,
@@ -1405,17 +1916,45 @@ pub async fn test_plugin_connection(
     plugin_id: String,
     plugin_version: String,
     connection_id: String,
+    // Tauri exposes this snake_case Rust parameter as the actionId JSON key;
+    // action_id remains the canonical Rust-side spelling for both callers.
+    action_id: Option<String>,
     values: BTreeMap<String, serde_json::Value>,
     secrets: BTreeMap<String, crate::plugin_settings::PluginSecretMutationInput>,
 ) -> Result<crate::plugin_settings::PluginConnectionTestResult, String> {
     let (_directory, installed) =
         read_installed_plugin_by_identity(&app, &plugin_id, &plugin_version)?;
+    let connection = installed
+        .manifest
+        .spec
+        .connections
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|connection| connection.id == connection_id)
+        .ok_or_else(|| format!("Unknown plugin connection: {connection_id}"))?;
+    let selected_action =
+        select_connection_test_action(&plugin_id, connection, action_id.as_deref())?;
+    let mut manifest = installed.manifest.clone();
+    if let Some(selected_action) = selected_action {
+        if let Some(connection) =
+            manifest.spec.connections.as_mut().and_then(|connections| {
+                connections.iter_mut().find(|item| item.id == connection_id)
+            })
+        {
+            // plugin_settings::test_connection currently consumes the legacy
+            // single-action slot; mirror the selected action at this boundary
+            // while keeping the canonical testActions declaration intact.
+            connection.test_action = Some(selected_action);
+        }
+    }
     crate::plugin_settings::test_connection(
         &app,
-        &installed.manifest,
+        &manifest,
         &plugin_id,
         &plugin_version,
         &connection_id,
+        action_id,
         values,
         secrets,
     )
@@ -1677,6 +2216,16 @@ spec:
         )
     }
 
+    #[test]
+    fn parses_sdk_environment_api_key_source() {
+        for source in ["environment", "Environment"] {
+            let yaml = format!("source: {source}\nname: DEEPSEEK_API_KEY\n");
+            let parsed: PluginApiKeySource =
+                serde_yaml::from_str(&yaml).expect("parse environment API key source");
+            assert!(matches!(parsed, PluginApiKeySource::Environment { .. }));
+        }
+    }
+
     fn smoke_wasm() -> Vec<u8> {
         wat::parse_str(
             r#"(module
@@ -1717,6 +2266,7 @@ spec:
             manifest,
             install_path: "test".to_string(),
             theme: None,
+            icon_theme: None,
             edge_style: None,
             runtime: Some(MycPluginRuntime {
                 engine: "wasm32-myc".to_string(),
@@ -1724,6 +2274,7 @@ spec:
                 entry_sha256: "0".repeat(64),
             }),
             locales: None,
+            private_i18n: None,
             workspace: None,
             provider: None,
             agent: None,

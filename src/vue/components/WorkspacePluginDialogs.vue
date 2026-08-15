@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import type {
-  GraphPatchOperation,
-  PluginGraphPatch,
+import { computed, onMounted, ref } from "vue";
+import {
+  pluginReference,
+  type GraphPatchOperation,
+  type PluginGraphPatch,
 } from "../../../app/plugins/contracts";
 import {
   operationSubject,
@@ -10,8 +11,17 @@ import {
   type FolderWorkspaceDialogProps,
   type GitWorkspaceDialogProps,
 } from "./panel-types";
+import FolderExplorerTree from "./FolderExplorerTree.vue";
+import {
+  listFolderEntries,
+  type FolderTreeEntry,
+} from "../../../app/platform/native-project";
+import { readIconThemeAsset } from "../../../app/plugins/tauri-client";
+import { usePluginHost } from "../runtime/plugin-host";
+import type { IconThemeManifest } from "../../../app/plugins/vsix-contracts";
 
 const { t } = usePanelI18n();
+const pluginHost = usePluginHost();
 const folderProps = defineProps<
   FolderWorkspaceDialogProps & Partial<GitWorkspaceDialogProps>
 >();
@@ -55,6 +65,54 @@ const rejectedCount = computed(
     ).length ?? 0,
 );
 const isGit = computed(() => Boolean(folderProps.snapshot));
+const activeIconThemePlugin = computed(() =>
+  pluginHost.activePlugins.find((plugin) => plugin.manifest.kind === "IconThemePlugin"),
+);
+const activeIconTheme = computed<IconThemeManifest | undefined>(() =>
+  activeIconThemePlugin.value?.iconTheme,
+);
+const resolveIconThemeAsset = (assetPath: string): Promise<string | null> => {
+  const plugin = activeIconThemePlugin.value;
+  return plugin
+    ? readIconThemeAsset(pluginReference(plugin), assetPath)
+    : Promise.resolve(null);
+};
+const childrenByPath = ref<Record<string, FolderTreeEntry[]>>({});
+const expandedPaths = ref(new Set<string>());
+const loadingPaths = ref(new Set<string>());
+const folderError = ref("");
+
+async function loadFolderEntries(path: string) {
+  if (!folderProps.command) return;
+  loadingPaths.value = new Set([...loadingPaths.value, path]);
+  folderError.value = "";
+  try {
+    const entries = await listFolderEntries(folderProps.command, folderProps.root, path);
+    childrenByPath.value = { ...childrenByPath.value, [path]: entries };
+  } catch (error) {
+    folderError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    const next = new Set(loadingPaths.value);
+    next.delete(path);
+    loadingPaths.value = next;
+  }
+}
+
+async function toggleFolder(path: string) {
+  const next = new Set(expandedPaths.value);
+  if (next.has(path)) {
+    next.delete(path);
+    expandedPaths.value = next;
+    return;
+  }
+  next.add(path);
+  expandedPaths.value = next;
+  if (!childrenByPath.value[path]) await loadFolderEntries(path);
+}
+
+onMounted(() => {
+  if (!isGit.value) void loadFolderEntries(folderProps.root);
+});
 const patchSubject = operationSubject;
 const close = () => emit("close");
 const copyPublicKey = (publicKey: string) => {
@@ -93,6 +151,37 @@ const copyPublicKey = (publicKey: string) => {
         </button>
       </header>
       <div class="min-h-0 flex-1 overflow-y-auto p-6">
+        <section class="mb-6 rounded-[6px] border border-ink/15 bg-canvas p-4">
+          <div class="flex items-center justify-between border-b border-ink/10 pb-3">
+            <div>
+              <span class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">{{ t("workspace.folderExplorer") }}</span>
+              <h3 class="mt-1 font-serif text-[14px]">{{ folderProps.root.split(/[\\/]/).filter(Boolean).at(-1) || folderProps.root }}</h3>
+            </div>
+            <button class="button-secondary min-h-7 px-2 text-[8px]" @click="loadFolderEntries(folderProps.root)">
+              {{ t("workspace.refreshFolder") }}
+            </button>
+          </div>
+          <p v-if="folderError" class="mt-3 rounded-[4px] border border-red-500/20 bg-red-50 px-3 py-2 font-mono text-[9px] text-red-700">
+            {{ folderError }}
+          </p>
+          <p v-else-if="loadingPaths.has(folderProps.root) && !childrenByPath[folderProps.root]" class="mt-4 font-serif text-[10px] text-ink/45">
+            {{ t("workspace.loadingFolder") }}
+          </p>
+          <FolderExplorerTree
+            v-else
+            class="mt-3"
+            :entries="childrenByPath[folderProps.root] ?? []"
+            :children-by-path="childrenByPath"
+            :expanded-paths="expandedPaths"
+            :loading-paths="loadingPaths"
+            :icon-theme="activeIconTheme"
+            :resolve-icon-theme-asset="resolveIconThemeAsset"
+            @toggle-folder="toggleFolder"
+          />
+          <p v-if="!loadingPaths.has(folderProps.root) && !(childrenByPath[folderProps.root]?.length) && !folderError" class="mt-4 font-serif text-[10px] text-ink/45">
+            {{ t("workspace.emptyFolder") }}
+          </p>
+        </section>
         <p
           v-if="!folderProps.projects.length"
           class="rounded-[5px] border border-dashed border-ink/20 px-5 py-12 text-center font-serif text-[12px] text-ink/45"

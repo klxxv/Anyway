@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 
 use crate::deepseek_client; // 向后兼容的 key 存储
-use crate::llm_client::{LlmClient, ModelRouting, OpenAiCompatibleClient, OpenAiCompatibleProviderConfig};
+use crate::llm_client::{
+    LlmClient, ModelRouting, OpenAiCompatibleClient, OpenAiCompatibleProviderConfig,
+};
 use crate::llm_plugin::ProviderDescriptor;
 
 /// 序列化给前端的 provider 摘要信息。
@@ -71,10 +73,10 @@ impl ProviderRegistry {
 
     /// 构建当前活跃 provider 的 `LlmClient`。
     pub fn build_client(&self) -> Result<Arc<dyn LlmClient>, String> {
-        let active = self
-            .active_provider
-            .as_ref()
-            .ok_or_else(|| "No active LLM provider configured. Install a ProviderPlugin and set it as active.".to_string())?;
+        let active = self.active_provider.as_ref().ok_or_else(|| {
+            "No active LLM provider configured. Install a ProviderPlugin and set it as active."
+                .to_string()
+        })?;
 
         let descriptor = self
             .providers
@@ -159,9 +161,8 @@ impl ProviderRegistry {
         self.providers
             .iter()
             .map(|(key, descriptor)| {
-                let (plugin_id, plugin_version) = key
-                    .split_once('@')
-                    .unwrap_or((key.as_str(), "unknown"));
+                let (plugin_id, plugin_version) =
+                    key.split_once('@').unwrap_or((key.as_str(), "unknown"));
                 ProviderInfo {
                     plugin_id: plugin_id.to_string(),
                     plugin_version: plugin_version.to_string(),

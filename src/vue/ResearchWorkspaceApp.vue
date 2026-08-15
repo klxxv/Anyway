@@ -21,6 +21,7 @@ import {
   uploadGitHubSshKey,
 } from "../../app/platform/native-project";
 import type { PluginGraphPatch } from "../../app/plugins/contracts";
+import type { CanvasDiffBatchResult } from "../../app/domain/canvas-diff";
 import type { ResolvedPluginContextMenuAction as AppPluginContextMenuAction } from "../../app/plugins/context-menu";
 import { runAnalysisPlugin } from "../../app/plugins/tauri-client";
 import { contextMenuContributionsFromPlugins } from "../../app/plugins/context-menu";
@@ -163,6 +164,7 @@ const gitHubAccount = ref<GitWorkspaceState["account"]>(null);
 const gitCommand = ref<EnabledWorkspaceCommand | null>(null);
 const gitAutoSave = ref(false);
 const pluginBusy = ref(false);
+const importedBatchDiff = ref<CanvasDiffBatchResult | null>(null);
 
 const hasPdfAgent = computed(() =>
   pluginHost.activePlugins.some(
@@ -337,7 +339,11 @@ async function openFolder() {
     const result = await openFolderWorkspace(folderCommand.value);
     if (!result) return;
     menuOpen.value = false;
-    folderWorkspace.value = { root: result.path, projects: result.projects };
+    folderWorkspace.value = {
+      root: result.path,
+      projects: result.projects,
+      command: folderCommand.value,
+    };
   } catch (error) {
     showOperationError(error);
   }
@@ -438,7 +444,14 @@ async function uploadGitHubKey(path: string) {
 }
 
 function openDiffPanel() {
+  importedBatchDiff.value = null;
   openDiff(history.value.length > 0 ? `history-${history.value.length - 1}` : "current");
+}
+
+function openImportedBatchDiff(result: CanvasDiffBatchResult) {
+  importedBatchDiff.value = result;
+  pdfDialogOpen.value = false;
+  openDiff("current");
 }
 
 function closeDiffPanel() {
@@ -913,6 +926,7 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       v-if="folderWorkspace"
       :root="folderWorkspace.root"
       :projects="folderWorkspace.projects"
+      :command="folderWorkspace.command"
       @close="folderWorkspace = null"
       @open="openFolderProject"
     />
@@ -943,7 +957,7 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       :on-close="() => { searchOpen = false }"
       :on-select="handleSelectNode"
     />
-    <PdfUploadDialog v-if="pdfDialogOpen" @close="pdfDialogOpen = false" @ready="handlePdfReady" />
+    <PdfUploadDialog v-if="pdfDialogOpen" @close="pdfDialogOpen = false" @ready="handlePdfReady" @diff-ready="openImportedBatchDiff" />
     <AgentReviewPanel
       v-if="reviewJobId"
       :job-id="reviewJobId"
@@ -969,6 +983,7 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       :compare-id="diffCompareId"
       :mode="diffMode"
       :result="diffResult"
+      :batch="importedBatchDiff"
       :loading="diffLoading"
       :error="diffError ? t('diff.error', { error: diffError }) : null"
       @base-change="(id) => { diffBaseId = id; diffFocus = null }"

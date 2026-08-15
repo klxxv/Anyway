@@ -16,6 +16,7 @@ use crate::graph_compiler;
 const MAX_ARTIFACT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_GIT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FOLDER_PROJECTS: usize = 500;
+const MAX_FOLDER_TREE_ENTRIES: usize = 1_000;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +28,16 @@ pub struct FolderProjectSummary {
     updated_at: String,
     node_count: usize,
     edge_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderTreeEntry {
+    path: String,
+    name: String,
+    kind: String,
+    size: u64,
+    modified_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -365,6 +376,108 @@ fn summarize_project_file(project_path: &Path) -> Option<FolderProjectSummary> {
     })
 }
 
+fn validate_folder_tree_path(root: &Path, requested: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve folder root: {error}"))?;
+    if !root.is_dir() {
+        return Err("Project folder does not exist".to_string());
+    }
+
+    // Reject symlink components before canonicalization when the caller supplied
+    // a path inside the selected root. This keeps a directory junction/symlink
+    // from becoming an implicit escape hatch for the explorer.
+    if requested.is_absolute() && requested.starts_with(&root) {
+        let relative = requested
+            .strip_prefix(&root)
+            .map_err(|_| "Folder path is outside the selected root".to_string())?;
+        let mut cursor = root.clone();
+        for component in relative.components() {
+            let Component::Normal(name) = component else {
+                continue;
+            };
+            cursor.push(name);
+            if fs::symlink_metadata(&cursor)
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                return Err("Folder explorer does not follow symbolic links".to_string());
+            }
+        }
+    }
+
+    let requested = requested
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve folder path: {error}"))?;
+    if !requested.starts_with(&root) {
+        return Err("Folder path must stay inside the selected root".to_string());
+    }
+    if !requested.is_dir() {
+        return Err("Folder path must be a directory".to_string());
+    }
+    Ok((root, requested))
+}
+
+fn modified_timestamp(path: &Path) -> Option<u64> {
+    path.metadata()
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+#[tauri::command]
+pub fn list_folder_entries(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_version: String,
+    root: String,
+    path: String,
+) -> Result<Vec<FolderTreeEntry>, String> {
+    crate::plugins::require_plugin_capability(&app, &plugin_id, &plugin_version, "project.folder")?;
+    let (_, directory) = validate_folder_tree_path(Path::new(&root), Path::new(&path))?;
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
+        if entries.len() >= MAX_FOLDER_TREE_ENTRIES {
+            break;
+        }
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let entry_path = entry.path();
+        let kind = if file_type.is_dir() {
+            "directory"
+        } else if file_type.is_file() {
+            "file"
+        } else {
+            continue;
+        };
+        let metadata = entry.metadata().map_err(|error| error.to_string())?;
+        entries.push(FolderTreeEntry {
+            path: entry_path.to_string_lossy().into_owned(),
+            name: entry.file_name().to_string_lossy().into_owned(),
+            kind: kind.to_string(),
+            size: if file_type.is_file() {
+                metadata.len()
+            } else {
+                0
+            },
+            modified_at: modified_timestamp(&entry_path),
+        });
+    }
+    entries.sort_by(|left, right| {
+        (left.kind != "directory")
+            .cmp(&(right.kind != "directory"))
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(entries)
+}
+
 #[tauri::command]
 pub fn scan_project_folder(
     app: AppHandle,
@@ -530,7 +643,10 @@ fn find_project_file(repo: &Path) -> Option<PathBuf> {
                 if !path.is_file() {
                     return false;
                 }
-                let ext = path.extension().and_then(|value| value.to_str()).unwrap_or("");
+                let ext = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("");
                 matches!(ext, "mycproj" | "json")
             })
             .collect();
@@ -570,7 +686,11 @@ fn dedup_operations(operations: Vec<Value>) -> Vec<Value> {
     for operation in operations {
         let op_type = operation.get("op").and_then(Value::as_str).unwrap_or("");
         if op_type == "add-node" || op_type == "add-edge" {
-            let pointer = if op_type == "add-node" { "node.id" } else { "edge.id" };
+            let pointer = if op_type == "add-node" {
+                "node.id"
+            } else {
+                "edge.id"
+            };
             let id = operation
                 .pointer(pointer)
                 .and_then(Value::as_str)
@@ -580,7 +700,11 @@ fn dedup_operations(operations: Vec<Value>) -> Vec<Value> {
                 result.push(operation);
             }
         } else {
-            let key = if op_type == "update-node" { "nodeId" } else { "edgeId" };
+            let key = if op_type == "update-node" {
+                "nodeId"
+            } else {
+                "edgeId"
+            };
             let id = operation
                 .get(key)
                 .and_then(Value::as_str)
@@ -592,7 +716,11 @@ fn dedup_operations(operations: Vec<Value>) -> Vec<Value> {
             last_update.insert(id, operation);
         }
     }
-    result.extend(update_order.into_iter().filter_map(|id| last_update.remove(&id)));
+    result.extend(
+        update_order
+            .into_iter()
+            .filter_map(|id| last_update.remove(&id)),
+    );
     result
 }
 
@@ -995,15 +1123,11 @@ mod tests {
         git(root.path(), &["add", "README.md"]);
         git(
             root.path(),
-            &[
-                "commit",
-                "-m",
-                "PINN Fourier embedding ablation",
-            ],
+            &["commit", "-m", "PINN Fourier embedding ablation"],
         );
         git(root.path(), &["tag", "research/pinn-fourier-off"]);
-        let snapshot = git_snapshot("myc.git-workspace", root.path())
-            .expect("read git research snapshot");
+        let snapshot =
+            git_snapshot("myc.git-workspace", root.path()).expect("read git research snapshot");
         assert!(snapshot.is_repository);
         assert_eq!(snapshot.commits.len(), 1);
         assert!(snapshot.commits[0]
@@ -1017,11 +1141,14 @@ mod tests {
         assert!(operations.iter().any(|operation| {
             operation["op"] == "add-node"
                 && operation["node"]["type"] == "evidence"
-                && operation["node"]["id"].as_str().unwrap().starts_with("git-")
+                && operation["node"]["id"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("git-")
         }));
-        assert!(!operations.iter().any(|operation| {
-            operation["node"]["type"] == "experiment"
-        }));
+        assert!(!operations
+            .iter()
+            .any(|operation| { operation["node"]["type"] == "experiment" }));
     }
 
     #[test]
@@ -1064,10 +1191,13 @@ mod tests {
         edited["nodes"][0]["body"] = json!("改过的正文");
         fs::write(&path, serde_json::to_string_pretty(&edited).unwrap()).expect("rewrite project");
         git(root.path(), &["add", ".research-canvas/pinn.mycproj"]);
-        git(root.path(), &["commit", "-m", "refactor: extend the PINN graph"]);
+        git(
+            root.path(),
+            &["commit", "-m", "refactor: extend the PINN graph"],
+        );
 
-        let snapshot = git_snapshot("myc.git-workspace", root.path())
-            .expect("read git research snapshot");
+        let snapshot =
+            git_snapshot("myc.git-workspace", root.path()).expect("read git research snapshot");
         let operations = snapshot.graph_patch["operations"]
             .as_array()
             .expect("graph patch operations");
@@ -1076,18 +1206,19 @@ mod tests {
             .unwrap()
             .contains("structural changes"));
         // 第二次提交引入 n3 → add-node；第一次提交 n1 的 body 变化 → update-node。
-        assert!(operations.iter().any(|operation| {
-            operation["op"] == "add-node" && operation["node"]["id"] == "n3"
-        }));
+        assert!(operations
+            .iter()
+            .any(|operation| { operation["op"] == "add-node" && operation["node"]["id"] == "n3" }));
         assert!(operations.iter().any(|operation| {
             operation["op"] == "update-node"
                 && operation["nodeId"] == "n1"
                 && operation["changes"]["body"] == "改过的正文"
         }));
         // 基线 commit → evidence 节点仍然存在。
-        assert!(operations
-            .iter()
-            .any(|operation| operation["node"]["id"].as_str().unwrap().starts_with("git-")));
+        assert!(operations.iter().any(|operation| operation["node"]["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("git-")));
     }
 
     #[test]
@@ -1099,8 +1230,8 @@ mod tests {
         assert!(placeholder.graph_patch.is_null());
 
         let repository = initialize_git_repository(root.path()).expect("initialize repository");
-        let snapshot = git_snapshot("myc.git-workspace", &repository)
-            .expect("empty repository snapshot");
+        let snapshot =
+            git_snapshot("myc.git-workspace", &repository).expect("empty repository snapshot");
         assert!(snapshot.is_repository);
         assert!(snapshot.commits.is_empty());
         assert!(snapshot.graph_patch.is_null());
@@ -1166,5 +1297,20 @@ mod tests {
         assert_eq!(summary.node_count, 12);
         assert_eq!(summary.edge_count, 11);
         assert_eq!(summary.revision, 7);
+    }
+
+    #[test]
+    fn folder_tree_path_stays_inside_the_selected_root() {
+        let root = tempdir().expect("temporary folder root");
+        let nested = root.path().join("nested");
+        fs::create_dir_all(&nested).expect("nested folder");
+        let (canonical_root, canonical_nested) =
+            validate_folder_tree_path(root.path(), &nested).expect("nested path is allowed");
+        assert_eq!(canonical_root, root.path().canonicalize().unwrap());
+        assert_eq!(canonical_nested, nested.canonicalize().unwrap());
+
+        let outside = root.path().join("..").join("outside");
+        assert!(validate_folder_tree_path(root.path(), &outside).is_err());
+        assert!(validate_folder_tree_path(root.path(), &root.path().join("missing")).is_err());
     }
 }

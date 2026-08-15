@@ -98,6 +98,13 @@ export function pluginCompatibility(plugin: InstalledMycPlugin): PluginCompatibi
       }
       if (!plugin.theme) pushIssue(issues, "plugin.issue.themeDescriptor");
       break;
+    case "IconThemePlugin":
+      expectsCapability(plugin, "icon-theme.register", issues);
+      if (plugin.manifest.spec.engine !== "declarative") {
+        pushIssue(issues, "plugin.issue.themeEngine");
+      }
+      if (!plugin.iconTheme) pushIssue(issues, "plugin.issue.themeDescriptor");
+      break;
     case "EdgeStylePlugin":
       expectsCapability(plugin, "edge.style.register", issues);
       if (plugin.manifest.spec.engine !== "declarative") {

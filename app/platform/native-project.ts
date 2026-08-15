@@ -21,6 +21,14 @@ export interface FolderProjectSummary {
   edgeCount: number;
 }
 
+export interface FolderTreeEntry {
+  path: string;
+  name: string;
+  kind: "directory" | "file";
+  size: number;
+  modifiedAt: number | null;
+}
+
 export interface GitCommitRecord {
   id: string;
   shortId: string;
@@ -145,6 +153,21 @@ export async function openFolderWorkspace(command: EnabledWorkspaceCommand) {
     path,
   });
   return { path, projects };
+}
+
+export async function listFolderEntries(
+  command: EnabledWorkspaceCommand,
+  root: string,
+  path = root,
+) {
+  const { invoke } = await desktopModules();
+  return invoke<FolderTreeEntry[]>("list_folder_entries", {
+    pluginId: command.plugin.id,
+    pluginVersion: command.plugin.version,
+    capability: command.capability,
+    root,
+    path,
+  });
 }
 
 export async function openGitWorkspace(command: EnabledWorkspaceCommand) {

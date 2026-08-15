@@ -12,6 +12,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { translate } from "../app/i18n/catalog";
@@ -77,7 +78,7 @@ const samplePatch: PluginGraphPatch = {
 };
 
 test("jobStageIndex 覆盖管线全部阶段并按序递增", () => {
-  assert.equal(PDF_PIPELINE_STAGES.length, 8);
+  assert.equal(PDF_PIPELINE_STAGES.length, 9);
   PDF_PIPELINE_STAGES.forEach((stage, index) => {
     assert.equal(jobStageIndex(stage), index, `${stage} should be at index ${index}`);
   });
@@ -195,4 +196,14 @@ test("buildAcceptedPatch 全部拒绝返回 null，applySelected 应据此发送
     buildAcceptedPatch(samplePatch, { 0: { accept: false }, 1: { accept: false }, 2: { accept: false } }),
     null,
   );
+});
+
+test("PDF settings expose two separate tests and explain the upload boundary", () => {
+  const dialog = readFileSync("src/vue/components/PluginSettingsDialog.vue", "utf8");
+  assert.match(dialog, /PLUGIN_TEST_ACTION_IDS\.connection/);
+  assert.match(dialog, /PLUGIN_TEST_ACTION_IDS\.pdfExtraction/);
+  assert.match(dialog, /plugins\.testAiConnectionHint/);
+  assert.match(dialog, /plugins\.testPdfExtractionHint/);
+  assert.match(dialog, /plugins\.testPdfRemoteWarning/);
+  assert.doesNotMatch(dialog, /empty test PDF/i);
 });

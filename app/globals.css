@@ -421,7 +421,8 @@
     position: fixed;
     left: 50%;
     top: calc(var(--workspace-topbar-height) + clamp(16px, 2.5dvh, 24px));
-    z-index: 80;
+    z-index: 120;
+    pointer-events: none;
     max-width: min(520px, calc(100vw - 32px));
     transform: translateX(-50%);
     overflow: hidden;

@@ -3,17 +3,17 @@ kind: AgentPlugin
 metadata:
   id: myc.pdf-canvas-agent
   name: PDF Canvas Agent
-  version: 0.3.0
+  version: 0.3.2
   publisher: Research Canvas
   developer: Agent Platform Team
   developerId: 8bca4aed-e0ab-43c5-89ee-e2bcaf7f0e31
   update:
-    latestVersion: 0.3.0
-    releaseNotes: Added declarative API connection settings and host-side connection testing.
+    latestVersion: 0.3.2
+    releaseNotes: Added optional public progress summaries and auditable structured-output repair.
   description: >
-    从 PDF 论文中提取 DocumentMap → 语义结构 → 审阅门控的 GraphPatch。
-    Agent 不持有 API Key、文件系统句柄、网络访问、Graph store 写权限。
-    宿主管理一切，Agent 输出只能进入 reviewRequired GraphPatch。
+    Extracts a DocumentMap from a research PDF, turns it into semantic structure,
+    and proposes a review-gated GraphPatch. The agent never owns API keys,
+    filesystem handles, network access, or graph-store write permissions.
   license: MIT
 spec:
   engine: host-mediated
@@ -23,97 +23,168 @@ spec:
     - agent.graph.patch.propose
     - agent.review.request
   permissions: []
+  privateI18n:
+    defaultLocale: en
+    locales:
+      en: locales/en.json
+      zh-CN: locales/zh-CN.json
   settings:
     - id: api-key
-      label: Fallback provider API key
+      label: API key
+      labelKey: settings.apiKey.label
+      description: The host keeps this API key for the current session and never exposes it to the agent.
+      descriptionKey: settings.apiKey.description
       type: text
       secret: true
       required: false
-      placeholder: Enter your provider API key
+      placeholder: Paste your API key
+      placeholderKey: settings.apiKey.placeholder
       group: model
     - id: api-url
       label: API URL
+      labelKey: settings.apiUrl.label
+      description: Enter the Moonshot base URL that matches the parser backend and the region where the API key was created.
+      descriptionKey: settings.apiUrl.description
       type: text
       required: true
-      default: https://api.deepseek.com/anthropic
-      placeholder: https://api.example.com/anthropic
+      placeholder: https://api.moonshot.cn/v1
+      placeholderKey: settings.apiUrl.placeholder
       group: connection
     - id: api-format
-      label: API format
+      label: Parser backend
+      labelKey: settings.apiFormat.label
+      description: Select both the request protocol and streaming response parser. OpenAI uses /v1; Anthropic uses /anthropic.
+      descriptionKey: settings.apiFormat.description
       type: select
       required: true
-      default: anthropic
+      default: openai
       group: connection
       options:
         - value: openai
           label: OpenAI-compatible
+          labelKey: settings.apiFormat.options.openai
         - value: anthropic
-          label: Anthropic
+          label: Anthropic-compatible
+          labelKey: settings.apiFormat.options.anthropic
     - id: credential-source
       label: Credential source
+      labelKey: settings.credentialSource.label
+      description: Choose where the host should read the API key.
+      descriptionKey: settings.credentialSource.description
       type: select
       required: true
-      default: environment
+      default: host-secret
       group: connection
       options:
         - value: environment
           label: Local environment variable
+          labelKey: settings.credentialSource.options.environment
         - value: host-secret
-          label: Host secret
+          label: API key entered in this app
+          labelKey: settings.credentialSource.options.hostSecret
     - id: credential-env-var
-      label: Credential environment variable
+      label: Environment variable name
+      labelKey: settings.credentialEnvVar.label
+      description: Only the variable name is stored; its value stays in the host process.
+      descriptionKey: settings.credentialEnvVar.description
       type: text
       required: true
-      default: DEEPSEEK_API_KEY
-      placeholder: DEEPSEEK_API_KEY
+      default: MOONSHOT_API_KEY
+      placeholder: MOONSHOT_API_KEY
+      placeholderKey: settings.credentialEnvVar.placeholder
       group: connection
     - id: pdf-transport
       label: PDF extraction
-      description: Local text extraction keeps the PDF on-device. Kimi Files uploads it to Moonshot for extraction.
+      labelKey: settings.pdfTransport.label
+      description: Local extraction keeps the PDF on this device. Kimi Files uploads it to Moonshot.
+      descriptionKey: settings.pdfTransport.description
       type: select
       required: true
       default: local-text
       group: connection
       options:
         - value: local-text
-          label: Local text extraction
+          label: Extract text on this device
+          labelKey: settings.pdfTransport.options.localText
         - value: kimi-file-extract
-          label: Kimi Files (remote upload)
+          label: Use Kimi Files (uploads the PDF)
+          labelKey: settings.pdfTransport.options.kimiFiles
     - id: model
       label: Model
+      labelKey: settings.model.label
+      description: Kimi K2.6 analyzes the extracted PDF text and produces the structured canvas result.
+      descriptionKey: settings.model.description
       type: text
       required: true
-      default: deepseek-v4-flash
-      placeholder: deepseek-v4-flash
+      default: kimi-k2.6
+      placeholder: kimi-k2.6
+      placeholderKey: settings.model.placeholder
       group: model
     - id: thinking
-      label: Thinking
+      label: Thinking mode
+      labelKey: settings.thinking.label
+      description: Kimi K2.6 supports thinking as enabled or disabled; it does not use reasoning-effort levels.
+      descriptionKey: settings.thinking.description
       type: select
       required: true
-      default: extra_high
+      default: enabled
       group: model
       options:
-        - value: low
-          label: Low
-        - value: medium
-          label: Medium
-        - value: high
-          label: High
-        - value: extra_high
-          label: Extra high
+        - value: enabled
+          label: Enabled
+          labelKey: settings.thinking.options.enabled
+        - value: disabled
+          label: Disabled
+          labelKey: settings.thinking.options.disabled
+    - id: public-progress
+      label: Public analysis progress
+      labelKey: settings.publicProgress.label
+      description: Ask the model to emit short user-visible progress summaries. These are ordinary output, never hidden chain-of-thought.
+      descriptionKey: settings.publicProgress.description
+      type: select
+      required: true
+      default: disabled
+      group: advanced
+      options:
+        - value: disabled
+          label: Disabled
+          labelKey: settings.publicProgress.options.disabled
+        - value: enabled
+          label: Enabled
+          labelKey: settings.publicProgress.options.enabled
   connections:
     - id: provider
-      label: Provider API
+      label: AI provider
+      labelKey: connections.provider.label
+      description: Connect the PDF agent to the selected AI service.
+      descriptionKey: connections.provider.description
       urlSettingId: api-url
       formatSettingId: api-format
       modelSettingId: model
       credentialSourceSettingId: credential-source
       credentialEnvVarSettingId: credential-env-var
+      nativeProviderProfile: kimi-k2.6
       apiKey:
         source: environment
-        name: DEEPSEEK_API_KEY
+        name: MOONSHOT_API_KEY
         fallbackSettingId: api-key
-      testAction:
-        id: test-connection
-        label: Test connection
-        description: Send a minimal non-sensitive request using the current form values.
+      testActions:
+        - id: test-connection
+          kind: connection
+          label: Test AI connection
+          labelKey: actions.testConnection.label
+          description: Send a minimal text request. No PDF or file is uploaded.
+          descriptionKey: actions.testConnection.description
+          input:
+            type: text
+            fileUpload: never
+        - id: test-pdf-extraction
+          kind: pdf-extraction
+          label: Test PDF extraction
+          labelKey: actions.testPdfExtraction.label
+          description: Use the built-in non-empty test PDF. It may be uploaded when remote extraction is selected.
+          descriptionKey: actions.testPdfExtraction.description
+          input:
+            type: bundled-pdf
+            fixture: host-minimal-pdf-v1
+            fileUpload: may-upload

@@ -1,5 +1,17 @@
 import type { PluginGraphPatch } from "./contracts";
 
+/** Document-scoped diff contract shared by Agent review and Vue. */
+export type {
+  CanvasDiffAgentResultEnvelope,
+  CanvasDiffBatchRequest,
+  CanvasDiffBatchResult,
+  CanvasDiffDocumentInput,
+  CanvasDiffDocumentProvenance,
+  CanvasDiffDocumentResult,
+  CanvasDiffEntityRef,
+  CanvasDiffReviewContract,
+} from "../domain/canvas-diff";
+
 export type { PluginGraphPatch };
 
 // ── LLM Provider 类型 / LLM Provider types ──
@@ -26,6 +38,7 @@ export interface LlmProviderInfo {
 
 /** Agent 运行阶段标签 / Agent pipeline stage labels. */
 export type AgentJobStage =
+  | "queued"
   | "created"
   | "validating_file"
   | "extracting_text"
@@ -36,11 +49,72 @@ export type AgentJobStage =
   | "awaiting_review"
   | "accepted"
   | "rejected"
+  | "cancelled"
   | "failed";
+
+export type ImportDocumentFormat = "pdf" | "docx" | "md";
+
+/** Stable host setting id for the optional model-authored progress channel. */
+export const PUBLIC_PROGRESS_SETTING_ID = "public-progress" as const;
+export const PUBLIC_PROGRESS_SETTING_VALUES = ["disabled", "enabled"] as const;
+export type PublicProgressSettingValue = (typeof PUBLIC_PROGRESS_SETTING_VALUES)[number];
+
+export function isPublicProgressEnabled(value: unknown): value is "enabled" | true {
+  return value === "enabled" || value === true;
+}
+
+/** Ordinary assistant-content progress; never provider thinking/reasoning text. */
+export interface PublicProgressEvent {
+  stage: string;
+  summary: string;
+  evidenceCount?: number;
+  warningCount?: number;
+  createdAt?: number;
+}
+
+export interface RepairAuditEntry {
+  code: string;
+  path: string;
+  beforeSummary: string;
+  afterSummary: string;
+  severity: "info" | "warning" | "error";
+  deterministic: boolean;
+}
+
+export interface RepairAuditRecord {
+  pass: string;
+  attempt: number;
+  status:
+    | "validated"
+    | "deterministically-repaired"
+    | "needs-recovery"
+    | "model-recovered"
+    | "recovery-failed";
+  entries: RepairAuditEntry[];
+  error: string | null;
+  createdAt: number;
+}
+
+/** Safe activity telemetry; never contains provider reasoning text or hidden CoT. */
+export interface ReasoningActivity {
+  chunkCount: number;
+  bytes: number;
+  elapsedMs: number;
+  currentPass: string | null;
+  retryCount: number;
+  safeSummary: string | null;
+}
 
 /** Agent Job 状态快照——从 Rust AgentHost 序列化到前端 / Agent job status snapshot serialized from Rust. */
 export interface AgentJobStatus {
   jobId: string;
+  filePath: string;
+  documentFormat: ImportDocumentFormat | null;
+  batchId: string | null;
+  reasoningActivity: ReasoningActivity;
+  uploadBytes: number;
+  uploadTotalBytes: number | null;
+  /** @deprecated Compatibility alias for the original PDF-only review UI. */
   pdfPath: string;
   fileHash: string;
   state: AgentJobStage;
@@ -49,6 +123,10 @@ export interface AgentJobStatus {
   updatedAt: number;
   error: string | null;
   result: Record<string, unknown> | null;
+  /** Optional host bridge field populated when public-progress is enabled. */
+  publicProgress?: PublicProgressEvent[];
+  /** Bounded, user-inspectable record of deterministic repairs and recovery. */
+  repairAudit?: RepairAuditRecord[];
 }
 
 /** 审阅决策载荷 / Review decision payload. */
@@ -60,6 +138,26 @@ export interface ReviewPatchRequest {
 /** 启动 PDF Job 请求 / Start PDF job request. */
 export interface StartPdfJobRequest {
   pdfPath: string;
+}
+
+/** Starts a host-owned serial batch. File contents are validated in Rust. */
+export interface StartDocumentBatchRequest {
+  paths: string[];
+}
+
+export type ImportBatchState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_errors"
+  | "cancelled";
+
+export interface ImportBatchStatus {
+  batchId: string;
+  state: ImportBatchState;
+  createdAt: number;
+  updatedAt: number;
+  jobs: AgentJobStatus[];
 }
 
 // ── 能力声明 / Capability declarations ──
@@ -158,12 +256,10 @@ export const PDF_CANVAS_AGENT_MANIFEST = {
 
 /** 检查 job 是否处于终态 / Check if a job is in a terminal state. */
 export function isJobTerminal(state: AgentJobStage): boolean {
-  return state === "accepted" || state === "rejected" || state === "failed";
+  return state === "accepted" || state === "rejected" || state === "cancelled" || state === "failed";
 }
 
 /** 检查 job 是否等待审阅 / Check if a job is awaiting review. */
 export function isJobAwaitingReview(state: AgentJobStage): boolean {
   return state === "awaiting_review";
 }
-
-

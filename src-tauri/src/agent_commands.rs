@@ -5,6 +5,7 @@
 //! network access, or graph store write permissions. The host manages everything;
 //! agent output can only enter a reviewRequired GraphPatch.
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::Digest;
@@ -13,20 +14,38 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
-use crate::agent_host::{AgentHost, AgentJob, JobState};
+use crate::agent_host::{
+    AgentHost, AgentJob, DocumentFormat, ImportBatch, JobState, PublicProgressUpdate,
+    ReasoningActivity, RepairAuditEntry, RepairAuditRecord,
+};
 use crate::deepseek_client;
 use crate::llm_client::{
     ApiFormat, CallRole, LlmClientAdapter, PdfAgentLlmClient, PdfAgentLlmConfig, PdfAgentTransport,
 };
-use crate::pdf_pipeline::PdfPipeline;
-use semantic_pipeline::{Pipeline, PipelineConfig};
+use crate::native_plugins::pdf_canvas_agent;
+use crate::pdf_pipeline::{DocumentInput, PdfPipeline};
+use semantic_pipeline::pipeline::{LlmProvider, ResponseFormat};
+use semantic_pipeline::{
+    parse_json_with_repair, AuditEntry, AuditReport, AuditSeverity, Pipeline, PipelineConfig,
+    RepairOptions, RepairOutcome,
+};
 
 /// 宿主管理的全局 AgentHost 状态 / Host-managed global AgentHost state.
-pub struct AgentHostState(pub Mutex<AgentHost>);
+pub struct AgentHostState(
+    pub Mutex<AgentHost>,
+    /// One permit for the first implementation: batches and files execute serially.
+    pub tokio::sync::Mutex<()>,
+);
+
+impl AgentHostState {
+    pub fn new(host: AgentHost) -> Self {
+        Self(Mutex::new(host), tokio::sync::Mutex::new(()))
+    }
+}
 
 // ── 命令输入 / 输出类型 ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartPdfJobRequest {
     pub pdf_path: String,
@@ -56,10 +75,66 @@ pub struct StartPdfJobRequest {
     pub extra: BTreeMap<String, Value>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartDocumentBatchRequest {
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub settings: Option<Value>,
+    #[serde(default)]
+    pub plugin_settings: Option<Value>,
+    #[serde(default)]
+    pub api_url: Option<String>,
+    #[serde(default)]
+    pub api_format: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub thinking: Option<Value>,
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub credential_source: Option<String>,
+    #[serde(default)]
+    pub credential_env_var: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StartDocumentBatchRequest {
+    fn job_request(&self, path: String) -> StartPdfJobRequest {
+        StartPdfJobRequest {
+            pdf_path: path,
+            settings: self.settings.clone(),
+            plugin_settings: self.plugin_settings.clone(),
+            api_url: self.api_url.clone(),
+            api_format: self.api_format.clone(),
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            thinking: self.thinking.clone(),
+            transport: self.transport.clone(),
+            credential_source: self.credential_source.clone(),
+            credential_env_var: self.credential_env_var.clone(),
+            extra: self.extra.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PdfJobStatus {
     pub job_id: String,
+    pub file_path: String,
+    pub document_format: Option<DocumentFormat>,
+    pub batch_id: Option<String>,
+    pub reasoning_activity: ReasoningActivity,
+    pub public_progress: Vec<PublicProgressUpdate>,
+    pub repair_audit: Vec<RepairAuditRecord>,
+    pub upload_bytes: u64,
+    pub upload_total_bytes: Option<u64>,
+    /// Compatibility alias for the original review panel.
     pub pdf_path: String,
     pub file_hash: String,
     pub state: String,
@@ -68,6 +143,16 @@ pub struct PdfJobStatus {
     pub updated_at: u64,
     pub error: Option<String>,
     pub result: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBatchStatus {
+    pub batch_id: String,
+    pub state: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub jobs: Vec<PdfJobStatus>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +165,8 @@ pub struct ReviewPatchRequest {
 #[derive(Clone, Debug)]
 struct PdfAgentRuntimeConfig {
     llm: PdfAgentLlmConfig,
+    backend: pdf_canvas_agent::Backend,
+    public_progress: bool,
     credential_source: String,
     credential_env_var: String,
 }
@@ -94,6 +181,7 @@ impl PdfAgentRuntimeConfig {
             "thinking": self.llm.thinking,
             "thinkingLevel": self.llm.thinking_level,
             "transport": self.llm.transport,
+            "publicProgress": self.public_progress,
             "credentialSource": self.credential_source,
             "credentialEnvVar": self.credential_env_var,
         })
@@ -102,18 +190,62 @@ impl PdfAgentRuntimeConfig {
 
 impl From<&AgentJob> for PdfJobStatus {
     fn from(job: &AgentJob) -> Self {
+        let completed_stages = match job.state {
+            JobState::Queued | JobState::Created => 0,
+            JobState::ValidatingFile => 0,
+            JobState::ExtractingText => 1,
+            JobState::OcrOptional => 2,
+            JobState::BuildingDocumentMap => 3,
+            JobState::ExtractingSemantics => 4,
+            JobState::GeneratingPatch => 5,
+            JobState::AwaitingReview
+            | JobState::Accepted
+            | JobState::Rejected
+            | JobState::Cancelled
+            | JobState::Failed => job.progress().0.min(7),
+        };
         Self {
             job_id: job.job_id.clone(),
+            file_path: job.pdf_path.clone(),
+            document_format: job.document_format,
+            batch_id: job.batch_id.clone(),
+            reasoning_activity: {
+                let mut activity = job.reasoning_activity.clone();
+                if let Some(started_at) = activity.started_at {
+                    activity.elapsed_ms = activity
+                        .elapsed_ms
+                        .max(unix_millis().saturating_sub(started_at));
+                }
+                activity
+            },
+            public_progress: job.reasoning_activity.public_progress.clone(),
+            repair_audit: job.repair_audit.clone(),
+            upload_bytes: job.upload_bytes,
+            upload_total_bytes: job.upload_total_bytes,
             pdf_path: job.pdf_path.clone(),
             file_hash: job.file_hash.clone(),
             state: job.state.label().to_string(),
-            progress: job.progress(),
+            progress: (
+                if job.state == JobState::AwaitingReview {
+                    7
+                } else {
+                    completed_stages
+                },
+                7,
+            ),
             created_at: job.created_at,
             updated_at: job.updated_at,
             error: job.error.clone(),
             result: job.result.clone(),
         }
     }
+}
+
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn merge_settings_value(target: &mut Map<String, Value>, value: &Value) {
@@ -190,6 +322,25 @@ fn setting_bool_and_level(settings: &Map<String, Value>) -> (bool, Option<String
     }
 }
 
+fn setting_enabled(settings: &Map<String, Value>, names: &[&str], default: bool) -> bool {
+    let Some(value) = setting(settings, names) else {
+        return default;
+    };
+    if let Some(enabled) = value.as_bool() {
+        return enabled;
+    }
+    value
+        .as_str()
+        .map(str::trim)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "true" | "on" | "enabled" | "yes"
+            )
+        })
+        .unwrap_or(default)
+}
+
 fn env_or_setting(
     settings: &Map<String, Value>,
     names: &[&str],
@@ -246,25 +397,21 @@ fn resolve_pdf_agent_config(
         &["api-format", "apiFormat", "api_format"],
         &["PDF_AGENT_API_FORMAT"],
     );
-    let api_format = ApiFormat::parse(api_format_value.as_deref().or(Some("anthropic")))
+    let api_format = ApiFormat::parse(api_format_value.as_deref().or(Some("openai")))
         .map_err(|error| error.to_string())?;
-    let default_url = match api_format {
-        ApiFormat::OpenAi => "https://api.deepseek.com",
-        ApiFormat::Anthropic => "https://api.deepseek.com/anthropic",
-    };
     let api_url = env_or_setting(
         &settings,
         &["api-url", "apiUrl", "api_url"],
         &["PDF_AGENT_API_URL"],
     )
-    .unwrap_or_else(|| default_url.to_string());
+    .ok_or_else(|| "PDF Agent API URL is not configured".to_string())?;
     let provider = env_or_setting(
         &settings,
         &["provider", "providerId", "provider-id"],
         &["PDF_AGENT_PROVIDER"],
     )
     .unwrap_or_else(|| {
-        if crate::llm_client::is_approved_kimi_endpoint(&api_url) {
+        if pdf_canvas_agent::is_approved_endpoint(&api_url) {
             "moonshot".to_string()
         } else {
             "deepseek".to_string()
@@ -275,8 +422,13 @@ fn resolve_pdf_agent_config(
         &["model", "modelId", "model-id"],
         &["PDF_AGENT_MODEL", "DEEPSEEK_MODEL"],
     )
-    .unwrap_or_else(|| "deepseek-v4-flash".to_string());
-    let (thinking, thinking_level) = setting_bool_and_level(&settings);
+    .unwrap_or_else(|| pdf_canvas_agent::KIMI_K26_MODEL.to_string());
+    let (thinking, thinking_level) =
+        if setting(&settings, &["thinking", "thinkingLevel", "thinking-level"]).is_some() {
+            setting_bool_and_level(&settings)
+        } else {
+            (true, None)
+        };
     let transport_value = env_or_setting(
         &settings,
         &["transport", "file-transport", "pdf-transport"],
@@ -284,6 +436,11 @@ fn resolve_pdf_agent_config(
     );
     let transport =
         PdfAgentTransport::parse(transport_value.as_deref()).map_err(|error| error.to_string())?;
+    let public_progress = setting_enabled(
+        &settings,
+        &["public-progress", "publicProgress", "public_progress"],
+        false,
+    );
 
     let credential_source = env_or_setting(
         &settings,
@@ -301,7 +458,9 @@ fn resolve_pdf_agent_config(
         ],
         &["PDF_AGENT_CREDENTIAL_ENV_VAR"],
     )
-    .unwrap_or_else(|| "DEEPSEEK_API_KEY".to_string());
+    .unwrap_or_else(|| {
+        pdf_canvas_agent::default_credential_env_var(&api_url, &provider, &model).to_string()
+    });
     let api_key = if credential_source.eq_ignore_ascii_case("legacy-config") {
         deepseek_client::read_api_key_from_config(app).ok()
     } else {
@@ -325,9 +484,14 @@ fn resolve_pdf_agent_config(
         transport,
         timeout_secs: 120,
     };
-    llm.validate().map_err(|error| error.to_string())?;
+    let mut normalized = pdf_canvas_agent::normalize_config(llm)?;
+    if let pdf_canvas_agent::Backend::KimiK26(config) = &mut normalized.backend {
+        config.public_progress = public_progress;
+    }
     Ok(PdfAgentRuntimeConfig {
-        llm,
+        llm: normalized.llm,
+        backend: normalized.backend,
+        public_progress,
         credential_source,
         credential_env_var,
     })
@@ -351,35 +515,415 @@ pub async fn start_pdf_job(
     state: State<'_, AgentHostState>,
     request: StartPdfJobRequest,
 ) -> Result<PdfJobStatus, String> {
-    let runtime = resolve_pdf_agent_config(&app, &request)?;
-    let pdf_path = Path::new(&request.pdf_path);
-    let abs_path = pdf_path
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve path: {e}"))?;
-
-    // 创建 job（含文件校验）——短锁,拿到 id 即释放。
-    let job_id = {
-        let mut host = state.0.lock().map_err(|e| format!("Lock error: {e}"))?;
-        host.create_job(&abs_path)?.job_id.clone()
+    let batch_request = StartDocumentBatchRequest {
+        paths: vec![request.pdf_path],
+        settings: request.settings,
+        plugin_settings: request.plugin_settings,
+        api_url: request.api_url,
+        api_format: request.api_format,
+        provider: request.provider,
+        model: request.model,
+        thinking: request.thinking,
+        transport: request.transport,
+        credential_source: request.credential_source,
+        credential_env_var: request.credential_env_var,
+        extra: request.extra,
     };
+    let batch = {
+        let mut host = state
+            .0
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        host.create_batch(&batch_request.paths)?
+    };
+    let queued = {
+        let host = state
+            .0
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        let job_id = batch
+            .job_ids
+            .first()
+            .ok_or_else(|| "PDF batch did not create a job".to_string())?;
+        PdfJobStatus::from(
+            host.get_job(job_id)
+                .ok_or_else(|| "Job vanished".to_string())?,
+        )
+    };
+    tauri::async_runtime::spawn(run_document_batch(app, batch, batch_request));
+    Ok(queued)
+}
 
-    let outcome = run_pdf_stages(&app, &state.0, &job_id, &abs_path, runtime).await;
-    if let Err(error) = outcome {
-        // 管线失败必须落 Failed 终态,否则 job 永久卡死在非终态;
-        // 若 job 已被并发取消/裁决,保持既有终态。
-        let mut host = state.0.lock().map_err(|e| format!("Lock error: {e}"))?;
-        let _ = host.advance_job(&job_id, JobState::Failed, None, None, Some(&error));
-        return Err(error);
+/// Queue a document batch and return before validation, extraction, or model work begins.
+#[tauri::command]
+pub async fn start_document_batch(
+    app: AppHandle,
+    state: State<'_, AgentHostState>,
+    request: StartDocumentBatchRequest,
+) -> Result<ImportBatchStatus, String> {
+    let batch = {
+        let mut host = state
+            .0
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        host.create_batch(&request.paths)?
+    };
+    let snapshot = {
+        let host = state
+            .0
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        import_batch_status(&host, &batch)?
+    };
+    tauri::async_runtime::spawn(run_document_batch(app, batch, request));
+    Ok(snapshot)
+}
+
+async fn run_document_batch(
+    app: AppHandle,
+    batch: ImportBatch,
+    request: StartDocumentBatchRequest,
+) {
+    let state = app.state::<AgentHostState>();
+    let _serial_permit = state.1.lock().await;
+    for (job_id, path) in batch.job_ids.iter().zip(request.paths.iter()) {
+        let terminal = state
+            .0
+            .lock()
+            .ok()
+            .and_then(|host| host.get_job(job_id).map(|job| job.state.is_terminal()))
+            .unwrap_or(true);
+        if terminal {
+            continue;
+        }
+        let job_request = request.job_request(path.clone());
+        let outcome = match resolve_pdf_agent_config(&app, &job_request) {
+            Ok(runtime) => {
+                run_document_stages(&app, &state.0, job_id, Path::new(path), runtime).await
+            }
+            Err(error) => Err(error),
+        };
+        if let Err(error) = outcome {
+            if let Ok(mut host) = state.0.lock() {
+                let terminal = host
+                    .get_job(job_id)
+                    .map(|job| job.state.is_terminal())
+                    .unwrap_or(true);
+                if !terminal {
+                    let _ = host.advance_job(job_id, JobState::Failed, None, None, Some(&error));
+                }
+            }
+        }
     }
+}
 
-    let host = state.0.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let job = host
-        .get_job(&job_id)
-        .ok_or_else(|| "Job vanished".to_string())?;
-    Ok(PdfJobStatus::from(job))
+fn import_batch_status(host: &AgentHost, batch: &ImportBatch) -> Result<ImportBatchStatus, String> {
+    let jobs = batch
+        .job_ids
+        .iter()
+        .map(|job_id| {
+            host.get_job(job_id)
+                .map(PdfJobStatus::from)
+                .ok_or_else(|| format!("Job not found: {job_id}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let all_settled = jobs.iter().all(|job| {
+        matches!(
+            job.state.as_str(),
+            "awaiting_review" | "accepted" | "rejected" | "cancelled" | "failed"
+        )
+    });
+    let state = if jobs.iter().all(|job| job.state == "cancelled") {
+        "cancelled"
+    } else if all_settled {
+        if jobs
+            .iter()
+            .any(|job| matches!(job.state.as_str(), "failed" | "cancelled"))
+        {
+            "completed_with_errors"
+        } else {
+            "completed"
+        }
+    } else if jobs.iter().all(|job| job.state == "queued") {
+        "queued"
+    } else {
+        "running"
+    };
+    Ok(ImportBatchStatus {
+        batch_id: batch.batch_id.clone(),
+        state: state.to_string(),
+        created_at: batch.created_at,
+        updated_at: jobs
+            .iter()
+            .map(|job| job.updated_at)
+            .max()
+            .unwrap_or(batch.updated_at),
+        jobs,
+    })
+}
+
+#[tauri::command]
+pub fn get_import_batch_status(
+    state: State<'_, AgentHostState>,
+    batch_id: String,
+) -> Result<ImportBatchStatus, String> {
+    let host = state
+        .0
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let batch = host
+        .get_batch(&batch_id)
+        .ok_or_else(|| format!("Batch not found: {batch_id}"))?;
+    import_batch_status(&host, batch)
+}
+
+#[tauri::command]
+pub fn list_import_jobs(state: State<'_, AgentHostState>) -> Result<Vec<PdfJobStatus>, String> {
+    let host = state
+        .0
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let mut jobs = host
+        .list_jobs()
+        .into_iter()
+        .map(PdfJobStatus::from)
+        .collect::<Vec<_>>();
+    jobs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(jobs)
 }
 
 /// 短锁推进一个阶段;并发取消/失败导致转换非法时,若已是终态则返回干净的并发终止错误。
+/// Narrow progress boundary for the queued importer. Hypatia's ProgressSink can
+/// replace this adapter without coupling provider callbacks to AgentHost.
+/// TODO(Hypatia): implement the shared ProgressSink trait here when its API lands.
+struct ImportProgressAdapter<'a> {
+    hosts: &'a Mutex<AgentHost>,
+    job_id: &'a str,
+}
+
+/// Provider-neutral hook for Hypatia/native streaming and a future Tauri event
+/// emitter. Implementations accept counts and fixed summaries only, never text.
+#[allow(dead_code)]
+trait NativeProgressSink {
+    fn begin_reasoning_pass(&self, pass: &str, safe_summary: &str) -> Result<(), String>;
+    fn record_reasoning_chunk(&self, bytes: usize) -> Result<(), String>;
+    fn record_reasoning_retry(&self) -> Result<(), String>;
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportProgressEvent {
+    job_id: String,
+    stage: String,
+    reasoning_activity: ReasoningActivity,
+}
+
+#[derive(Default)]
+struct KimiProgressCursor {
+    reasoning_attempt: u32,
+    reasoning_chunks: u64,
+    reasoning_bytes: u64,
+    upload_total_bytes: u64,
+}
+
+struct KimiJobProgressSink {
+    app: AppHandle,
+    job_id: String,
+    cursor: Mutex<KimiProgressCursor>,
+}
+
+impl KimiJobProgressSink {
+    fn new(app: AppHandle, job_id: &str) -> Self {
+        Self {
+            app,
+            job_id: job_id.to_string(),
+            cursor: Mutex::new(KimiProgressCursor::default()),
+        }
+    }
+}
+
+impl pdf_canvas_agent::ProgressSink for KimiJobProgressSink {
+    fn emit(&self, event: pdf_canvas_agent::TransportProgressEvent) {
+        use pdf_canvas_agent::{TransportOperation, TransportProgressEvent};
+
+        let state = self.app.state::<AgentHostState>();
+        match event {
+            TransportProgressEvent::Started {
+                operation: TransportOperation::FileUpload,
+                total_bytes: Some(total),
+                ..
+            } => {
+                if let Ok(mut cursor) = self.cursor.lock() {
+                    cursor.upload_total_bytes = total;
+                }
+                if let Ok(mut host) = state.0.lock() {
+                    let _ = host.record_upload_progress(&self.job_id, 0, total);
+                }
+            }
+            TransportProgressEvent::BytesTransferred {
+                operation: TransportOperation::FileUpload,
+                transferred_bytes,
+                total_bytes,
+                ..
+            } => {
+                if let Ok(mut host) = state.0.lock() {
+                    let _ =
+                        host.record_upload_progress(&self.job_id, transferred_bytes, total_bytes);
+                }
+            }
+            TransportProgressEvent::Completed {
+                operation: TransportOperation::FileUpload,
+                transferred_bytes: Some(transferred),
+                ..
+            } => {
+                let total = self
+                    .cursor
+                    .lock()
+                    .map(|cursor| cursor.upload_total_bytes)
+                    .unwrap_or(transferred);
+                if let Ok(mut host) = state.0.lock() {
+                    let _ = host.record_upload_progress(&self.job_id, transferred, total);
+                }
+            }
+            TransportProgressEvent::Started {
+                operation: TransportOperation::ChatCompletion,
+                attempt,
+                ..
+            } => {
+                if let Ok(mut cursor) = self.cursor.lock() {
+                    cursor.reasoning_attempt = attempt;
+                    cursor.reasoning_chunks = 0;
+                    cursor.reasoning_bytes = 0;
+                }
+            }
+            TransportProgressEvent::ReasoningActivity {
+                attempt,
+                chunks,
+                utf8_bytes,
+            } => {
+                let (chunk_delta, byte_delta) = match self.cursor.lock() {
+                    Ok(mut cursor) => {
+                        if cursor.reasoning_attempt != attempt {
+                            cursor.reasoning_attempt = attempt;
+                            cursor.reasoning_chunks = 0;
+                            cursor.reasoning_bytes = 0;
+                        }
+                        let delta = (
+                            chunks.saturating_sub(cursor.reasoning_chunks),
+                            utf8_bytes.saturating_sub(cursor.reasoning_bytes),
+                        );
+                        cursor.reasoning_chunks = chunks;
+                        cursor.reasoning_bytes = utf8_bytes;
+                        delta
+                    }
+                    Err(_) => return,
+                };
+                if let Ok(mut host) = state.0.lock() {
+                    let _ = host.record_reasoning_activity(&self.job_id, chunk_delta, byte_delta);
+                }
+            }
+            TransportProgressEvent::PublicProgress {
+                stage,
+                summary,
+                evidence_count,
+                warning_count,
+            } => {
+                if let Ok(mut host) = state.0.lock() {
+                    let _ = host.record_public_progress(
+                        &self.job_id,
+                        stage,
+                        summary,
+                        evidence_count,
+                        warning_count,
+                    );
+                }
+            }
+            TransportProgressEvent::Retrying { .. } => {
+                if let Ok(mut host) = state.0.lock() {
+                    let _ = host.record_reasoning_retry(&self.job_id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl ImportProgressAdapter<'_> {
+    fn transition(
+        &self,
+        next: JobState,
+        output_hash: Option<&str>,
+        data: Option<Value>,
+    ) -> Result<(), String> {
+        advance_stage(self.hosts, self.job_id, next, output_hash, data)
+    }
+
+    fn record_repair_audit(
+        &self,
+        pass: &str,
+        attempt: u32,
+        status: &str,
+        report: &AuditReport,
+        error: Option<String>,
+    ) -> Result<(), String> {
+        let entries = report
+            .entries
+            .iter()
+            .map(|entry| RepairAuditEntry {
+                code: entry.code.clone(),
+                path: entry.path.clone(),
+                before_summary: entry.before_summary.clone(),
+                after_summary: entry.after_summary.clone(),
+                severity: match entry.severity {
+                    AuditSeverity::Info => "info",
+                    AuditSeverity::Warning => "warning",
+                    AuditSeverity::Error => "error",
+                }
+                .to_string(),
+                deterministic: entry.deterministic,
+            })
+            .collect();
+        self.hosts
+            .lock()
+            .map_err(|lock_error| format!("Lock error: {lock_error}"))?
+            .record_repair_audit(
+                self.job_id,
+                RepairAuditRecord {
+                    pass: pass.to_string(),
+                    attempt,
+                    status: status.to_string(),
+                    entries,
+                    error,
+                    created_at: 0,
+                },
+            )
+    }
+}
+
+impl NativeProgressSink for ImportProgressAdapter<'_> {
+    fn begin_reasoning_pass(&self, pass: &str, safe_summary: &str) -> Result<(), String> {
+        self.hosts
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?
+            .begin_reasoning_pass(self.job_id, pass, safe_summary)
+    }
+
+    fn record_reasoning_chunk(&self, bytes: usize) -> Result<(), String> {
+        self.hosts
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?
+            .record_reasoning_chunk(self.job_id, bytes)
+    }
+
+    fn record_reasoning_retry(&self) -> Result<(), String> {
+        self.hosts
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?
+            .record_reasoning_retry(self.job_id)
+    }
+}
+
 fn advance_stage(
     hosts: &Mutex<AgentHost>,
     job_id: &str,
@@ -405,46 +949,86 @@ fn advance_stage(
 }
 
 /// 管线主体:阶段推进用短锁,重计算进线程池,失败即返回由调用方落 Failed。
-async fn run_pdf_stages(
+async fn run_document_stages(
     app: &AppHandle,
     hosts: &Mutex<AgentHost>,
     job_id: &str,
-    abs_path: &Path,
+    selected_path: &Path,
     runtime: PdfAgentRuntimeConfig,
 ) -> Result<(), String> {
+    let progress = ImportProgressAdapter { hosts, job_id };
     // ── 阶段 1：ValidatingFile ──
-    advance_stage(
-        hosts,
-        job_id,
+    progress.transition(
         JobState::ValidatingFile,
         Some("v1"),
         Some(runtime.safe_snapshot()),
     )?;
 
+    let path_for_validation = selected_path.to_path_buf();
+    let validated = tauri::async_runtime::spawn_blocking(move || {
+        AgentHost::validate_document_file(&path_for_validation)
+    })
+    .await
+    .map_err(|error| format!("Validation task join error: {error}"))??;
+    {
+        let mut host = hosts
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        host.mark_document_validated(job_id, &validated)?;
+    }
+    let abs_path = validated.path.as_path();
+    let document_format = validated.format;
+
     // ── 阶段 2：ExtractingText ──
-    let extracted = {
-        if runtime.llm.transport == PdfAgentTransport::KimiFileExtract {
-            let client =
-                PdfAgentLlmClient::new(runtime.llm.clone()).map_err(|error| error.to_string())?;
-            let text = client
-                .extract_kimi_file_text(abs_path)
-                .await
-                .map_err(|error| format!("Kimi file extraction failed: {error}"))?;
-            PdfPipeline::from_plain_text(text)
+    let document_input = {
+        if document_format == DocumentFormat::Pdf
+            && runtime.llm.transport == PdfAgentTransport::KimiFileExtract
+        {
+            let text = match &runtime.backend {
+                pdf_canvas_agent::Backend::KimiK26(config) => {
+                    let sink = Arc::new(KimiJobProgressSink::new(app.clone(), job_id));
+                    let client =
+                        pdf_canvas_agent::KimiK26Client::new_with_progress(config.clone(), sink)
+                            .map_err(|error| error.to_string())?;
+                    client
+                        .extract_pdf_text(abs_path)
+                        .await
+                        .map_err(|error| format!("Kimi file extraction failed: {error}"))?
+                }
+                pdf_canvas_agent::Backend::Generic => {
+                    let client = PdfAgentLlmClient::new(runtime.llm.clone())
+                        .map_err(|error| error.to_string())?;
+                    client
+                        .extract_kimi_file_text(abs_path)
+                        .await
+                        .map_err(|error| format!("PDF file extraction failed: {error}"))?
+                }
+            };
+            DocumentInput {
+                format: DocumentFormat::Pdf,
+                source_name: abs_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("document.pdf")
+                    .to_string(),
+                media_type: "application/pdf".to_string(),
+                extracted: PdfPipeline::from_plain_text(text),
+            }
         } else {
             let path = abs_path.to_path_buf();
-            tauri::async_runtime::spawn_blocking(move || PdfPipeline::extract_text(&path))
-                .await
-                .map_err(|e| format!("Pipeline task join error: {e}"))??
+            tauri::async_runtime::spawn_blocking(move || {
+                PdfPipeline::extract_document(&path, document_format)
+            })
+            .await
+            .map_err(|e| format!("Pipeline task join error: {e}"))??
         }
     };
+    let extracted = document_input.extracted.clone();
     let text_hash = format!("{:x}", sha2::Sha256::digest(extracted.full_text.as_bytes()));
-    advance_stage(
-        hosts,
-        job_id,
+    progress.transition(
         JobState::ExtractingText,
         Some(&text_hash),
-        Some(serde_json::to_value(&extracted).map_err(|e| e.to_string())?),
+        Some(serde_json::to_value(&document_input).map_err(|e| e.to_string())?),
     )?;
 
     // ── 阶段 3：OcrOptional ──
@@ -471,9 +1055,7 @@ async fn run_pdf_stages(
         "{:x}",
         sha2::Sha256::digest(final_extracted.full_text.as_bytes())
     );
-    advance_stage(
-        hosts,
-        job_id,
+    progress.transition(
         JobState::OcrOptional,
         Some(&final_text_hash),
         Some(serde_json::json!({
@@ -497,9 +1079,7 @@ async fn run_pdf_stages(
         "{:x}",
         sha2::Sha256::digest(serde_json::to_string(&doc).unwrap_or_default().as_bytes())
     );
-    advance_stage(
-        hosts,
-        job_id,
+    progress.transition(
         JobState::BuildingDocumentMap,
         Some(&doc_hash),
         Some(serde_json::to_value(&doc).map_err(|e| e.to_string())?),
@@ -508,36 +1088,35 @@ async fn run_pdf_stages(
     // ── 阶段 5：ExtractingSemantics ──
     // The host sends bounded text messages to the configured LLM. The PDF
     // bytes have already ended at local extraction (or Kimi text extraction).
-    let patch = run_semantic_graph_pipeline(app, &doc, &final_extracted, &runtime, job_id).await?;
+    let patch = run_semantic_graph_pipeline(
+        app,
+        &doc,
+        &final_extracted,
+        &runtime,
+        job_id,
+        document_format,
+        &progress,
+    )
+    .await?;
     let semantic_hash = format!(
         "{:x}",
         sha2::Sha256::digest(serde_json::to_string(&patch).unwrap_or_default().as_bytes())
     );
-    advance_stage(
-        hosts,
-        job_id,
+    progress.transition(
         JobState::ExtractingSemantics,
         Some(&semantic_hash),
         Some(patch.clone()),
     )?;
 
     // ── 阶段 6：GeneratingPatch ──
-    advance_stage(
-        hosts,
-        job_id,
+    progress.transition(
         JobState::GeneratingPatch,
         Some(&semantic_hash),
         Some(patch.clone()),
     )?;
 
     // ── 阶段 7:AwaitingReview(data 即审阅载荷,advance_job 写入 job.result)──
-    advance_stage(
-        hosts,
-        job_id,
-        JobState::AwaitingReview,
-        Some(&semantic_hash),
-        Some(patch),
-    )?;
+    progress.transition(JobState::AwaitingReview, Some(&semantic_hash), Some(patch))?;
     Ok(())
 }
 
@@ -585,41 +1164,200 @@ pub fn cancel_job(
     Ok(PdfJobStatus::from(job))
 }
 
+async fn parse_pass_with_auditable_repair<T: DeserializeOwned>(
+    raw_output: &str,
+    pass: &str,
+    schema_contract: &str,
+    recovery_provider: &dyn LlmProvider,
+    progress: &ImportProgressAdapter<'_>,
+) -> Result<T, String> {
+    match parse_json_with_repair::<T>(raw_output, RepairOptions::default()) {
+        RepairOutcome::Parsed(parsed) => {
+            let status = if parsed.audit.is_empty() {
+                "validated"
+            } else {
+                "deterministically-repaired"
+            };
+            progress.record_repair_audit(pass, 0, status, &parsed.audit, None)?;
+            return Ok(parsed.value);
+        }
+        RepairOutcome::NeedsRecovery {
+            repaired_json,
+            audit,
+            error,
+        } => {
+            progress.record_repair_audit(
+                pass,
+                0,
+                "needs-recovery",
+                &audit,
+                Some(error.to_string()),
+            )?;
+            progress.record_reasoning_retry()?;
+
+            let bounded_candidate = if repaired_json.trim().is_empty() {
+                truncate_chars(raw_output, 120_000)
+            } else {
+                truncate_chars(&repaired_json, 120_000)
+            };
+            let system = "Repair one JSON payload to match the supplied contract. Return JSON only. Preserve all supported values exactly. Do not add facts, entities, evidence, anchors, confidence scores, quotations, or inferred claims. Remove unsupported prose and keys only when required for valid JSON. This is output repair, not reasoning or re-analysis.";
+            let user = format!(
+                "Pass: {pass}\nRequired contract: {schema_contract}\nParser error: {error}\nCandidate JSON:\n{bounded_candidate}"
+            );
+            let recovered = match recovery_provider.chat(system, &user, ResponseFormat::Json).await {
+                Ok(recovered) => recovered,
+                Err(recovery_error) => {
+                    let recovery_audit = with_model_recovery_marker(AuditReport::default());
+                    progress.record_repair_audit(
+                        pass,
+                        1,
+                        "recovery-failed",
+                        &recovery_audit,
+                        Some(recovery_error.clone()),
+                    )?;
+                    return Err(format!(
+                        "Pass {pass} recovery request failed: {recovery_error}"
+                    ));
+                }
+            };
+
+            match parse_json_with_repair::<T>(&recovered, RepairOptions::default()) {
+                RepairOutcome::Parsed(parsed) => {
+                    let recovery_audit = with_model_recovery_marker(parsed.audit);
+                    progress.record_repair_audit(
+                        pass,
+                        1,
+                        "model-recovered",
+                        &recovery_audit,
+                        None,
+                    )?;
+                    Ok(parsed.value)
+                }
+                RepairOutcome::NeedsRecovery { audit, error, .. } => {
+                    let recovery_audit = with_model_recovery_marker(audit);
+                    progress.record_repair_audit(
+                        pass,
+                        1,
+                        "recovery-failed",
+                        &recovery_audit,
+                        Some(error.to_string()),
+                    )?;
+                    Err(format!(
+                        "Pass {pass} result remains invalid after one audited recovery attempt: {error}"
+                    ))
+                }
+            }
+        }
+    }
+}
+
+fn with_model_recovery_marker(mut report: AuditReport) -> AuditReport {
+    report.entries.insert(
+        0,
+        AuditEntry {
+            code: "MODEL_RECOVERY_ATTEMPTED".to_string(),
+            path: "$".to_string(),
+            before_summary: "deterministic repair could not satisfy the typed contract".to_string(),
+            after_summary: "one bounded recovery response was requested; local semantic validation remains mandatory"
+                .to_string(),
+            severity: AuditSeverity::Warning,
+            deterministic: false,
+        },
+    );
+    report
+}
+
 async fn run_semantic_graph_pipeline(
     app: &AppHandle,
     doc: &crate::pdf_pipeline::StructuredDocument,
     extracted: &crate::pdf_pipeline::ExtractedText,
     runtime: &PdfAgentRuntimeConfig,
     job_id: &str,
+    document_format: DocumentFormat,
+    progress: &ImportProgressAdapter<'_>,
 ) -> Result<Value, String> {
     let prompts_dir = resolve_prompts_dir(app)?;
     let config = PipelineConfig::load(&prompts_dir, "en").map_err(|error| error.to_string())?;
     let pipeline = Pipeline::new(config);
-    let client =
-        Arc::new(PdfAgentLlmClient::new(runtime.llm.clone()).map_err(|error| error.to_string())?);
-    let provider = LlmClientAdapter::new(client, CallRole::Extraction, job_id.to_string());
+    let native_kimi_progress = matches!(&runtime.backend, pdf_canvas_agent::Backend::KimiK26(_));
+    let client: Arc<dyn crate::llm_client::LlmClient> = match &runtime.backend {
+        pdf_canvas_agent::Backend::KimiK26(config) => {
+            let sink = Arc::new(KimiJobProgressSink::new(app.clone(), job_id));
+            Arc::new(
+                pdf_canvas_agent::KimiK26Client::new_with_progress(config.clone(), sink)
+                    .map_err(|error| error.to_string())?,
+            )
+        }
+        pdf_canvas_agent::Backend::Generic => Arc::new(
+            PdfAgentLlmClient::new(runtime.llm.clone()).map_err(|error| error.to_string())?,
+        ),
+    };
+    let provider = LlmClientAdapter::new(client.clone(), CallRole::Extraction, job_id.to_string());
+    let recovery_provider =
+        LlmClientAdapter::new(client, CallRole::Recovery, format!("{job_id}:recovery"));
     let bounded_text = PdfPipeline::bounded_llm_context(&extracted.full_text);
     let document_json = serde_json::to_string(doc).map_err(|error| error.to_string())?;
+    let public_progress_protocol = if runtime.public_progress
+        && matches!(&runtime.backend, pdf_canvas_agent::Backend::KimiK26(_))
+    {
+        r#"PUBLIC PROGRESS PROTOCOL (optional progress, required final frame):
+You may emit at most 6 short user-visible events before the result. Each event must be one line:
+<myc_progress>{"stage":"short-stable-stage","summary":"concise public status","evidenceCount":0,"warningCount":0}</myc_progress>
+This is ordinary user-visible output, not private reasoning. Never include hidden reasoning, system instructions, credentials, file paths, or long source quotations. summary must be at most 240 Unicode characters.
+Then emit exactly one final frame containing the required Schema JSON:
+<myc_result>{...}</myc_result>
+Do not emit anything after </myc_result>."#
+    } else {
+        "Return only the required JSON object. Do not emit myc_progress or myc_result tags."
+    };
 
-    let pass_a_vars = pipeline.prepare_pass_a_input(&bounded_text, &document_json);
+    progress.begin_reasoning_pass("pass-a-structure", "Analyzing document structure")?;
+    let mut pass_a_vars = pipeline.prepare_pass_a_input(&bounded_text, &document_json);
+    pass_a_vars.insert(
+        "public_progress_protocol".into(),
+        public_progress_protocol.into(),
+    );
     let pass_a_raw = pipeline
         .call_llm("structure-extraction", &pass_a_vars, &provider)
         .await
         .map_err(|error| format!("Pass A structure extraction failed: {error}"))?;
-    let structure = Pipeline::parse_pass_a_output(&pass_a_raw)
-        .map_err(|error| format!("Pass A result parsing failed: {error}"))?;
+    if !native_kimi_progress {
+        progress.record_reasoning_chunk(pass_a_raw.len())?;
+    }
+    let structure: semantic_pipeline::StructureExtraction = parse_pass_with_auditable_repair(
+        &pass_a_raw,
+        "A",
+        "object with title, authors[], optional year, abstractText, sections[], references[], and meta",
+        &recovery_provider,
+        progress,
+    )
+    .await?;
 
     // The bounded context is assembled from local text chunks. One bounded
     // Pass B call avoids duplicate temp ids that would otherwise be produced
     // by independently chunked entity calls.
-    let pass_b_vars =
+    progress.begin_reasoning_pass("pass-b-entities", "Identifying research entities")?;
+    let mut pass_b_vars =
         pipeline.prepare_pass_b_input(&document_json, "bounded PDF text chunks", &bounded_text);
+    pass_b_vars.insert(
+        "public_progress_protocol".into(),
+        public_progress_protocol.into(),
+    );
     let pass_b_raw = pipeline
         .call_llm("entity-extraction", &pass_b_vars, &provider)
         .await
         .map_err(|error| format!("Pass B entity extraction failed: {error}"))?;
-    let entities = Pipeline::parse_pass_b_output(&pass_b_raw)
-        .map_err(|error| format!("Pass B result parsing failed: {error}"))?;
+    if !native_kimi_progress {
+        progress.record_reasoning_chunk(pass_b_raw.len())?;
+    }
+    let entities: semantic_pipeline::EntityExtraction = parse_pass_with_auditable_repair(
+        &pass_b_raw,
+        "B",
+        "object with entities[] and meta; never invent entity facts, anchors, or confidence",
+        &recovery_provider,
+        progress,
+    )
+    .await?;
     let entities_json = serde_json::to_string(&entities).map_err(|error| error.to_string())?;
 
     let experiment_paragraphs = doc
@@ -635,30 +1373,62 @@ async fn run_semantic_graph_pipeline(
         .map(|paragraph| paragraph.text.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let pass_c_vars = pipeline.prepare_pass_c_input(
+    progress.begin_reasoning_pass("pass-c-variables", "Mapping variables and experiments")?;
+    let mut pass_c_vars = pipeline.prepare_pass_c_input(
         &entities_json,
         &truncate_chars(&experiment_paragraphs, 40_000),
         &bounded_text,
+    );
+    pass_c_vars.insert(
+        "public_progress_protocol".into(),
+        public_progress_protocol.into(),
     );
     let pass_c_raw = pipeline
         .call_llm("variable-fission", &pass_c_vars, &provider)
         .await
         .map_err(|error| format!("Pass C variable extraction failed: {error}"))?;
-    let variable_fission = Pipeline::parse_pass_c_output(&pass_c_raw)
-        .map_err(|error| format!("Pass C result parsing failed: {error}"))?;
+    if !native_kimi_progress {
+        progress.record_reasoning_chunk(pass_c_raw.len())?;
+    }
+    let variable_fission: semantic_pipeline::VariableFissionResult =
+        parse_pass_with_auditable_repair(
+            &pass_c_raw,
+            "C",
+            "object with experimentMatrix[] and variableRegistry[]",
+            &recovery_provider,
+            progress,
+        )
+        .await?;
     let variable_json =
         serde_json::to_string(&variable_fission).map_err(|error| error.to_string())?;
 
-    let pass_d_vars = pipeline.prepare_pass_d_input(&entities_json, &variable_json, &bounded_text);
+    progress.begin_reasoning_pass("pass-d-merge", "Merging cross-section evidence")?;
+    let mut pass_d_vars =
+        pipeline.prepare_pass_d_input(&entities_json, &variable_json, &bounded_text);
+    pass_d_vars.insert(
+        "public_progress_protocol".into(),
+        public_progress_protocol.into(),
+    );
     let pass_d_raw = pipeline
         .call_llm("cross-segment-merge", &pass_d_vars, &provider)
         .await
         .map_err(|error| format!("Pass D merge failed: {error}"))?;
-    let merge_result = Pipeline::parse_pass_d_output(&pass_d_raw)
-        .map_err(|error| format!("Pass D result parsing failed: {error}"))?;
+    if !native_kimi_progress {
+        progress.record_reasoning_chunk(pass_d_raw.len())?;
+    }
+    let merge_result: semantic_pipeline::CrossSegmentMergeResult =
+        parse_pass_with_auditable_repair(
+            &pass_d_raw,
+            "D",
+            "object with mergeGroups[], claimEvidenceBundles[], metricAlignment[], and datasetRegistry[]",
+            &recovery_provider,
+            progress,
+        )
+        .await?;
     let merge_json = serde_json::to_string(&merge_result).map_err(|error| error.to_string())?;
 
-    let pass_e_vars = pipeline.prepare_pass_e_input(
+    progress.begin_reasoning_pass("pass-e-synthesis", "Synthesizing the review proposal")?;
+    let mut pass_e_vars = pipeline.prepare_pass_e_input(
         structure.title.as_deref().unwrap_or("Untitled paper"),
         &structure.authors.join(", "),
         &serde_json::to_string(&structure).map_err(|error| error.to_string())?,
@@ -667,12 +1437,25 @@ async fn run_semantic_graph_pipeline(
         &merge_json,
         &bounded_text,
     );
+    pass_e_vars.insert(
+        "public_progress_protocol".into(),
+        public_progress_protocol.into(),
+    );
     let pass_e_raw = pipeline
         .call_llm("paper-level-synthesis", &pass_e_vars, &provider)
         .await
         .map_err(|error| format!("Pass E synthesis failed: {error}"))?;
-    let synthesis = Pipeline::parse_pass_e_output(&pass_e_raw)
-        .map_err(|error| format!("Pass E result parsing failed: {error}"))?;
+    if !native_kimi_progress {
+        progress.record_reasoning_chunk(pass_e_raw.len())?;
+    }
+    let synthesis: semantic_pipeline::PaperSynthesisResult = parse_pass_with_auditable_repair(
+        &pass_e_raw,
+        "E",
+        "object with mainConclusions[], ablationAnalysis[], interactionEffects[], confounders[], missingControls[], internalConflicts[], and synthesisSummary",
+        &recovery_provider,
+        progress,
+    )
+    .await?;
 
     let candidates = Pipeline::build_candidates(
         &format!("pdf:{job_id}"),
@@ -690,7 +1473,12 @@ async fn run_semantic_graph_pipeline(
             validation.summary
         ));
     }
-    let patch = graphpatch_gen::build_graph_patch(&candidates, "myc.pdf-canvas-agent");
+    let source = if document_format == DocumentFormat::Pdf {
+        "myc.pdf-canvas-agent"
+    } else {
+        "host.document-import"
+    };
+    let patch = graphpatch_gen::build_graph_patch(&candidates, source);
     serde_json::to_value(patch).map_err(|error| format!("GraphPatch serialization failed: {error}"))
 }
 
@@ -881,6 +1669,8 @@ mod tests {
                 transport: PdfAgentTransport::LocalText,
                 timeout_secs: 120,
             },
+            backend: pdf_canvas_agent::Backend::Generic,
+            public_progress: false,
             credential_source: "environment".into(),
             credential_env_var: "DEEPSEEK_API_KEY".into(),
         };

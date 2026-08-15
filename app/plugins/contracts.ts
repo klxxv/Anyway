@@ -23,6 +23,7 @@ export interface PluginCallEnvelope<TContext = unknown, TPayload = unknown> {
 
 export type MycPluginKind =
   | "ThemePlugin"
+  | "IconThemePlugin"
   | "EdgeStylePlugin"
   | "WorkspacePlugin"
   | "LocalePlugin"
@@ -62,20 +63,30 @@ export type PluginSettingType =
 export interface PluginSettingOption {
   value: string;
   label: string;
+  /** Plugin-private i18n key; `label` remains the legacy fallback. */
+  labelKey?: string;
+  description?: string;
+  descriptionKey?: string;
+  placeholder?: string;
+  placeholderKey?: string;
 }
 
 /** A bounded, host-rendered setting; plugins never receive a renderer callback. */
 export interface PluginSettingDefinition {
   id: string;
   label: string;
+  /** Plugin-private i18n key; `label` remains the legacy fallback. */
+  labelKey?: string;
   type: PluginSettingType;
   /** Secret text is host-owned, write-only, and never exposed to plugins. */
   secret?: boolean;
   /** Whether the host must receive a value before enabling/executing the plugin. */
   required?: boolean;
   description?: string;
+  descriptionKey?: string;
   /** Host-rendered input hint; never a secret value. */
   placeholder?: string;
+  placeholderKey?: string;
   /** Stable UI grouping key, such as `model` or `advanced`. */
   group?: string;
   /** Derived UI hint; host treats `secret: true` as write-only. */
@@ -93,22 +104,45 @@ export type PluginApiKeySource =
   | { source: "host-secret"; settingId: string }
   | { source: "environment"; name: string; fallbackSettingId?: string };
 
+export type PluginConnectionTestActionKind = "connection" | "pdf-extraction";
+export type PluginConnectionTestActionInput =
+  | { type: "text"; fileUpload: "never" }
+  | {
+      type: "bundled-pdf";
+      fixture: "host-minimal-pdf-v1";
+      fileUpload: "may-upload";
+    };
+
 export interface PluginConnectionTestAction {
   id: string;
   label: string;
+  labelKey?: string;
   description?: string;
+  descriptionKey?: string;
+  placeholder?: string;
+  placeholderKey?: string;
+  kind?: PluginConnectionTestActionKind;
+  input?: PluginConnectionTestActionInput;
 }
 
 /** Declarative host connection metadata; plugins never receive credentials. */
 export interface PluginConnectionDefinition {
   id: string;
   label: string;
+  labelKey?: string;
+  description?: string;
+  descriptionKey?: string;
+  placeholder?: string;
+  placeholderKey?: string;
   urlSettingId: string;
   formatSettingId: string;
   modelSettingId?: string;
   credentialSourceSettingId?: string;
   credentialEnvVarSettingId?: string;
   apiKey: PluginApiKeySource;
+  /** Canonical action list. */
+  testActions?: PluginConnectionTestAction[];
+  /** Legacy single-action spelling retained for older packages. */
   testAction?: PluginConnectionTestAction;
 }
 
@@ -156,13 +190,22 @@ export function normalizePluginSettings(value: unknown): PluginSettingDefinition
     if (!id || !label || !isPluginSettingType(type)) return [];
 
     const setting: PluginSettingDefinition = { id, label, type };
+    if (typeof candidate.labelKey === "string" && candidate.labelKey.trim()) {
+      setting.labelKey = candidate.labelKey.trim();
+    }
     if (isSecret) {
       setting.secret = true;
       setting.writeOnly = true;
     }
     if (typeof candidate.required === "boolean") setting.required = candidate.required;
     if (typeof candidate.description === "string") setting.description = candidate.description;
+    if (typeof candidate.descriptionKey === "string" && candidate.descriptionKey.trim()) {
+      setting.descriptionKey = candidate.descriptionKey.trim();
+    }
     if (typeof candidate.placeholder === "string") setting.placeholder = candidate.placeholder;
+    if (typeof candidate.placeholderKey === "string" && candidate.placeholderKey.trim()) {
+      setting.placeholderKey = candidate.placeholderKey.trim();
+    }
     if (typeof candidate.group === "string") setting.group = candidate.group;
 
     if (!isSecret) {
@@ -192,7 +235,18 @@ export function normalizePluginSettings(value: unknown): PluginSettingDefinition
       const options = candidate.options.flatMap((option) => {
         if (!isRecord(option)) return [];
         if (typeof option.value !== "string" || typeof option.label !== "string") return [];
-        return [{ value: option.value, label: option.label }];
+        const normalized: PluginSettingOption = {
+          value: option.value,
+          label: option.label,
+        };
+        for (const field of ["labelKey", "descriptionKey", "placeholderKey"] as const) {
+          if (typeof option[field] === "string" && option[field].trim()) {
+            normalized[field] = option[field].trim();
+          }
+        }
+        if (typeof option.description === "string") normalized.description = option.description;
+        if (typeof option.placeholder === "string") normalized.placeholder = option.placeholder;
+        return [normalized];
       });
       if (options.length > 0) setting.options = options;
     }
@@ -209,6 +263,7 @@ export interface MycPluginSpec {
   contributes?: MycPluginContributions;
   settings?: PluginSettingDefinition[];
   connections?: PluginConnectionDefinition[];
+  privateI18n?: PluginPrivateI18nDefinition;
 }
 
 export type PluginContextMenuIcon =
@@ -239,6 +294,34 @@ export interface PluginLocaleContribution {
   path: string;
 }
 
+/** Private plugin-owned messages; these never enter the host locale registry. */
+export interface PluginPrivateI18nDefinition {
+  defaultLocale: string;
+  /** Every path is constrained by the host to locales/<tag>.json. */
+  locales: Record<string, string>;
+}
+
+export interface InstalledPluginPrivateI18n {
+  /** The host derives this from manifest.metadata.id and never accepts an override. */
+  namespace: string;
+  defaultLocale: string;
+  locales: Record<string, Record<string, string>>;
+}
+
+/** Resolves only inside a plugin-owned message tree. */
+export function resolvePluginPrivateMessage(
+  i18n: InstalledPluginPrivateI18n | undefined,
+  locale: string,
+  key: string,
+): string | undefined {
+  if (!i18n || !key.trim()) return undefined;
+  return i18n.locales[locale]?.[key] ?? i18n.locales[i18n.defaultLocale]?.[key];
+}
+
+export function pluginPrivateMessageNamespace(pluginId: string): string {
+  return `plugin:${pluginId}`;
+}
+
 export type PluginCommandCategory = "export" | "folder" | "git" | "import" | "llm-provider";
 
 /** 由宿主中介的命令元数据；执行时仍需复核命名能力 / Host-mediated metadata still requires its named capability. */
@@ -261,7 +344,12 @@ export interface WorkspacePluginDescriptor {
   schemaVersion: 1;
   mode: "export" | "folder" | "git";
   testFixture?: string;
-  config?: Record<string, unknown>;
+  config?: Record<string, unknown> & {
+    tree?: {
+      lazy: true;
+      maxEntries?: number;
+    };
+  };
 }
 
 /**
@@ -324,9 +412,11 @@ export interface InstalledMycPlugin {
   manifest: MycPluginManifest;
   installPath: string;
   theme?: ThemeManifest;
+  iconTheme?: import("./vsix-contracts").IconThemeManifest;
   edgeStyle?: EdgeStyleManifest;
   runtime?: MycPluginRuntime;
   locales?: InstalledPluginLocale[];
+  privateI18n?: InstalledPluginPrivateI18n;
   workspace?: WorkspacePluginDescriptor;
   provider?: ProviderDescriptor;
   agent?: AgentPluginDescriptor;

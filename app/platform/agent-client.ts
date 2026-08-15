@@ -1,5 +1,6 @@
 import type {
   AgentJobStatus,
+  ImportBatchStatus,
   ReviewPatchRequest,
   StartPdfJobRequest,
 } from "../plugins/agent-contracts";
@@ -62,6 +63,22 @@ export async function startPdfJob(pdfPath: string): Promise<AgentJobStatus> {
   return invoke<AgentJobStatus>("start_pdf_job", { request });
 }
 
+/** Queue a document batch. The command returns before validation or parsing starts. */
+export async function startDocumentBatch(paths: string[]): Promise<ImportBatchStatus> {
+  const { invoke } = await desktopModules();
+  return invoke<ImportBatchStatus>("start_document_batch", { request: { paths } });
+}
+
+export async function getImportBatchStatus(batchId: string): Promise<ImportBatchStatus> {
+  const { invoke } = await desktopModules();
+  return invoke<ImportBatchStatus>("get_import_batch_status", { batchId });
+}
+
+export async function listImportJobs(): Promise<AgentJobStatus[]> {
+  const { invoke } = await desktopModules();
+  return invoke<AgentJobStatus[]>("list_import_jobs");
+}
+
 /** 查询 Job 状态快照 / Query a job's status snapshot. */
 export async function getPdfJobStatus(jobId: string): Promise<AgentJobStatus> {
   const { invoke } = await desktopModules();
@@ -88,29 +105,39 @@ export async function compileProject(project: ProjectState): Promise<PdfCompileR
 }
 
 /** 弹出文件选择框选择 PDF / Pick a PDF via the native dialog. */
-export async function pickPdfFile(): Promise<string | null> {
+export async function pickImportFiles(): Promise<string[]> {
   const { dialog } = await desktopModules();
   const path = await dialog.open({
-    title: "Import PDF paper",
-    multiple: false,
+    title: "Import documents",
+    multiple: true,
     directory: false,
-    filters: [{ name: "PDF document", extensions: ["pdf"] }],
+    filters: [{ name: "Supported documents", extensions: ["pdf", "docx", "md"] }],
   });
-  return !path || Array.isArray(path) ? null : path;
+  if (!path) return [];
+  return Array.isArray(path) ? path : [path];
+}
+
+/** @deprecated Use pickImportFiles. */
+export async function pickPdfFile(): Promise<string | null> {
+  return (await pickImportFiles())[0] ?? null;
 }
 
 /** 仅桌面端监听拖放，只转发 `.pdf` 候选路径 / Listen for desktop drops, forward `.pdf` candidates. */
-export async function listenForPdfDrops(
+export async function listenForDocumentDrops(
   onDrop: (paths: string[]) => void,
 ): Promise<() => void> {
   if (!hasTauriRuntime()) return () => undefined;
   const { getCurrentWebview } = await import("@tauri-apps/api/webview");
   return getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
-      onDrop(event.payload.paths.filter((path) => path.toLowerCase().endsWith(".pdf")));
+      onDrop(event.payload.paths.filter((path) => /\.(pdf|docx|md)$/i.test(path)));
     }
   });
 }
+
+
+/** @deprecated Use listenForDocumentDrops. */
+export const listenForPdfDrops = listenForDocumentDrops;
 
 /** 提取待审阅 GraphPatch 中的操作数组 / Extract the reviewable operations array. */
 export function patchOperationsOf(status: AgentJobStatus): unknown[] {

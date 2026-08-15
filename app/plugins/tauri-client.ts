@@ -4,6 +4,7 @@ import type {
   PluginExecutionResult,
   PluginReference,
 } from "./contracts";
+import type { NativeVsixImportReport } from "./vsix-contracts";
 import { PLUGIN_CALL_API_VERSION } from "./contracts";
 
 export type PluginSettingsSnapshot = {
@@ -26,6 +27,8 @@ export type PluginSettingsWrite = {
 
 export type PluginConnectionTestResult = {
   ok: boolean;
+  /** Stable host code; plugin UI can localize this without parsing message text. */
+  code: string;
   message: string;
 };
 
@@ -265,24 +268,45 @@ export async function resetPluginSettings(
 }
 
 /**
- * Tests a manifest-declared connection in the native host. The request may
- * contain unsaved secret text, but the native command only returns a boolean
- * result and a redacted status message.
+ * Runs a host-owned connection action using the current unsaved draft. The
+ * legacy three-argument form defaults to `test-connection`; the five-argument
+ * form can dispatch `test-connection` or `test-pdf-extraction`. Secret text is
+ * sent only through the separate mutation map, and the native command returns
+ * only a stable code plus safe, localizable status copy.
  */
-export async function testPluginConnection(
+export function testPluginConnection(
   plugin: PluginReference,
   connectionId: string,
   write: PluginSettingsWrite,
-  options: { native?: boolean } = {},
+  options?: { native?: boolean },
+): Promise<PluginConnectionTestResult>;
+export function testPluginConnection(
+  plugin: PluginReference,
+  connectionId: string,
+  actionId: string,
+  write: PluginSettingsWrite,
+  options?: { native?: boolean },
+): Promise<PluginConnectionTestResult>;
+export async function testPluginConnection(
+  plugin: PluginReference,
+  connectionId: string,
+  actionOrWrite: string | PluginSettingsWrite,
+  writeOrOptions?: PluginSettingsWrite | { native?: boolean },
+  maybeOptions: { native?: boolean } = {},
 ): Promise<PluginConnectionTestResult> {
-  if (!hasTauriRuntime() || options.native === false) {
+  const actionId = typeof actionOrWrite === "string" ? actionOrWrite : "test-connection";
+  const write = (typeof actionOrWrite === "string" ? writeOrOptions : actionOrWrite) as PluginSettingsWrite;
+  const options = (typeof actionOrWrite === "string" ? maybeOptions : writeOrOptions) as { native?: boolean } | undefined;
+  if (!hasTauriRuntime() || options?.native === false) {
     throw new Error("MYC_DESKTOP_REQUIRED");
   }
+  if (!write || typeof write !== "object") throw new Error("PLUGIN_SETTINGS_WRITE_REQUIRED");
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<PluginConnectionTestResult>("test_plugin_connection", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
     connectionId,
+    actionId,
     values: write.values,
     secrets: write.secrets,
   });
@@ -332,4 +356,36 @@ export async function pickMycFiles(): Promise<string[] | null> {
   if (!selected) return null;
   const paths = Array.isArray(selected) ? selected : [selected];
   return paths.length > 0 ? paths : null;
+}
+
+/** Opens the native picker for one VSIX; production parsing stays in Rust. */
+export async function pickVsixFile(): Promise<string | null> {
+  if (!hasTauriRuntime()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "VS Code extension theme", extensions: ["vsix"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function importVsixTheme(path: string): Promise<NativeVsixImportReport> {
+  if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<NativeVsixImportReport>("import_vscode_vsix", { path });
+}
+
+/** Resolves one host-validated IconThemePlugin asset as a safe data URL. */
+export async function readIconThemeAsset(
+  plugin: Pick<PluginReference, "id" | "version">,
+  assetPath: string,
+): Promise<string | null> {
+  if (!hasTauriRuntime()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string>("read_icon_theme_asset", {
+    pluginId: plugin.id,
+    pluginVersion: plugin.version,
+    assetPath,
+  });
 }

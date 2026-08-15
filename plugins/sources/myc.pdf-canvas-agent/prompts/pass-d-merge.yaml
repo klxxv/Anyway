@@ -22,6 +22,8 @@ system:
 
 user_template:
   zh: |
+    {public_progress_protocol}
+
     ## Pass B 全部实体
     {pass_b_all_entities_json}
 
@@ -33,6 +35,8 @@ user_template:
 
     请合并跨章节重复实体，统一指标和数据集名称，并绑定同一主张的多个证据。
   en: |
+    {public_progress_protocol}
+
     ## All Pass B Entities
     {pass_b_all_entities_json}
 

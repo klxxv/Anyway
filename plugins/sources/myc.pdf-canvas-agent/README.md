@@ -30,9 +30,9 @@ The pipeline declares three model slots:
 - `synthesis`: Pass E;
 - `recovery`: truncated JSON recovery and retry handling.
 
-Each slot references host-owned settings for `provider`, `credential`, `model`, and `thinking` under `agent.models.<slot>.*`. The plugin package contains no API key or credential value. The host must resolve the credential reference from its secure credential store and must never expose the raw secret to the plugin or put it in a job checkpoint.
+Each slot references the plugin-owned native `kimi-k2.6` provider profile plus host-owned settings for `credential`, `model`, and `thinking` under `agent.models.<slot>.*`. The plugin package contains no API key or credential value. The host must resolve the credential reference from its secure credential store and must never expose the raw secret to the plugin or put it in a job checkpoint.
 
-The plugin may declare defaults and user-editable setting metadata in the plugin manifest. This `agent.yml` only binds those settings to model slots; provider selection, credential resolution, Thinking capability checks, rate limits, retries, and request redaction remain host responsibilities.
+The plugin declares Kimi K2.6 as its native provider profile in `agent.yml`, with user-selectable OpenAI SSE (`/v1`) and Anthropic SSE (`/anthropic`) parser backends. Each selection changes the request shape, authentication headers, endpoint path, and stream event parser together. The profile also declares the `thinking.type` contract, omission of incompatible sampling fields, and the Kimi Files `purpose=file-extract` flow. File upload always uses the regional `/v1/files` API even when chat uses the Anthropic-compatible endpoint. Local extraction remains the safe default; Kimi Files is used only after an explicit user selection.
 
 ## Host/plugin boundary
 
@@ -40,8 +40,8 @@ The host owns:
 
 - PDF file selection, authorization, size limits, and basic extraction services;
 - model HTTP calls through a provider gateway;
-- API key and credential storage;
-- model and Thinking capability validation;
+- API key and current-session credential handling;
+- credential resolution and execution of the plugin-declared Kimi K2.6 request policy;
 - job state, cancellation, checkpoints, retry and recovery;
 - Draft 2020-12 schema validation and Pass F deterministic checks;
 - GraphPatch validation, review UI, and project writes.
@@ -52,6 +52,7 @@ The plugin owns:
 - prompt text and localization;
 - output schemas and field naming;
 - PDF semantic pass policy;
+- the native Kimi K2.6 provider/request profile, including thinking and file-extract metadata;
 - the domain-level intermediate representation and GraphPatch mapping policy.
 
 The plugin must not use arbitrary filesystem access, direct network access, raw credentials, or direct graph-store writes. Its final output is review-gated and cannot bypass the host review flow.
@@ -96,10 +97,10 @@ Every schema is Draft 2020-12. Objects use `additionalProperties: false` unless 
 
 ## Current integration limitation
 
-These assets are now present in the plugin source package, but the current Rust host still executes its existing built-in PDF path and reads `config/prompts`. The host does not yet discover `agent.yml`, resolve this DAG, inject model-slot settings, or run the plugin-owned schemas. A follow-up host integration must add:
+These assets are now present in the plugin source package, but the current Rust host still executes its existing built-in PDF path and reads `config/prompts`. The host does not yet discover `agent.yml`, resolve this native provider profile, inject model-slot settings, or run the plugin-owned schemas. A follow-up host integration must add:
 
 - package-relative `agent.yml` discovery and signature/version validation;
-- model-slot settings resolution with secure credential references;
+- native provider profile and model-slot settings resolution with secure credential references;
 - provider gateway calls that return structured JSON to the declared stage;
 - prompt rendering and schema loading from the package;
 - Pass F validation/transform dispatch;

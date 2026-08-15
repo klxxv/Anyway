@@ -215,3 +215,45 @@ platform/workspace/core/compiler tests, all three SDK parity checks, and the
 native Rust suite (130/130). This pass produced the updated PDF Agent `.myc`
 runtime archive for manual testing, but intentionally did not build a desktop
 installer.
+
+## Plugin-owned settings UX handoff (2026-08-12)
+
+The host-rendered settings dialog now presents provider, API key, model,
+analysis depth, and PDF extraction as the normal path. API URL, request format,
+credential source, and environment-variable name remain under Advanced
+settings. A configured API key is represented by a status badge plus Change
+and Delete actions; the old keep/set/clear selector is no longer exposed.
+
+Plugin labels, descriptions, option labels, action labels, and test-result
+messages resolve from the plugin's private locale resources before falling back
+to manifest text. These resources are namespaced to the installed plugin and do
+not register a `LocalePlugin` or modify the host catalog.
+
+Two declarative test actions are available. `test-connection` sends one minimal
+text-only model request and never includes a PDF, file field, multipart body, or
+PDF bytes. `test-pdf-extraction` creates a non-empty host-owned test PDF. Local
+mode parses it on-device without credentials; explicit Kimi Files mode may
+upload only that generated fixture and removes the temporary local and remote
+files on a best-effort basis.
+
+Completed verification:
+
+- [x] Vue typecheck.
+- [x] Platform tests (25/25).
+- [x] Workspace tests (74/74).
+- [x] SDK tests (7/7), including Rust and C++ SDK checks.
+- [x] Native Rust library tests (134/134).
+- [x] Production Vite build.
+
+Remaining TODO:
+
+- [ ] Manually verify both buttons with real DeepSeek and Kimi credentials in
+  the desktop WebView.
+- [ ] Decide whether API keys should persist across launches in an OS credential
+  manager. The current implementation keeps host-entered secrets in process
+  memory for the current session; it does not claim durable secure storage.
+- [ ] Add a separate Kimi extraction credential if mixed-provider operation is
+  required (for example, DeepSeek for reasoning and Kimi only for file text
+  extraction).
+- [ ] Rebuild the `.myc` package only after manual UI review. This pass does not
+  create an installer, package, or commit.

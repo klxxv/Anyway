@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import type { MessageKey } from "../../../app/i18n/catalog";
 import type { DiffState } from "../../../app/lib/graph/canvas-diff";
+import type { CanvasDiffDocumentResult } from "../../../app/domain/canvas-diff";
 import type { ResearchEdge, ResearchNodeType } from "../../../app/lib/research-types";
 import {
   diffMeta,
@@ -16,6 +17,19 @@ const props = defineProps<DiffPanelProps>();
 const { t } = usePanelI18n();
 const base = computed(() => versionById(props.versions, props.baseId));
 const compare = computed(() => versionById(props.versions, props.compareId));
+const batchDocuments = computed(() => props.batch?.documents ?? []);
+const batchChanged = computed(() => props.batch?.summary.totalChanges ?? 0);
+
+const batchDocumentLabel = (document: CanvasDiffDocumentResult) =>
+  document.provenance.fileName || document.documentId;
+const batchDocumentStateClass = (state: CanvasDiffDocumentResult["state"]) => {
+  if (state === "added" || state === "removed" || state === "modified") {
+    return `${diffMeta[state].bgClass} ${diffMeta[state].textClass}`;
+  }
+  return "bg-ink/5 text-ink/55";
+};
+const batchDocumentGlyph = (state: CanvasDiffDocumentResult["state"]) =>
+  state === "added" ? "+" : state === "removed" ? "−" : state === "modified" ? "✎" : "·";
 
 const baseStateOf = (id: string): DiffState | null => {
   if (!props.result) return null;
@@ -88,12 +102,39 @@ const overlayRows = computed(() => {
       <div class="ml-2 flex items-center overflow-hidden rounded-[4px] border border-ink/20 bg-canvas p-0.5"><button type="button" class="flex items-center gap-1.5 rounded-[3px] px-2.5 py-1 font-sans text-[10px] transition" :class="props.mode === 'side-by-side' ? 'bg-paper text-blue shadow-sm' : 'text-ink/55 hover:text-ink'" :aria-pressed="props.mode === 'side-by-side'" @click="props.onModeChange('side-by-side')">▥ {{ t('diff.sideBySide') }}</button><button type="button" class="flex items-center gap-1.5 rounded-[3px] px-2.5 py-1 font-sans text-[10px] transition" :class="props.mode === 'overlay' ? 'bg-paper text-blue shadow-sm' : 'text-ink/55 hover:text-ink'" :aria-pressed="props.mode === 'overlay'" @click="props.onModeChange('overlay')">▤ {{ t('diff.overlay') }}</button></div>
       <template v-if="props.mode === 'side-by-side'"><label class="flex items-center gap-1.5"><span class="font-sans text-[9px] uppercase tracking-[0.12em] text-ink/45">{{ t('diff.base') }}</span><select class="max-w-[180px] rounded-[4px] border border-ink/20 bg-paper px-2 py-1 font-serif text-[11px] text-ink outline-none transition focus:border-blue" :value="props.baseId" @change="props.onBaseChange(($event.target as HTMLSelectElement).value)"><option v-for="version in props.versions" :key="version.id" :value="version.id">{{ version.label }}</option></select></label><span class="text-ink/40">→</span><label class="flex items-center gap-1.5"><span class="font-sans text-[9px] uppercase tracking-[0.12em] text-ink/45">{{ t('diff.comparison') }}</span><select class="max-w-[180px] rounded-[4px] border border-ink/20 bg-paper px-2 py-1 font-serif text-[11px] text-ink outline-none transition focus:border-blue" :value="props.compareId" @change="props.onCompareChange(($event.target as HTMLSelectElement).value)"><option v-for="version in props.versions" :key="version.id" :value="version.id">{{ version.label }}</option></select></label></template>
       <div v-if="totals && totals.changed > 0" class="ml-auto hidden items-center gap-2 md:flex"><span v-for="state in ['added','removed','modified'] as DiffState[]" :key="state" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-sans text-[9px] font-medium" :class="`${diffMeta[state].bgClass} ${diffMeta[state].textClass}`">{{ stateGlyph(state) }} {{ stateLabel(state) }} {{ totals[state] }}</span></div>
+      <div v-if="props.batch && batchChanged > 0" class="ml-auto hidden items-center gap-2 md:flex"><span class="rounded-full bg-blue-soft px-2 py-0.5 font-sans text-[9px] text-blue">{{ batchDocuments.length }} documents · {{ batchChanged }} changes</span></div>
     </header>
 
     <div class="flex min-h-0 flex-1 flex-col">
       <p v-if="props.loading" class="m-auto font-serif text-[12px] text-ink/50">{{ t('diff.computing') }}</p>
       <p v-else-if="props.error" class="m-auto max-w-md text-center font-serif text-[12px] text-diff-removed">{{ props.error }}</p>
-      <p v-else-if="!props.result || !totals || totals.changed === 0" class="m-auto font-serif text-[12px] text-ink/50">{{ t('diff.noChanges') }}</p>
+      <p v-else-if="!props.batch && (!props.result || !totals || totals.changed === 0)" class="m-auto font-serif text-[12px] text-ink/50">{{ t('diff.noChanges') }}</p>
+      <div v-else-if="props.batch" class="min-h-0 flex-1 overflow-y-auto bg-canvas p-3">
+        <div class="rounded-[6px] border border-ink/15 bg-paper p-3">
+          <div class="flex items-center justify-between gap-3 border-b border-ink/10 pb-3">
+            <div>
+              <p class="font-sans text-[9px] uppercase tracking-[0.14em] text-ink/45">Document batch</p>
+              <p class="mt-1 font-serif text-[13px] font-semibold">{{ props.batch.baseline.label }} → {{ props.batch.comparison.label }}</p>
+            </div>
+            <span class="font-sans text-[10px] text-ink/55">{{ batchChanged }} changes</span>
+          </div>
+          <div class="mt-3 grid grid-cols-2 gap-2 text-[10px] md:grid-cols-4">
+            <div class="rounded-[4px] bg-diff-added-soft px-2 py-1.5 text-diff-added">+ {{ props.batch.summary.nodes.added }} nodes</div>
+            <div class="rounded-[4px] bg-diff-removed-soft px-2 py-1.5 text-diff-removed">− {{ props.batch.summary.nodes.removed }} nodes</div>
+            <div class="rounded-[4px] bg-diff-modified-soft px-2 py-1.5 text-diff-modified">✎ {{ props.batch.summary.nodes.modified }} nodes</div>
+            <div class="rounded-[4px] bg-ink/5 px-2 py-1.5 text-ink/60">{{ props.batch.summary.documents.changed }} changed documents</div>
+          </div>
+        </div>
+        <div class="mt-3 space-y-1.5">
+          <div v-for="document in batchDocuments" :key="document.documentId" class="flex items-center gap-2 rounded-[5px] border border-ink/12 bg-paper px-3 py-2">
+            <span class="grid size-5 shrink-0 place-items-center rounded-full font-sans text-[10px]" :class="batchDocumentStateClass(document.state)">{{ batchDocumentGlyph(document.state) }}</span>
+            <span class="min-w-0 flex-1 truncate font-serif text-[11px]" :title="document.documentId">{{ batchDocumentLabel(document) }}</span>
+            <span class="shrink-0 font-sans text-[9px] text-ink/45">{{ document.summary.changed }} changes</span>
+            <span class="shrink-0 font-mono text-[8px] text-ink/35">{{ document.documentId }}</span>
+          </div>
+          <p v-if="batchDocuments.length === 0" class="rounded-[5px] border border-dashed border-ink/15 px-3 py-6 text-center font-serif text-[11px] text-ink/50">{{ t('diff.noChanges') }}</p>
+        </div>
+      </div>
       <div v-else-if="props.mode === 'side-by-side'" class="grid min-h-0 flex-1 grid-cols-2 gap-3 p-3">
         <div v-for="column in [{ version: base, rows: baseRows }, { version: compare, rows: compareRows }]" :key="column.version?.id" class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[6px] border border-ink/15 bg-paper"><div class="flex items-center justify-between gap-2 border-b border-ink/10 px-3 py-2"><span class="truncate font-serif text-[12px] font-semibold">{{ column.version?.label }}</span><span class="shrink-0 font-sans text-[9px] uppercase tracking-[0.12em] text-ink/45">{{ t('diff.nodes') }} {{ column.version?.project.nodes.length }} · {{ t('diff.edges') }} {{ column.version?.project.edges.length }}</span></div><div class="min-h-0 flex-1 overflow-y-auto p-1.5"><button v-for="row in column.rows.nodes" :key="`node-${row.id}`" class="flex w-full items-center gap-2 rounded-[3px] px-2 py-1.5 text-left font-serif text-[10px]" :class="stateClass(row.state)" @click="props.onFocus('node', row.id)"><span class="w-4 font-sans">{{ stateGlyph(row.state) }}</span><span class="min-w-0 flex-1 truncate">{{ row.label }}</span><span class="font-sans text-[8px] text-ink/45">{{ row.kind }}</span></button><button v-for="row in column.rows.edges" :key="`edge-${row.id}`" class="flex w-full items-center gap-2 rounded-[3px] px-2 py-1.5 text-left font-serif text-[10px]" :class="stateClass(row.state)" @click="props.onFocus('edge', row.id)"><span class="w-4 font-sans">↗</span><span class="min-w-0 flex-1 truncate">{{ row.label }}</span><span class="font-sans text-[8px] text-ink/45">{{ row.kind }}</span></button></div></div>
       </div>

@@ -24,6 +24,8 @@ system:
 
 user_template:
   zh: |
+    {public_progress_protocol}
+
     ## 文档结构
     {document_structure}
 
@@ -32,6 +34,8 @@ user_template:
 
     请提取 Question、Hypothesis、Claim、Method、Experiment、Result、Evidence 和 Variable。
   en: |
+    {public_progress_protocol}
+
     ## Document Structure
     {document_structure}
 

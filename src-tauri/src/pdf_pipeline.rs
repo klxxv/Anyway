@@ -3,7 +3,11 @@
 
 use lopdf::Document;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::{Cursor, Read};
 use std::path::Path;
+
+use crate::agent_host::DocumentFormat;
 
 const MIN_TEXT_CHARS: usize = 500;
 
@@ -30,6 +34,17 @@ pub struct ExtractedText {
     pub full_text: String,
     pub pages: Vec<PageText>,
     pub total_chars: usize,
+}
+
+/// Host-normalized input shared by PDF, DOCX, and Markdown before semantic passes.
+/// Provider-specific file upload remains PDF-only and happens before this boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentInput {
+    pub format: DocumentFormat,
+    pub source_name: String,
+    pub media_type: String,
+    pub extracted: ExtractedText,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +220,62 @@ fn binary_search_span<'a>(spans: &'a [ParagraphSpan], offset: usize) -> Option<&
 pub struct PdfPipeline;
 
 impl PdfPipeline {
+    pub fn extract_document(path: &Path, format: DocumentFormat) -> Result<DocumentInput, String> {
+        let extracted = match format {
+            DocumentFormat::Pdf => Self::extract_text(path)?,
+            DocumentFormat::Docx => Self::extract_docx_text(path)?,
+            DocumentFormat::Md => Self::extract_markdown_text(path)?,
+        };
+        let media_type = match format {
+            DocumentFormat::Pdf => "application/pdf",
+            DocumentFormat::Docx => {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            }
+            DocumentFormat::Md => "text/markdown; charset=utf-8",
+        };
+        Ok(DocumentInput {
+            format,
+            source_name: path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("document")
+                .to_string(),
+            media_type: media_type.to_string(),
+            extracted,
+        })
+    }
+
+    fn extract_markdown_text(path: &Path) -> Result<ExtractedText, String> {
+        let bytes = fs::read(path).map_err(|error| format!("Markdown read error: {error}"))?;
+        let text =
+            String::from_utf8(bytes).map_err(|_| "Markdown must be valid UTF-8".to_string())?;
+        Ok(Self::from_plain_text(text))
+    }
+
+    fn extract_docx_text(path: &Path) -> Result<ExtractedText, String> {
+        const MAX_DOCUMENT_XML_BYTES: u64 = 50 * 1024 * 1024;
+        let bytes = fs::read(path).map_err(|error| format!("DOCX read error: {error}"))?;
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+            .map_err(|error| format!("DOCX ZIP error: {error}"))?;
+        let mut entry = archive
+            .by_name("word/document.xml")
+            .map_err(|_| "DOCX is missing word/document.xml".to_string())?;
+        if entry.size() > MAX_DOCUMENT_XML_BYTES {
+            return Err("DOCX document.xml exceeds safe extraction limit".to_string());
+        }
+        let mut xml = String::new();
+        entry
+            .by_ref()
+            .take(MAX_DOCUMENT_XML_BYTES + 1)
+            .read_to_string(&mut xml)
+            .map_err(|_| "DOCX document.xml must be valid UTF-8 XML".to_string())?;
+        if xml.len() as u64 > MAX_DOCUMENT_XML_BYTES {
+            return Err("DOCX document.xml exceeds safe extraction limit".to_string());
+        }
+        let text = wordprocessingml_to_text(&xml)?;
+        Ok(Self::from_plain_text(text))
+    }
+
     /// 使用 lopdf 从 PDF 提取所有文本。
     pub fn extract_text(pdf_path: &Path) -> Result<ExtractedText, String> {
         let document = Document::load(pdf_path).map_err(|e| format!("lopdf load error: {e}"))?;
@@ -398,6 +469,33 @@ impl PdfPipeline {
             ocr_confidence,
         ))
     }
+}
+
+fn wordprocessingml_to_text(xml: &str) -> Result<String, String> {
+    let paragraphized = xml
+        .replace("</w:p>", "\n")
+        .replace("<w:tab/>", "\t")
+        .replace("<w:tab />", "\t")
+        .replace("<w:br/>", "\n")
+        .replace("<w:br />", "\n");
+    let tags = regex::Regex::new(r"(?s)<[^>]*>").map_err(|error| error.to_string())?;
+    let without_tags = tags.replace_all(&paragraphized, "");
+    let decoded = without_tags
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
+    let text = decoded
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        return Err("DOCX contains no extractable text".to_string());
+    }
+    Ok(text)
 }
 
 // ── 结构识别内部逻辑 ──

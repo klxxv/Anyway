@@ -10,11 +10,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-};
+use std::{collections::HashMap, fs, path::Path};
 
 /// 信任的发布者公钥映射（发布者 ID → Ed25519 验证密钥）/ Trusted publisher public keys.
 pub type TrustedKeys = HashMap<String, VerifyingKey>;
@@ -39,7 +35,9 @@ const TRUSTED_KEYS_FILE: &str = "trusted-keys.json";
 ///
 /// Computes the signature payload for a manifest: SHA-256 of its JSON serialization
 /// with the signature field removed. Using JSON avoids YAML formatting ambiguity.
-pub fn manifest_payload(manifest_json_without_signature: &serde_json::Value) -> Result<Vec<u8>, String> {
+pub fn manifest_payload(
+    manifest_json_without_signature: &serde_json::Value,
+) -> Result<Vec<u8>, String> {
     let json_bytes = serde_json::to_vec(manifest_json_without_signature)
         .map_err(|error| format!("JSON serialization failed: {error}"))?;
     Ok(Sha256::digest(&json_bytes).to_vec())
@@ -65,11 +63,11 @@ pub fn decode_public_key(b64: &str) -> Result<VerifyingKey, String> {
         .decompress()
         .ok_or_else(|| "Ed25519 public key is not a valid curve point".to_string())?;
     if point.is_small_order() {
-        return Err("Ed25519 public key is a small-order point and cannot be a trust root"
-            .to_string());
+        return Err(
+            "Ed25519 public key is a small-order point and cannot be a trust root".to_string(),
+        );
     }
-    VerifyingKey::from_bytes(arr)
-        .map_err(|error| format!("Invalid Ed25519 public key: {error}"))
+    VerifyingKey::from_bytes(arr).map_err(|error| format!("Invalid Ed25519 public key: {error}"))
 }
 
 /// 从 base64 字符串解码 Ed25519 签名 / Decode an Ed25519 signature from base64.
@@ -111,10 +109,10 @@ pub fn load_file_trusted_keys(base: &Path) -> Result<TrustedKeys, String> {
     if !path.is_file() {
         return Ok(HashMap::new());
     }
-    let text =
-        fs::read_to_string(&path).map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
-    let map: HashMap<String, String> =
-        serde_json::from_str(&text).map_err(|error| format!("Invalid {}: {error}", TRUSTED_KEYS_FILE))?;
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
+    let map: HashMap<String, String> = serde_json::from_str(&text)
+        .map_err(|error| format!("Invalid {}: {error}", TRUSTED_KEYS_FILE))?;
     let mut keys = HashMap::with_capacity(map.len());
     for (publisher, b64) in map {
         let key = decode_public_key(&b64).map_err(|error| {

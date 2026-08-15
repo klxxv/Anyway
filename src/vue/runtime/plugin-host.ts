@@ -54,6 +54,7 @@ export type PluginHostValue = {
   testPluginConnection: (
     plugin: { id: string; version: string; name: string },
     connectionId: string,
+    actionId: string,
     write: { values: Record<string, unknown>; secrets: Record<string, PluginSecretMutation> },
     native?: boolean,
   ) => Promise<PluginConnectionTestResult>;

@@ -223,6 +223,7 @@ export type WorkspaceDiffComposable = {
 export type FolderWorkspaceState = {
   root: string;
   projects: FolderProjectSummary[];
+  command: import("../../../app/plugins/workspace").EnabledWorkspaceCommand;
 };
 
 export type GitWorkspaceState = {

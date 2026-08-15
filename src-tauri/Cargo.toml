@@ -31,7 +31,8 @@ thiserror = "2"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "rustls-tls"] }
 tauri-plugin-dialog = "2"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "fs", "io-util", "sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
 unicode-normalization = "0.1.25"
 wasmi = "0.31"
 zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -31,6 +31,21 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     strictPort: true,
+    watch: {
+      ignored: [
+        "**/src-tauri/target/**",
+        "**/plugins/installed/**",
+        "**/plugins/packages/**",
+        "**/build/**",
+        "**/crates/**",
+        "**/.next/**",
+        "**/.wrangler/**",
+        "**/.vinext/**",
+        "**/out/**",
+        "**/output/**",
+        "**/dist/**",
+      ],
+    },
     warmup: {
       clientFiles: [
         "./src/main.ts",

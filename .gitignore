@@ -57,6 +57,8 @@ id_ed25519.pub
 !/docs/module-boundaries.md
 !/docs/architecture/
 !/docs/vue-migration-handoff.md
+!/docs/sse-bp-canvas.png
+!/docs/sse-canvas-diff.png
 
 # deployment-specific credentials
 /.openai/
@@ -99,7 +101,12 @@ yarn-error.log*
 .vercel
 
 # rust workspace crates build output
+/target/
 crates/*/target/
+
+# python caches
+__pycache__/
+*.py[cod]
 
 # opencode session handoff (local context, never published)
 /OPENCODE_HANDOFF.md

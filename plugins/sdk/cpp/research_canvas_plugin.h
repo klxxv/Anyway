@@ -26,10 +26,34 @@ enum class PluginApiKeySource {
   Environment,
 };
 
+enum class PluginConnectionTestActionInputType {
+  Text,
+  BundledPdf,
+};
+
+struct PluginConnectionTestAction {
+  const char* id = nullptr;
+  const char* label = nullptr;
+  const char* labelKey = nullptr;
+  const char* description = nullptr;
+  const char* descriptionKey = nullptr;
+  const char* placeholder = nullptr;
+  const char* placeholderKey = nullptr;
+  const char* kind = nullptr;
+  PluginConnectionTestActionInputType inputType = PluginConnectionTestActionInputType::Text;
+  const char* fixture = nullptr;
+  const char* fileUpload = "never";
+};
+
 // Declarative connection metadata is rendered and tested by the native host.
 struct PluginConnectionDefinition {
   const char* id = nullptr;
   const char* label = nullptr;
+  const char* labelKey = nullptr;
+  const char* description = nullptr;
+  const char* descriptionKey = nullptr;
+  const char* placeholder = nullptr;
+  const char* placeholderKey = nullptr;
   const char* urlSettingId = nullptr;
   const char* formatSettingId = nullptr;
   const char* modelSettingId = nullptr;
@@ -38,6 +62,9 @@ struct PluginConnectionDefinition {
   PluginApiKeySource apiKeySource = PluginApiKeySource::Environment;
   const char* credentialEnvVar = nullptr;
   const char* fallbackSettingId = nullptr;
+  const PluginConnectionTestAction* testActions = nullptr;
+  std::size_t testActionCount = 0;
+  // Legacy single-action spelling for older manifests.
   const char* testActionId = nullptr;
 };
 
@@ -55,6 +82,11 @@ struct PluginIdentity {
 struct PluginSettingOption {
   const char* value = nullptr;
   const char* label = nullptr;
+  const char* labelKey = nullptr;
+  const char* description = nullptr;
+  const char* descriptionKey = nullptr;
+  const char* placeholder = nullptr;
+  const char* placeholderKey = nullptr;
 };
 
 enum class PluginSettingDefaultType {
@@ -76,11 +108,14 @@ struct PluginSettingDefault {
 struct PluginSettingDefinition {
   const char* id = nullptr;
   const char* label = nullptr;
+  const char* labelKey = nullptr;
   PluginSettingType type;
   bool secret = false;
   bool required = false;
   const char* description = nullptr;
+  const char* descriptionKey = nullptr;
   const char* placeholder = nullptr;
+  const char* placeholderKey = nullptr;
   const char* group = nullptr;
   PluginSettingDefault defaultValue;
   bool hasMin = false;
@@ -91,6 +126,19 @@ struct PluginSettingDefinition {
   double step = 0.0;
   const PluginSettingOption* options = nullptr;
   std::size_t optionCount = 0;
+};
+
+// Plugin-private messages are host-loaded from locales/<tag>.json and never
+// registered in the global LocalePlugin catalog.
+struct PluginPrivateLocale {
+  const char* locale = nullptr;
+  const char* path = nullptr;
+};
+
+struct PluginPrivateI18n {
+  const char* defaultLocale = nullptr;
+  const PluginPrivateLocale* locales = nullptr;
+  std::size_t localeCount = 0;
 };
 
 // The host supplies effective, validated non-secret values. There is no
