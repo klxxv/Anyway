@@ -1,0 +1,57 @@
+{
+  "apiVersion": "anyway.dev/ancordis-manifest/v1alpha1",
+  "kind": "SystemExtension",
+  "metadata": {
+    "id": "anyway.system.ancordis",
+    "name": "AnCordis",
+    "version": "0.1.0",
+    "publisher": "Anyway",
+    "description": "Official non-Kernel Extension Host for Cordis services, leases, events, and workers",
+    "license": "SEE LICENSE IN REPOSITORY"
+  },
+  "spec": {
+    "role": "extension-host",
+    "trustTier": "official",
+    "kernelBoundary": false,
+    "execution": {
+      "host": "non-kernel-process-pool",
+      "modes": [
+        "trusted-in-process",
+        "isolated-process"
+      ],
+      "trustedDefault": "trusted-in-process",
+      "thirdPartyDefault": "isolated-process"
+    },
+    "protocol": {
+      "hostBusApiVersion": "anyway.dev/host-bus/v1alpha1",
+      "typeDefinitions": "protocol.ts",
+      "payloadEncoding": "json",
+      "largePayloadTransport": "blob-ref"
+    },
+    "contributes": [
+      "cordis.service-registry",
+      "cordis.registration-leases",
+      "cordis.event-subscriptions",
+      "host-bus.worker-spawn",
+      "host-bus.worker-stop",
+      "host-bus.service-call",
+      "vue-ir.slots"
+    ],
+    "principalPolicy": {
+      "preserveOriginalPrincipal": true,
+      "appendDelegationChain": true,
+      "childPrincipalRequired": true,
+      "kernelReauthorizeEveryCall": true,
+      "allowCapabilityEscalation": false
+    },
+    "permissions": [
+      "host-bus.service.register",
+      "host-bus.service.call",
+      "host-bus.event.subscribe",
+      "host-bus.worker.spawn",
+      "host-bus.worker.stop",
+      "blob.read",
+      "blob.write-once"
+    ]
+  }
+}
