@@ -5,16 +5,6 @@
 //! cancellation, a bounded thread pool, or OS process control.  No OS sandbox
 //! is implemented by this module.
 
-#[cfg(test)]
-#[path = "identity.rs"]
-mod identity;
-#[cfg(test)]
-#[path = "lifecycle.rs"]
-mod lifecycle;
-
-#[cfg(test)]
-use self::{identity::*, lifecycle::*};
-#[cfg(not(test))]
 use super::{identity::*, lifecycle::*};
 
 use std::collections::BTreeMap;

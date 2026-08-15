@@ -54,7 +54,8 @@ fn validate_identifier(kind: &'static str, value: &str) -> Result<String, Identi
 }
 
 macro_rules! identifier_type {
-    ($name:ident, $kind:literal) => {
+    ($(#[$metadata:meta])* $name:ident, $kind:literal) => {
+        $(#[$metadata])*
         #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name(String);
 
@@ -94,11 +95,17 @@ macro_rules! identifier_type {
     };
 }
 
-/// The security principal attributed to a host, plugin, or kernel-owned actor.
-identifier_type!(PrincipalId, "principal id");
+identifier_type!(
+    /// The security principal attributed to a host, plugin, or kernel-owned actor.
+    PrincipalId,
+    "principal id"
+);
 
-/// The supervisor identity of one scheduled worker.
-identifier_type!(WorkerId, "worker id");
+identifier_type!(
+    /// The supervisor identity of one scheduled worker.
+    WorkerId,
+    "worker id"
+);
 
 /// A plugin identity paired with an incarnation nonce.
 ///

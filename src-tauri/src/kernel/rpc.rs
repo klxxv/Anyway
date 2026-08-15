@@ -7,23 +7,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-#[cfg(test)]
-#[path = "blob.rs"]
-mod blob;
-#[cfg(test)]
-#[path = "identity.rs"]
-mod identity;
+use super::blob::BlobRef;
+pub use super::identity::{CapabilityLease, PrincipalId};
 
 #[cfg(test)]
-use self::blob::BlobRef;
-#[cfg(test)]
-use self::identity::{Capability, CapabilityScope};
-#[cfg(test)]
-pub use self::identity::{CapabilityLease, PrincipalId};
-#[cfg(not(test))]
-use super::blob::BlobRef;
-#[cfg(not(test))]
-pub use super::identity::{CapabilityLease, PrincipalId};
+use super::identity::{Capability, CapabilityScope};
 
 pub const MAX_CONTROL_BYTES: usize = 16 * 1024;
 pub const MAX_WINDOW_CREDITS: u32 = 4096;
@@ -614,7 +602,7 @@ fn validate_text(value: &str, max_len: usize, field: &'static str) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use super::blob::{BlobQuota, BlobScope, BlobStore};
+    use super::super::blob::{BlobQuota, BlobScope, BlobStore};
     use super::*;
 
     fn context() -> (PrincipalId, RpcTarget, TraceContext, CapabilityLease) {

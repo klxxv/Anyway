@@ -17,7 +17,7 @@
     "tauri": "tauri",
     "test": "npm run build && npm run test:core && npm run test:platform && npm run test:workspace && npm run test:sdk && npm run test:native && npm run test:compiler",
     "test:core": "tsx --test tests/research-core.test.ts",
-    "test:platform": "tsx --test tests/platform.test.ts tests/plugin-settings-ui.test.ts",
+    "test:platform": "tsx --test tests/platform.test.ts tests/plugin-settings-ui.test.ts tests/host-sdk-v2.test.ts tests/vue-ui-ir.test.ts",
     "test:workspace": "tsx --test tests/research-workspace.test.ts tests/workspace-hooks.test.ts tests/pdf-agent-ui.test.ts tests/canvas-diff.test.ts",
     "test:native": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:compiler": "tsx --test tests/compiler-parity.test.ts",
