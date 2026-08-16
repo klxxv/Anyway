@@ -3,6 +3,7 @@ import type {
   EdgeStyleManifest,
   ThemeManifest,
 } from "../lib/research-types";
+import type { UiIrSlotContribution } from "./ui-ir";
 
 /** 桌面安装器与前端共享的 `.myc` 清单版本 / Shared `.myc` manifest version for desktop installer and frontend. */
 export const MYC_API_VERSION = "researchcanvas.dev/v1alpha1";
@@ -285,6 +286,8 @@ export interface MycPluginContributions {
   contextMenus?: PluginContextMenuContribution[];
   locales?: PluginLocaleContribution[];
   commands?: PluginCommandContribution[];
+  /** 宿主渲染的声明式 UI 插槽 / Host-rendered declarative UI slots. */
+  uiIr?: readonly UiIrSlotContribution[];
 }
 
 /** 语言包是声明式数据，只能覆盖已知宿主消息键 / Locale bundles are declarative overlays for known host keys. */

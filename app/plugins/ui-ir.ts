@@ -116,12 +116,12 @@ export type UiIrNode =
   | UiIrSelectNode
   | UiIrListNode;
 
-export type UiIrDocument = {
+export interface UiIrDocument {
   readonly apiVersion: UiIrApiVersion;
   readonly root: UiIrNode;
   /** Optional declarations for tooling and future host preflight. */
   readonly bindings?: readonly UiIrBinding[];
-};
+}
 
 export type UiIrActionRequest = {
   readonly apiVersion: UiIrApiVersion;
@@ -129,6 +129,12 @@ export type UiIrActionRequest = {
   readonly actionId: string;
   readonly capability: string;
   readonly parameters: UiIrJsonRecord;
+};
+
+/** One declarative UI contribution bound to a named host slot. */
+export type UiIrSlotContribution = {
+  readonly slotId: string;
+  readonly ir: UiIrDocument;
 };
 
 export type UiIrActionDispatcher = (
@@ -152,6 +158,17 @@ export type UiIrPermissionPolicy = {
   >;
   /** Secure default: action-bearing IR must provide both allowlists. */
   readonly requireActionAllowlist?: boolean;
+};
+
+/**
+ * The concrete policy produced by {@link permissionPolicyForContributions}:
+ * every allowlist is populated (possibly empty) and declaration is required.
+ */
+export type UiIrDerivedPermissionPolicy = {
+  readonly allowedActions: ReadonlySet<string>;
+  readonly allowedCapabilities: ReadonlySet<string>;
+  readonly allowedActionCapabilities: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly requireActionAllowlist: true;
 };
 
 export type UiIrParserOptions = {
@@ -197,6 +214,20 @@ export function isUiIrJsonRecord(value: unknown): value is UiIrJsonRecord {
   );
 }
 
+export function isUiIrSlotContribution(value: unknown): value is UiIrSlotContribution {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as { readonly slotId?: unknown; readonly ir?: unknown };
+  if (typeof candidate.slotId !== "string" || !isUiIrIdentifier(candidate.slotId)) return false;
+  if (typeof candidate.ir !== "object" || candidate.ir === null || Array.isArray(candidate.ir)) return false;
+  const ir = candidate.ir as { readonly apiVersion?: unknown; readonly root?: unknown };
+  return (
+    ir.apiVersion === UI_IR_API_VERSION &&
+    typeof ir.root === "object" &&
+    ir.root !== null &&
+    !Array.isArray(ir.root)
+  );
+}
+
 export function createUiIrActionRequest(
   pluginId: string,
   binding: UiIrActionBinding,
@@ -217,6 +248,63 @@ export function createUiIrActionRequest(
     capability: binding.capability,
     parameters: Object.freeze(mergedParameters),
   });
+}
+
+/**
+ * Walks one IR node tree collecting every action binding declared on
+ * button/input/select nodes. Container nodes are traversed recursively.
+ */
+function collectActionBindings(
+  node: UiIrNode,
+  visit: (actionId: string, capability: string) => void,
+): void {
+  switch (node.type) {
+    case "slot":
+    case "stack":
+    case "grid":
+      for (const child of node.children) collectActionBindings(child, visit);
+      return;
+    case "button":
+      visit(node.action.actionId, node.action.capability);
+      return;
+    case "input":
+      if (node.action) visit(node.action.actionId, node.action.capability);
+      return;
+    case "select":
+      if (node.action) visit(node.action.actionId, node.action.capability);
+      return;
+    default:
+      return;
+  }
+}
+
+/**
+ * Derives a {@link UiIrPermissionPolicy} from declared slot contributions:
+ * the allowlists contain exactly the actions and capabilities the plugin
+ * declared, so the parser accepts only what the plugin itself advertised.
+ * Data-only; no Vue or transport imports.
+ */
+export function permissionPolicyForContributions(
+  contributions: readonly UiIrSlotContribution[] | undefined,
+): UiIrDerivedPermissionPolicy {
+  const allowedActions = new Set<string>();
+  const allowedCapabilities = new Set<string>();
+  const allowedActionCapabilities = new Map<string, Set<string>>();
+  for (const contribution of contributions ?? []) {
+    collectActionBindings(contribution.ir.root, (actionId, capability) => {
+      allowedActions.add(actionId);
+      allowedCapabilities.add(capability);
+      const capabilities = allowedActionCapabilities.get(actionId) ?? new Set<string>();
+      capabilities.add(capability);
+      allowedActionCapabilities.set(actionId, capabilities);
+    });
+  }
+  return {
+    allowedActions,
+    allowedCapabilities,
+    allowedActionCapabilities,
+    requireActionAllowlist: true,
+  };
 }
 
 // Friendly aliases for consumers that use the short names from the design doc.
