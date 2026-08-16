@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, State, WebviewWindow};
 
+use crate::kernel::audit::{AuditLedger, AuditOutcome};
 use crate::kernel::blob::{BlobError, BlobRef, BlobScope, BlobStore};
 use crate::kernel::bus::{AdmissionRequest, BusError, BusPayload, HostBus, OperationDescriptor};
 use crate::kernel::identity::{Capability, CapabilityLease, PrincipalId};
@@ -672,9 +673,21 @@ pub fn kernel_host_call(
     let lease = match authorize_for_bus(&policy, &request, &principal, &selected_lease_ids, now_ms)
     {
         Ok(lease) => lease,
-        Err(error) => return policy_failure(response_request_id, error),
+        Err(error) => {
+            record_audit(
+                kernel.audit(),
+                &principal,
+                &request,
+                now_ms,
+                AuditOutcome::Denied,
+            );
+            return policy_failure(response_request_id, error);
+        }
     };
 
+    // The admission builder takes ownership of the principal; keep a clone
+    // for the audit event recorded after dispatch.
+    let audit_principal = principal.clone();
     let request_key = request_key(&request.request_id);
     let admission = match AdmissionRequest::with_relative_deadline(
         request_key,
@@ -704,6 +717,12 @@ pub fn kernel_host_call(
     };
 
     let handler_result = dispatch(&request, Some(app), &*agent, kernel.blobs(), kernel.services());
+    let outcome = if handler_result.is_ok() {
+        AuditOutcome::Completed
+    } else {
+        AuditOutcome::Failed
+    };
+    record_audit(kernel.audit(), &audit_principal, &request, now_ms, outcome);
     let finish_result = kernel
         .write()
         .map_err(|_| "kernel bus lock is poisoned".to_string())
@@ -1150,6 +1169,30 @@ fn bus_failure(request_id: String, error: BusError) -> HostCallResponse {
         _ => ("HOST_ROUTING_FAILED", false),
     };
     HostCallResponse::failure(request_id, code, error.to_string(), retryable)
+}
+
+/// Record one Host SDK call outcome in the kernel audit ledger.
+///
+/// The ledger plane is synchronous and best-effort: take the write lock,
+/// append the event, drop the guard. Auditing must never change the gateway
+/// response shape or error codes, so a poisoned ledger lock is swallowed
+/// rather than surfaced to the caller.
+fn record_audit(
+    ledger: &RwLock<AuditLedger>,
+    principal: &PrincipalId,
+    request: &HostCallRequest,
+    now_ms: u64,
+    outcome: AuditOutcome,
+) {
+    if let Ok(mut ledger) = ledger.write() {
+        ledger.record(
+            principal.clone(),
+            request.operation.clone(),
+            request.trace_parent.clone(),
+            now_ms,
+            outcome,
+        );
+    }
 }
 
 fn bounded_wire_token(value: &str, max_bytes: usize) -> bool {
@@ -1810,6 +1853,55 @@ mod tests {
         assert_eq!(result["serviceId"], "anyway.system.ping");
         assert_eq!(result["method"], "ping");
         assert_eq!(result["args"], json!({ "probe": 1 }));
+    }
+
+    #[test]
+    fn successful_dispatch_records_a_completed_audit_event() {
+        let state = create_kernel_state().expect("kernel state");
+        let call_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "audit-call-1",
+            "operation": "service.call",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "serviceId": "anyway.system.ping",
+                    "method": "ping",
+                    "args": {}
+                }
+            },
+            "deadlineMs": 30_000,
+            "traceParent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        }))
+        .unwrap();
+        let principal = PrincipalId::new(NATIVE_UI_PRINCIPAL_NAME).unwrap();
+
+        // The gateway path after authorization: the service.call route
+        // dispatches through `dispatch_service_call`, then records. The route
+        // helper is called directly (like the other handler tests) so the test
+        // binary never links the Tauri GUI dispatch arms.
+        let result = dispatch_service_call(&call_request, state.services())
+            .expect("example service call succeeded");
+        assert_eq!(result["serviceId"], "anyway.system.ping");
+        assert_eq!(result["method"], "ping");
+        record_audit(state.audit(), &principal, &call_request, 42, AuditOutcome::Completed);
+
+        let ledger = state.audit().read().expect("audit read lock");
+        assert_eq!(ledger.len(), 1);
+        let events = ledger.query(1, 10);
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert!(event.sequence >= 1, "sequence must be assigned from 1");
+        assert_eq!(event.sequence, 1);
+        assert_eq!(event.principal, principal);
+        assert_eq!(event.operation, "service.call");
+        assert_eq!(
+            event.trace_parent.as_deref(),
+            Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+            "the gateway must persist the validated trace parent"
+        );
+        assert_eq!(event.timestamp_ms, 42);
+        assert_eq!(event.outcome, AuditOutcome::Completed);
     }
 
     #[test]

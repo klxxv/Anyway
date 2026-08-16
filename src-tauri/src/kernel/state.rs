@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use super::audit::AuditLedger;
 use super::blob::{BlobQuota, BlobStore};
 use super::bus::HostBus;
 use super::package_gate::PackageGate;
@@ -13,9 +14,10 @@ use super::supervisor::Supervisor;
 /// Application state that can be registered with Tauri's managed state.
 ///
 /// The state owns synchronization and the admission/routing model plus the
-/// Phase 3 data and control planes and the Phase 4 scheduler and supervisor
-/// planes. It has no Tauri types so unit tests and non-Tauri transports can
-/// share the same kernel state boundary.
+/// Phase 3 data and control planes, the Phase 4 scheduler and supervisor
+/// planes, and the audit plane required by the Host SDK gateway. It has no
+/// Tauri types so unit tests and non-Tauri transports can share the same
+/// kernel state boundary.
 pub struct KernelState {
     bus: Arc<RwLock<HostBus>>,
     blobs: Arc<RwLock<BlobStore>>,
@@ -24,6 +26,7 @@ pub struct KernelState {
     supervisor: Arc<RwLock<Supervisor>>,
     services: Arc<RwLock<ServiceRegistry>>,
     packages: Arc<RwLock<PackageGate>>,
+    audit: Arc<RwLock<AuditLedger>>,
 }
 
 impl KernelState {
@@ -36,6 +39,7 @@ impl KernelState {
             supervisor: Arc::new(RwLock::new(Supervisor::default())),
             services: Arc::new(RwLock::new(ServiceRegistry::default())),
             packages: Arc::new(RwLock::new(PackageGate::default())),
+            audit: Arc::new(RwLock::new(AuditLedger::default())),
         }
     }
 
@@ -114,6 +118,14 @@ impl KernelState {
 
     pub fn shared_packages(&self) -> Arc<RwLock<PackageGate>> {
         Arc::clone(&self.packages)
+    }
+
+    pub fn audit(&self) -> &RwLock<AuditLedger> {
+        self.audit.as_ref()
+    }
+
+    pub fn shared_audit(&self) -> Arc<RwLock<AuditLedger>> {
+        Arc::clone(&self.audit)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {
@@ -247,6 +259,23 @@ mod tests {
                 .expect("package gate read lock")
                 .candidate_count(),
             0
+        );
+    }
+
+    #[test]
+    fn state_owns_the_audit_plane_synchronously() {
+        let state = Arc::new(KernelState::default());
+        let shared_audit = state.shared_audit();
+        let worker = std::thread::spawn(move || {
+            let audit = shared_audit.read().expect("audit read lock");
+            audit.len()
+        });
+
+        assert_eq!(worker.join().expect("worker completed"), 0);
+        assert_eq!(
+            state.audit().read().expect("audit read lock").len(),
+            0,
+            "a fresh kernel owns an empty audit ledger"
         );
     }
 }

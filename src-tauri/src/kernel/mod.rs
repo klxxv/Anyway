@@ -4,6 +4,7 @@
 //! commands are routed through it. That keeps the new contracts continuously
 //! compiled while the migration proceeds without a flag-day rewrite.
 
+pub mod audit;
 pub mod blob;
 pub mod bus;
 pub mod identity;
