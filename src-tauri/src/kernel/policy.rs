@@ -280,6 +280,12 @@ impl CapabilityPolicy {
                 "plugin.settings.reset",
                 custom_capability("plugin.settings.reset"),
             ),
+            ("plugin.install", custom_capability("plugin.install")),
+            ("plugin.uninstall", custom_capability("plugin.uninstall")),
+            (
+                "plugin.vsix.import",
+                custom_capability("plugin.vsix.import"),
+            ),
             ("project.save", custom_capability("project.save")),
             ("project.import", custom_capability("project.import")),
             (
@@ -389,6 +395,12 @@ impl CapabilityPolicy {
             "plugin.settings.reset" => (
                 "plugin.settings.reset",
                 custom_capability("plugin.settings.reset"),
+            ),
+            "plugin.install" => ("plugin.install", custom_capability("plugin.install")),
+            "plugin.uninstall" => ("plugin.uninstall", custom_capability("plugin.uninstall")),
+            "plugin.vsix.import" => (
+                "plugin.vsix.import",
+                custom_capability("plugin.vsix.import"),
             ),
             "project.save" => ("project.save", custom_capability("project.save")),
             "project.import" => ("project.import", custom_capability("project.import")),

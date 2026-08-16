@@ -212,6 +212,54 @@ test("plugin settings write and reset operations emit valid names and exact payl
     assert.deepEqual(request.payload.value, testCase.payload);
   }
 });
+test("plugin install/uninstall and vsix import operations emit valid names and exact payload keys", async () => {
+  const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
+  const cases: Array<{
+    operation: string;
+    payload: Record<string, unknown>;
+    expectedKeys: string[];
+  }> = [
+    {
+      operation: "plugin.install",
+      payload: { path: "/tmp/example.myc" },
+      expectedKeys: ["path"],
+    },
+    {
+      operation: "plugin.uninstall",
+      payload: {
+        pluginId: "myc.onedarkpro",
+        pluginVersion: "1.3.0",
+      },
+      expectedKeys: ["pluginId", "pluginVersion"],
+    },
+    {
+      operation: "plugin.vsix.import",
+      payload: { path: "/tmp/theme.vsix" },
+      expectedKeys: ["path"],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const transport = new RecordingTransport();
+    const sdk = new HostSdk(transport);
+
+    assert.deepEqual(await sdk.call(testCase.operation, testCase.payload), { accepted: true });
+
+    const request = transport.request;
+    assert.ok(request, "Host SDK emitted a request");
+    assert.equal(request.operation, testCase.operation);
+    assert.match(request.operation, operationNames);
+    assert.equal(request.payload.kind, "inline");
+    if (request.payload.kind !== "inline") {
+      assert.fail(`${testCase.operation} must use an inline payload`);
+      return;
+    }
+    const value = request.payload.value as Record<string, unknown>;
+    assert.deepEqual(Object.keys(value).sort(), testCase.expectedKeys);
+    assert.equal("capability" in value, false, "the legacy capability field must not be forwarded");
+    assert.deepEqual(request.payload.value, testCase.payload);
+  }
+});
 test("project persistence operations emit valid names and exact payload keys", async () => {
   const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
   const cases: Array<{

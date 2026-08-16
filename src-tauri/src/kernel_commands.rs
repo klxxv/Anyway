@@ -49,6 +49,9 @@ const PLUGIN_SETTINGS_WRITE_MAX_INFLIGHT: usize = 8;
 const PLUGIN_SETTINGS_RESET_MAX_INFLIGHT: usize = 8;
 const PROJECT_SAVE_MAX_INFLIGHT: usize = 8;
 const PROJECT_IMPORT_MAX_INFLIGHT: usize = 8;
+const PLUGIN_INSTALL_MAX_INFLIGHT: usize = 8;
+const PLUGIN_UNINSTALL_MAX_INFLIGHT: usize = 8;
+const VSIX_IMPORT_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_FOLDER_LIST_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GIT_READ_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GITHUB_READ_MAX_INFLIGHT: usize = 8;
@@ -197,6 +200,25 @@ struct ProjectSaveRequest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProjectImportRequest {
+    path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PluginInstallRequest {
+    path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PluginUninstallRequest {
+    plugin_id: String,
+    plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VsixImportRequest {
     path: String,
 }
 
@@ -548,6 +570,27 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
     )?;
     register_operation(
         &mut bus,
+        "plugin.install",
+        RpcTarget::new("plugin", "install"),
+        "plugin.install",
+        PLUGIN_INSTALL_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "plugin.uninstall",
+        RpcTarget::new("plugin", "uninstall"),
+        "plugin.uninstall",
+        PLUGIN_UNINSTALL_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "plugin.vsix.import",
+        RpcTarget::new("plugin", "vsix.import"),
+        "plugin.vsix.import",
+        VSIX_IMPORT_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
         "project.save",
         RpcTarget::new("project", "save"),
         "project.save",
@@ -891,6 +934,18 @@ fn dispatch(
             let app = app.ok_or("plugin.settings.reset requires an application handle")?;
             dispatch_plugin_settings_reset(request, app)
         }
+        "plugin.install" => {
+            let app = app.ok_or("plugin.install requires an application handle")?;
+            dispatch_plugin_install(request, app)
+        }
+        "plugin.uninstall" => {
+            let app = app.ok_or("plugin.uninstall requires an application handle")?;
+            dispatch_plugin_uninstall(request, app)
+        }
+        "plugin.vsix.import" => {
+            let app = app.ok_or("plugin.vsix.import requires an application handle")?;
+            dispatch_vsix_import(request, app)
+        }
         "project.save" => dispatch_project_save(request),
         "project.import" => dispatch_project_import(request),
         "plugin.icon-theme.read" => {
@@ -977,6 +1032,31 @@ fn dispatch_plugin_settings_reset(
         reset_request.plugin_version,
     )?;
     serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_plugin_install(request: &HostCallRequest, app: AppHandle) -> Result<Value, String> {
+    let install_request = inline_request::<PluginInstallRequest>(request)
+        .or_else(|error| Err(format!("invalid plugin.install request: {error}")))?;
+    let installed = crate::plugins::install_myc_plugin(app, install_request.path)?;
+    serde_json::to_value(installed).map_err(|error| error.to_string())
+}
+
+fn dispatch_plugin_uninstall(request: &HostCallRequest, app: AppHandle) -> Result<Value, String> {
+    let uninstall_request = inline_request::<PluginUninstallRequest>(request)
+        .or_else(|error| Err(format!("invalid plugin.uninstall request: {error}")))?;
+    crate::plugins::uninstall_myc_plugin(
+        app,
+        uninstall_request.plugin_id,
+        uninstall_request.plugin_version,
+    )?;
+    Ok(serde_json::Value::Null)
+}
+
+fn dispatch_vsix_import(request: &HostCallRequest, app: AppHandle) -> Result<Value, String> {
+    let import_request = inline_request::<VsixImportRequest>(request)
+        .or_else(|error| Err(format!("invalid plugin.vsix.import request: {error}")))?;
+    let report = crate::vsix_importer::import_vscode_vsix(app, import_request.path)?;
+    serde_json::to_value(report).map_err(|error| error.to_string())
 }
 
 fn dispatch_project_save(request: &HostCallRequest) -> Result<Value, String> {
@@ -1690,6 +1770,24 @@ mod tests {
     }
 
     #[test]
+    fn default_kernel_state_registers_plugin_install_uninstall_and_vsix_import_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("plugin.install", "plugin", "install"),
+            ("plugin.uninstall", "plugin", "uninstall"),
+            ("plugin.vsix.import", "plugin", "vsix.import"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
     fn plugin_settings_write_and_reset_dtos_parse_and_reject_unknown_fields() {
         let write_request: HostCallRequest = serde_json::from_value(json!({
             "apiVersion": HOST_SDK_API_VERSION,
@@ -1774,6 +1872,107 @@ mod tests {
             }))
             .is_err(),
             "the reset DTO must require the plugin version"
+        );
+    }
+
+    #[test]
+    fn plugin_install_uninstall_and_vsix_import_dtos_parse_and_reject_unknown_fields() {
+        let install_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "plugin-install-1",
+            "operation": "plugin.install",
+            "payload": {
+                "kind": "inline",
+                "value": { "path": "/tmp/example.myc" }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(install_request.validate(), Ok(()));
+
+        let install: PluginInstallRequest =
+            inline_request(&install_request).expect("plugin install DTO deserializes");
+        assert_eq!(install.path, "/tmp/example.myc");
+
+        assert!(
+            serde_json::from_value::<PluginInstallRequest>(json!({
+                "path": "/tmp/example.myc",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the install DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<PluginInstallRequest>(json!({})).is_err(),
+            "the install DTO must require the path"
+        );
+
+        let uninstall_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "plugin-uninstall-1",
+            "operation": "plugin.uninstall",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(uninstall_request.validate(), Ok(()));
+
+        let uninstall: PluginUninstallRequest =
+            inline_request(&uninstall_request).expect("plugin uninstall DTO deserializes");
+        assert_eq!(uninstall.plugin_id, "myc.onedarkpro");
+        assert_eq!(uninstall.plugin_version, "1.3.0");
+
+        assert!(
+            serde_json::from_value::<PluginUninstallRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the uninstall DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<PluginUninstallRequest>(json!({
+                "pluginId": "myc.onedarkpro"
+            }))
+            .is_err(),
+            "the uninstall DTO must require the plugin version"
+        );
+
+        let vsix_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "vsix-import-1",
+            "operation": "plugin.vsix.import",
+            "payload": {
+                "kind": "inline",
+                "value": { "path": "/tmp/theme.vsix" }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(vsix_request.validate(), Ok(()));
+
+        let vsix: VsixImportRequest =
+            inline_request(&vsix_request).expect("vsix import DTO deserializes");
+        assert_eq!(vsix.path, "/tmp/theme.vsix");
+
+        assert!(
+            serde_json::from_value::<VsixImportRequest>(json!({
+                "path": "/tmp/theme.vsix",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the vsix import DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<VsixImportRequest>(json!({})).is_err(),
+            "the vsix import DTO must require the path"
         );
     }
 

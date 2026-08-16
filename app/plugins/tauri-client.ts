@@ -184,15 +184,13 @@ export async function installMycPlugin(path: string): Promise<InstalledMycPlugin
   if (!hasTauriRuntime()) {
     throw new Error("MYC_DESKTOP_REQUIRED");
   }
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<InstalledMycPlugin>("install_myc_plugin", { path });
+  return getDesktopHostSdk().call<InstalledMycPlugin>("plugin.install", { path });
 }
 
 /** Removes one exact installed version; bundled packages stay suppressed until explicitly reinstalled. */
 export async function uninstallMycPlugin(plugin: PluginReference): Promise<void> {
   if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("uninstall_myc_plugin", {
+  await getDesktopHostSdk().call<void>("plugin.uninstall", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
   });
@@ -377,8 +375,7 @@ export async function pickVsixFile(): Promise<string | null> {
 
 export async function importVsixTheme(path: string): Promise<NativeVsixImportReport> {
   if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<NativeVsixImportReport>("import_vscode_vsix", { path });
+  return getDesktopHostSdk().call<NativeVsixImportReport>("plugin.vsix.import", { path });
 }
 
 /** Resolves one host-validated IconThemePlugin asset as a safe data URL. */
