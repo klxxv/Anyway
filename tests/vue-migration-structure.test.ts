@@ -254,7 +254,7 @@ test("Vue components use separated SFC script setup, template, and style blocks"
       }
       if (!/<template(?:\s[^>]*)?>/.test(source)) problems.push("missing <template>");
       if (!/<style(?:\s[^>]*)?>/.test(source)) problems.push("missing <style>");
-      if (/\brender\s*\(|\bjsx\b|<[A-Za-z][^>]*>\s*=>/.test(source)) {
+      if (/\brender\s*\(|\bjsx\b|(?:^|[^\w])<[A-Za-z][^>]*>\s*=>/.test(source)) {
         problems.push("contains render/JSX implementation");
       }
       return problems.map((problem) => `${relativePath}: ${problem}`);

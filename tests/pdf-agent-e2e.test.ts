@@ -427,13 +427,13 @@ test("审阅 UI 契约接口结构正确", () => {
 });
 
 test("plugin.yml 清单文件存在且结构正确", () => {
-  const ymlPath = "plugins/sources/pdf-canvas-agent/plugin.yml";
+  const ymlPath = "plugins/sources/myc.pdf-canvas-agent/plugin.yml";
   const yml = readFileSync(ymlPath, "utf8");
 
   // 验证 Manifest 结构
   assert.match(yml, /apiVersion:\s+researchcanvas\.dev\/v1alpha1/);
   assert.match(yml, /kind:\s+AgentPlugin/);
-  assert.match(yml, /id:\s+pdf-canvas-agent/);
+  assert.match(yml, /id:\s+myc\.pdf-canvas-agent/);
   assert.match(yml, /engine:\s+host-mediated/);
   assert.match(yml, /entry:\s+agent-manifest\.json/);
   assert.match(yml, /agent\.pdf\.read/);
@@ -443,7 +443,7 @@ test("plugin.yml 清单文件存在且结构正确", () => {
 });
 
 test("agent-manifest.json 安全边界声明完整", () => {
-  const manifestPath = "plugins/sources/pdf-canvas-agent/agent-manifest.json";
+  const manifestPath = "plugins/sources/myc.pdf-canvas-agent/agent-manifest.json";
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
   assert.equal(manifest.schemaVersion, 1);
