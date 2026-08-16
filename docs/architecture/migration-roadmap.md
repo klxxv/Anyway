@@ -93,8 +93,9 @@ This slice proves the common path without combining a new security boundary with
 | Kernel audit ledger | ✅ Phase 8 — `kernel/audit.rs` adds a bounded (1024-event) ledger with a monotonic sequence; the gateway records `Denied` on authorization failure and `Completed`/`Failed` on dispatch outcome, persisting the validated `traceParent`. This satisfies the audit prerequisite for migrating state-changing routes. |
 | Settings write/reset | ✅ Phase 8 — `set_plugin_settings` / `reset_plugin_settings` now route through `plugin.settings.write` / `plugin.settings.reset`; first write commands migrated after the audit ledger landed. |
 | Project save/import | ✅ Phase 8 — `save_project_file` / `import_project_file` now route through `project.save` / `project.import`; `importProjectAtPath` simplified to the Host SDK directly. |
+| Sync workspace writes | ✅ Phase 8 — `scan_project_folder`, `initialize_git_workspace`, `generate_github_ssh_key`, and `git_autosave_project` now route through `workspace.folder.scan` / `workspace.git.init` / `workspace.github.ssh.generate` / `workspace.git.autosave`. |
 
-Remaining entries are the remaining WRITE/state-changing command migrations (install/uninstall, VSIX import, workspace scan/artifact/init/login/ssh/autosave, agent start/review/cancel) plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
+Remaining entries are the harder write paths — install/uninstall (security-critical installer), VSIX import, `save_plugin_artifact` (binary, needs the Blob data path), `login_github_account`/`upload_github_ssh_key` (async, needs async dispatch), and the agent start/review/cancel commands (async, State-backed) — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
 
 ## 🧪 Verification gates
 
