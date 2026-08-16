@@ -20,6 +20,7 @@ use crate::kernel::policy::{
     PLUGIN_LIST_OPERATION,
 };
 use crate::kernel::rpc::{RequestId, RpcTarget};
+use crate::kernel::service_registry::{ServiceDescriptor, ServiceMethodDescriptor, ServiceRegistry};
 use crate::kernel::state::KernelState;
 
 /// Named worker declaration for the in-process document agent pool.
@@ -46,6 +47,13 @@ const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
 const BLOB_READ_TTL_MS: u64 = 30_000;
+const SERVICE_REGISTER_MAX_INFLIGHT: usize = 8;
+const SERVICE_CALL_MAX_INFLIGHT: usize = 16;
+
+/// Registry TTL applied to services registered through the Host Bus. Kept in
+/// sync with the kernel registry's default so the example service expires
+/// after the same window the register operation promises.
+const SERVICE_TTL_MS: u64 = crate::kernel::service_registry::DEFAULT_TTL_MS;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -102,6 +110,64 @@ struct BlobReadRequest {
     r#ref: HostBlobRef,
     #[serde(default)]
     workspace: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ServiceRegisterRequest {
+    service: WireServiceDescriptor,
+}
+
+/// Wire mirror of the kernel `ServiceDescriptor` in camelCase.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireServiceDescriptor {
+    service_id: String,
+    version: String,
+    display_name: String,
+    #[serde(default)]
+    methods: Vec<WireServiceMethodDescriptor>,
+    #[serde(default)]
+    required_capabilities: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireServiceMethodDescriptor {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ServiceCallRequest {
+    service_id: String,
+    method: String,
+    #[serde(default)]
+    args: Option<Value>,
+}
+
+impl TryFrom<WireServiceDescriptor> for ServiceDescriptor {
+    type Error = String;
+
+    fn try_from(wire: WireServiceDescriptor) -> Result<Self, String> {
+        let mut methods = Vec::with_capacity(wire.methods.len());
+        for method in wire.methods {
+            methods.push(
+                ServiceMethodDescriptor::new(method.name, method.description)
+                    .map_err(|error| format!("invalid service descriptor: {error}"))?,
+            );
+        }
+        ServiceDescriptor::new(
+            wire.service_id,
+            wire.version,
+            wire.display_name,
+            methods,
+            wire.required_capabilities,
+        )
+        .map_err(|error| format!("invalid service descriptor: {error}"))
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -308,8 +374,23 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "blob.read",
         BLOB_READ_MAX_INFLIGHT,
     )?;
+    register_operation(
+        &mut bus,
+        "service.register",
+        RpcTarget::new("ancordis", "register"),
+        "service.register",
+        SERVICE_REGISTER_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "service.call",
+        RpcTarget::new("ancordis", "call"),
+        "service.call",
+        SERVICE_CALL_MAX_INFLIGHT,
+    )?;
     let kernel = KernelState::with_bus(bus, 64);
     register_agent_worker(&kernel)?;
+    register_example_service(&kernel)?;
     Ok(kernel)
 }
 
@@ -341,6 +422,39 @@ fn register_agent_worker(kernel: &KernelState) -> Result<(), String> {
     supervisor
         .observe(&worker_id, WorkerObservation::Started)
         .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Register the Phase 6 example service into the kernel services plane.
+///
+/// The AnCordis extension host slice needs one service that registers at
+/// startup and can be called back through the Host Bus. The service expires
+/// after the registry TTL, which the Host Bus exposes as `SERVICE_TTL_MS`.
+fn register_example_service(kernel: &KernelState) -> Result<(), String> {
+    let descriptor = ServiceDescriptor::new(
+        "anyway.system.ping",
+        "1.0.0",
+        "Ping",
+        vec![ServiceMethodDescriptor::new("ping", None).map_err(|error| error.to_string())?],
+        Vec::new(),
+    )
+    .map_err(|error| error.to_string())?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let mut registry = kernel
+        .services()
+        .write()
+        .map_err(|_| "service registry lock is poisoned".to_string())?;
+    debug_assert_eq!(
+        registry.config().ttl_ms,
+        SERVICE_TTL_MS,
+        "the example service must expire after the Host Bus service TTL"
+    );
+    registry
+        .register(descriptor, now_ms)
+        .map_err(|error| format!("failed to register the example service: {error}"))?;
     Ok(())
 }
 
@@ -467,7 +581,7 @@ pub fn kernel_host_call(
         }
     };
 
-    let handler_result = dispatch(&request, Some(app), kernel.blobs());
+    let handler_result = dispatch(&request, Some(app), kernel.blobs(), kernel.services());
     let finish_result = kernel
         .write()
         .map_err(|_| "kernel bus lock is poisoned".to_string())
@@ -488,6 +602,7 @@ fn dispatch(
     request: &HostCallRequest,
     app: Option<AppHandle>,
     blobs: &RwLock<BlobStore>,
+    services: &RwLock<ServiceRegistry>,
 ) -> Result<Value, String> {
     match request.operation.as_str() {
         PLUGIN_LIST_OPERATION => {
@@ -497,6 +612,8 @@ fn dispatch(
         }
         "blob.write" => dispatch_blob_write(request, blobs),
         "blob.read" => dispatch_blob_read(request, blobs),
+        "service.register" => dispatch_service_register(request, services),
+        "service.call" => dispatch_service_call(request, services),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }
@@ -575,6 +692,46 @@ fn dispatch_blob_read(request: &HostCallRequest, blobs: &RwLock<BlobStore>) -> R
         "mediaType": reference.media_type(),
         "contentBase64": base64::engine::general_purpose::STANDARD.encode(chunk),
     }))
+}
+
+fn dispatch_service_register(
+    request: &HostCallRequest,
+    services: &RwLock<ServiceRegistry>,
+) -> Result<Value, String> {
+    let register_request = inline_request::<ServiceRegisterRequest>(request)
+        .or_else(|error| Err(format!("invalid service.register request: {error}")))?;
+    let descriptor = ServiceDescriptor::try_from(register_request.service)?;
+    let service_id = descriptor.service_id.clone();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let mut registry = services
+        .write()
+        .map_err(|_| "service registry lock is poisoned".to_string())?;
+    registry
+        .register(descriptor, now_ms)
+        .map_err(|error| format!("service.register failed: {error}"))?;
+    Ok(json!(service_id))
+}
+
+fn dispatch_service_call(
+    request: &HostCallRequest,
+    services: &RwLock<ServiceRegistry>,
+) -> Result<Value, String> {
+    let call_request = inline_request::<ServiceCallRequest>(request)
+        .or_else(|error| Err(format!("invalid service.call request: {error}")))?;
+    let args = call_request.args.unwrap_or(Value::Null);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let registry = services
+        .read()
+        .map_err(|_| "service registry lock is poisoned".to_string())?;
+    registry
+        .call(&call_request.service_id, &call_request.method, args, now_ms)
+        .map_err(|error| format!("service.call failed: {error}"))
 }
 
 fn inline_request<T: for<'de> serde::Deserialize<'de>>(
@@ -993,5 +1150,110 @@ mod tests {
         }))
         .unwrap();
         assert!(dispatch_blob_write(&not_base64, state.blobs()).is_err());
+    }
+
+    #[test]
+    fn service_register_and_call_route_through_the_registry() {
+        let state = create_kernel_state().expect("kernel state");
+
+        let register_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "service-register-1",
+            "operation": "service.register",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "service": {
+                        "serviceId": "anyway.system.echo",
+                        "version": "1.0.0",
+                        "displayName": "Echo",
+                        "methods": [{ "name": "echo" }],
+                        "requiredCapabilities": []
+                    }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let registered = dispatch_service_register(&register_request, state.services())
+            .expect("service.register succeeded");
+        assert_eq!(registered, json!("anyway.system.echo"));
+
+        let call_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "service-call-1",
+            "operation": "service.call",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "serviceId": "anyway.system.echo",
+                    "method": "echo",
+                    "args": { "echo": true }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let result = dispatch_service_call(&call_request, state.services())
+            .expect("service.call succeeded");
+        assert_eq!(result["serviceId"], "anyway.system.echo");
+        assert_eq!(result["method"], "echo");
+        assert_eq!(result["args"], json!({ "echo": true }));
+    }
+
+    #[test]
+    fn example_service_is_registered_at_startup_and_can_be_called() {
+        let state = create_kernel_state().expect("kernel state");
+        let call_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "service-call-ping",
+            "operation": "service.call",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "serviceId": "anyway.system.ping",
+                    "method": "ping",
+                    "args": { "probe": 1 }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let result = dispatch_service_call(&call_request, state.services())
+            .expect("example service call succeeded");
+        assert_eq!(result["serviceId"], "anyway.system.ping");
+        assert_eq!(result["method"], "ping");
+        assert_eq!(result["args"], json!({ "probe": 1 }));
+    }
+
+    #[test]
+    fn host_bus_services_expire_after_the_service_ttl() {
+        use crate::kernel::service_registry::{
+            ServiceDescriptor as KernelServiceDescriptor, ServiceMethodDescriptor, ServiceRegistry,
+            ServiceRegistryError,
+        };
+
+        let mut registry = ServiceRegistry::new();
+        let descriptor = KernelServiceDescriptor::new(
+            "anyway.system.ping",
+            "1.0.0",
+            "Ping",
+            vec![ServiceMethodDescriptor::new("ping", None).expect("method")],
+            Vec::new(),
+        )
+        .expect("descriptor");
+        registry.register(descriptor, 1_000).expect("registers");
+        registry
+            .call("anyway.system.ping", "ping", Value::Null, 1_000 + SERVICE_TTL_MS - 1)
+            .expect("still live just before the TTL");
+        assert!(matches!(
+            registry.call(
+                "anyway.system.ping",
+                "ping",
+                Value::Null,
+                1_000 + SERVICE_TTL_MS
+            ),
+            Err(ServiceRegistryError::Expired { .. })
+        ));
     }
 }

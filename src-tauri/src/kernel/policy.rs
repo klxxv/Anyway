@@ -266,6 +266,8 @@ impl CapabilityPolicy {
             ("graph.read", Capability::GraphRead),
             ("ui.register", Capability::UiRegister),
             ("rpc.invoke", Capability::RpcInvoke),
+            ("service.register", custom_capability("service.register")),
+            ("service.call", custom_capability("service.call")),
         ];
         let bootstrap_grants = bootstrap_operations
             .into_iter()
@@ -322,6 +324,8 @@ impl CapabilityPolicy {
             "filesystem.read" => ("filesystem.read", Capability::FilesystemRead),
             "filesystem.write" => ("filesystem.write", Capability::FilesystemWrite),
             "process.spawn" => ("process.spawn", Capability::ProcessSpawn),
+            "service.register" => ("service.register", custom_capability("service.register")),
+            "service.call" => ("service.call", custom_capability("service.call")),
             other => return Err(PolicyError::UnknownOperation(other.to_string())),
         };
 

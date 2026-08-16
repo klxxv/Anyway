@@ -11,5 +11,6 @@ pub mod lifecycle;
 pub mod policy;
 pub mod rpc;
 pub mod scheduler;
+pub mod service_registry;
 pub mod state;
 pub mod supervisor;

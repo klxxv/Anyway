@@ -6,6 +6,7 @@ use super::blob::{BlobQuota, BlobStore};
 use super::bus::HostBus;
 use super::rpc::RpcLedger;
 use super::scheduler::Scheduler;
+use super::service_registry::ServiceRegistry;
 use super::supervisor::Supervisor;
 
 /// Application state that can be registered with Tauri's managed state.
@@ -20,6 +21,7 @@ pub struct KernelState {
     rpc: Arc<RwLock<RpcLedger>>,
     scheduler: Arc<RwLock<Scheduler>>,
     supervisor: Arc<RwLock<Supervisor>>,
+    services: Arc<RwLock<ServiceRegistry>>,
 }
 
 impl KernelState {
@@ -30,6 +32,7 @@ impl KernelState {
             rpc: Arc::new(RwLock::new(rpc)),
             scheduler: Arc::new(RwLock::new(Scheduler::default())),
             supervisor: Arc::new(RwLock::new(Supervisor::default())),
+            services: Arc::new(RwLock::new(ServiceRegistry::default())),
         }
     }
 
@@ -92,6 +95,14 @@ impl KernelState {
 
     pub fn shared_supervisor(&self) -> Arc<RwLock<Supervisor>> {
         Arc::clone(&self.supervisor)
+    }
+
+    pub fn services(&self) -> &RwLock<ServiceRegistry> {
+        self.services.as_ref()
+    }
+
+    pub fn shared_services(&self) -> Arc<RwLock<ServiceRegistry>> {
+        Arc::clone(&self.services)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {
@@ -180,6 +191,28 @@ mod tests {
                 .read()
                 .expect("supervisor read lock")
                 .worker_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn state_owns_the_service_registry_plane_synchronously() {
+        let state = Arc::new(KernelState::default());
+        let shared_services = state.shared_services();
+        let worker = std::thread::spawn(move || {
+            let services = shared_services
+                .read()
+                .expect("service registry read lock");
+            services.service_count()
+        });
+
+        assert_eq!(worker.join().expect("worker completed"), 0);
+        assert_eq!(
+            state
+                .services()
+                .read()
+                .expect("service registry read lock")
+                .service_count(),
             0
         );
     }
