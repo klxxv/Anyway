@@ -49,6 +49,9 @@ const PLUGIN_SETTINGS_WRITE_MAX_INFLIGHT: usize = 8;
 const PLUGIN_SETTINGS_RESET_MAX_INFLIGHT: usize = 8;
 const PROJECT_SAVE_MAX_INFLIGHT: usize = 8;
 const PROJECT_IMPORT_MAX_INFLIGHT: usize = 8;
+const GRAPH_COMPILE_MAX_INFLIGHT: usize = 8;
+const GRAPH_DIFF_MAX_INFLIGHT: usize = 8;
+const PLUGIN_ANALYSIS_RUN_MAX_INFLIGHT: usize = 8;
 const PLUGIN_INSTALL_MAX_INFLIGHT: usize = 8;
 const PLUGIN_UNINSTALL_MAX_INFLIGHT: usize = 8;
 const VSIX_IMPORT_MAX_INFLIGHT: usize = 8;
@@ -207,6 +210,29 @@ struct ProjectSaveRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProjectImportRequest {
     path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GraphCompileRequest {
+    project: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GraphDiffRequest {
+    v1: serde_json::Value,
+    v2: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PluginAnalysisRunRequest {
+    plugin_id: String,
+    plugin_version: String,
+    #[serde(default)]
+    capability: Option<String>,
+    input: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -641,6 +667,27 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
     )?;
     register_operation(
         &mut bus,
+        "graph.compile",
+        RpcTarget::new("graph", "compile"),
+        "graph.compile",
+        GRAPH_COMPILE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "graph.diff",
+        RpcTarget::new("graph", "diff"),
+        "graph.diff",
+        GRAPH_DIFF_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "plugin.analysis.run",
+        RpcTarget::new("plugin", "analysis.run"),
+        "plugin.analysis.run",
+        PLUGIN_ANALYSIS_RUN_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
         "workspace.folder.list",
         RpcTarget::new("workspace", "folder.list"),
         "workspace.folder.list",
@@ -1040,6 +1087,12 @@ async fn dispatch(
         }
         "project.save" => dispatch_project_save(request),
         "project.import" => dispatch_project_import(request),
+        "graph.compile" => dispatch_graph_compile(request),
+        "graph.diff" => dispatch_graph_diff(request),
+        "plugin.analysis.run" => {
+            let app = app.ok_or("plugin.analysis.run requires an application handle")?;
+            dispatch_plugin_analysis_run(request, app)
+        }
         "plugin.icon-theme.read" => {
             let app = app.ok_or("plugin.icon-theme.read requires an application handle")?;
             dispatch_icon_theme_read(request, app)
@@ -1180,6 +1233,37 @@ fn dispatch_project_import(request: &HostCallRequest) -> Result<Value, String> {
     let import_request = inline_request::<ProjectImportRequest>(request)
         .or_else(|error| Err(format!("invalid project.import request: {error}")))?;
     let result = crate::projects::import_project_file(import_request.path)?;
+    serde_json::to_value(result).map_err(|error| error.to_string())
+}
+
+fn dispatch_graph_compile(request: &HostCallRequest) -> Result<Value, String> {
+    let compile_request = inline_request::<GraphCompileRequest>(request)
+        .or_else(|error| Err(format!("invalid graph.compile request: {error}")))?;
+    let result = crate::graph_cmds::compile_project(compile_request.project)?;
+    serde_json::to_value(result).map_err(|error| error.to_string())
+}
+
+fn dispatch_graph_diff(request: &HostCallRequest) -> Result<Value, String> {
+    let diff_request = inline_request::<GraphDiffRequest>(request)
+        .or_else(|error| Err(format!("invalid graph.diff request: {error}")))?;
+    let result = crate::graph_cmds::compute_diff(diff_request.v1, diff_request.v2)?;
+    serde_json::to_value(result).map_err(|error| error.to_string())
+}
+
+fn dispatch_plugin_analysis_run(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let run_request = inline_request::<PluginAnalysisRunRequest>(request).or_else(|error| {
+        Err(format!("invalid plugin.analysis.run request: {error}"))
+    })?;
+    let result = crate::plugins::execute_myc_plugin(
+        app,
+        run_request.plugin_id,
+        run_request.plugin_version,
+        run_request.capability,
+        run_request.input,
+    )?;
     serde_json::to_value(result).map_err(|error| error.to_string())
 }
 
@@ -2275,6 +2359,207 @@ mod tests {
             serde_json::from_value::<ProjectImportRequest>(json!({})).is_err(),
             "the import DTO must require the path"
         );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_graph_and_plugin_analysis_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("graph.compile", "graph", "compile"),
+            ("graph.diff", "graph", "diff"),
+            ("plugin.analysis.run", "plugin", "analysis.run"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn graph_compile_and_diff_dtos_parse_and_reject_unknown_fields() {
+        let compile_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "graph-compile-1",
+            "operation": "graph.compile",
+            "payload": {
+                "kind": "inline",
+                "value": { "project": { "schemaVersion": 3, "title": "PINN" } }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(compile_request.validate(), Ok(()));
+
+        let compile: GraphCompileRequest =
+            inline_request(&compile_request).expect("graph compile DTO deserializes");
+        assert_eq!(compile.project["title"], "PINN");
+
+        assert!(
+            serde_json::from_value::<GraphCompileRequest>(json!({
+                "project": {},
+                "sneaky": true
+            }))
+            .is_err(),
+            "the compile DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<GraphCompileRequest>(json!({})).is_err(),
+            "the compile DTO must require the project value"
+        );
+
+        let diff_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "graph-diff-1",
+            "operation": "graph.diff",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "v1": { "nodes": [], "edges": [] },
+                    "v2": { "nodes": [], "edges": [] }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(diff_request.validate(), Ok(()));
+
+        let diff: GraphDiffRequest =
+            inline_request(&diff_request).expect("graph diff DTO deserializes");
+        assert_eq!(diff.v1["nodes"].as_array().map(Vec::len), Some(0));
+        assert_eq!(diff.v2["edges"].as_array().map(Vec::len), Some(0));
+
+        assert!(
+            serde_json::from_value::<GraphDiffRequest>(json!({
+                "v1": {},
+                "v2": {},
+                "sneaky": true
+            }))
+            .is_err(),
+            "the diff DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<GraphDiffRequest>(json!({ "v1": {} })).is_err(),
+            "the diff DTO must require the v2 value"
+        );
+    }
+
+    #[test]
+    fn plugin_analysis_run_dto_parses_identity_and_rejects_unknown_fields() {
+        let run_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "plugin-analysis-run-1",
+            "operation": "plugin.analysis.run",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.example",
+                    "pluginVersion": "1.0.0",
+                    "capability": "analysis.run",
+                    "input": { "apiVersion": "researchcanvas.dev/plugin-call/v1alpha1" }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(run_request.validate(), Ok(()));
+
+        let run: PluginAnalysisRunRequest =
+            inline_request(&run_request).expect("plugin analysis run DTO deserializes");
+        assert_eq!(run.plugin_id, "myc.example");
+        assert_eq!(run.plugin_version, "1.0.0");
+        assert_eq!(run.capability.as_deref(), Some("analysis.run"));
+        assert_eq!(run.input["apiVersion"], "researchcanvas.dev/plugin-call/v1alpha1");
+
+        let defaulted: PluginAnalysisRunRequest = serde_json::from_value(json!({
+            "pluginId": "myc.example",
+            "pluginVersion": "1.0.0",
+            "input": {}
+        }))
+        .expect("the run DTO defaults the capability");
+        assert_eq!(defaulted.capability, None);
+
+        assert!(
+            serde_json::from_value::<PluginAnalysisRunRequest>(json!({
+                "pluginId": "myc.example",
+                "pluginVersion": "1.0.0",
+                "input": {},
+                "sneaky": true
+            }))
+            .is_err(),
+            "the run DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<PluginAnalysisRunRequest>(json!({
+                "pluginId": "myc.example",
+                "pluginVersion": "1.0.0"
+            }))
+            .is_err(),
+            "the run DTO must require the input value"
+        );
+        assert!(
+            serde_json::from_value::<PluginAnalysisRunRequest>(json!({
+                "pluginId": "myc.example",
+                "input": {}
+            }))
+            .is_err(),
+            "the run DTO must require the plugin version"
+        );
+    }
+
+    #[test]
+    fn graph_handlers_dispatch_compile_and_diff_to_the_kernel() {
+        let project = json!({
+            "schemaVersion": 3,
+            "id": "proj-1",
+            "title": "PDF test",
+            "discipline": "cs",
+            "nodes": [
+                {"id": "pdf-sec-s1", "type": "note", "title": "Introduction", "tags": [], "evidenceIds": [], "data": {}},
+                {"id": "pdf-p1", "type": "evidence", "title": "A novel approach…", "tags": [], "evidenceIds": [], "data": {}}
+            ],
+            "edges": [
+                {"id": "pdf-edge-para-p1", "type": "part_of", "source": "pdf-p1", "target": "pdf-sec-s1", "directed": true}
+            ],
+            "evidence": [],
+            "placements": [],
+            "scenarios": [],
+            "activity": []
+        });
+
+        let compile_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "graph-compile-dispatch",
+            "operation": "graph.compile",
+            "payload": { "kind": "inline", "value": { "project": project } },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let compiled = dispatch_graph_compile(&compile_request).expect("graph.compile succeeded");
+        assert!(compiled["compile"]["fileHash"].as_str().is_some());
+        assert!(compiled["logicChain"]["score"].as_f64().is_some());
+        assert!(compiled["beliefs"]["meanNetBelief"].as_f64().is_some());
+
+        let diff_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "graph-diff-dispatch",
+            "operation": "graph.diff",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "v1": { "nodes": [], "edges": [] },
+                    "v2": { "nodes": [], "edges": [] }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let diff = dispatch_graph_diff(&diff_request).expect("graph.diff succeeded");
+        assert_eq!(diff["addedNodes"], json!([]));
+        assert!(diff.get("durationMs").is_some());
     }
 
     #[test]

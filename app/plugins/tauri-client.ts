@@ -326,8 +326,7 @@ export async function runAnalysisPlugin<TContext = unknown, TPayload = unknown>(
   capability?: string,
 ): Promise<PluginExecutionResult> {
   if (!hasTauriRuntime()) throw new Error("MYC_DESKTOP_REQUIRED");
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<PluginExecutionResult>("execute_myc_plugin", {
+  return getDesktopHostSdk().call<PluginExecutionResult>("plugin.analysis.run", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
     capability,

@@ -132,12 +132,8 @@ export const REQUIRED_TAURI_COMMANDS = Object.freeze({
   "app/platform/native-project.ts": [
     "save_plugin_artifact",
   ],
-  "app/platform/agent-client.ts": [
-    "compile_project",
-  ],
-  "app/plugins/tauri-client.ts": [
-    "execute_myc_plugin",
-  ],
+  "app/platform/agent-client.ts": [],
+  "app/plugins/tauri-client.ts": [],
 });
 
 export const REQUIRED_STRING_CONSTANTS = Object.freeze([

@@ -2,12 +2,14 @@
  * Canvas Diff 前端契约与计算。
  * TS-side contract + computation for the kernel-layer Canvas Diff.
  *
- * 桌面端：调用 Rust `compute_diff` command（确定性、与内核一致）。
+ * 桌面端：调用 Host SDK `graph.diff` operation（确定性、与内核一致）。
  * Web 端：本地 fallback 实现同一算法（claim 字段选择 + 规范化 + SHA-256 前 12 hex），
  * 仅用于浏览器无桌面桥时的交互演示；两端独立运行，互不交叉比对。
  */
 
 import type { ProjectState, ResearchEdge, ResearchNode } from "../research-types";
+import { HostSdk } from "../../platform/host-sdk";
+import { createDefaultTauriHostSdkTransport } from "../../platform/host-sdk-tauri";
 
 /** 与 Rust `CanvasDiffResult`（camelCase）对齐的 TS 契约（canvas-diff-design.md §2.2）。 */
 export interface CanvasDiffResult {
@@ -69,14 +71,21 @@ export function emptyDiffResult(): CanvasDiffResult {
 const hasTauriRuntime = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+let desktopHostSdk: HostSdk | undefined;
+
+function getDesktopHostSdk(): HostSdk {
+  desktopHostSdk ??= new HostSdk(createDefaultTauriHostSdkTransport());
+  return desktopHostSdk;
+}
+
 /**
  * 计算两个版本的结构化 diff。
- * Desktop: delegates to the Rust kernel via `compute_diff`; Web: local fallback.
+ * Desktop: delegates to the Rust kernel via the `graph.diff` Host SDK operation;
+ * Web: local fallback.
  */
 export async function computeCanvasDiff(v1: DiffInput, v2: DiffInput): Promise<CanvasDiffResult> {
   if (hasTauriRuntime()) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke<CanvasDiffResult>("compute_diff", { v1, v2 });
+    return getDesktopHostSdk().call<CanvasDiffResult>("graph.diff", { v1, v2 });
   }
   return computeLocalDiff(v1, v2);
 }

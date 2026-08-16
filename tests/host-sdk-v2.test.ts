@@ -506,6 +506,60 @@ test("workspace github login and ssh upload operations emit valid names and exac
     assert.deepEqual(request.payload.value, testCase.payload);
   }
 });
+test("graph and plugin analysis operations emit valid names and exact payload keys", async () => {
+  const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
+  const cases: Array<{
+    operation: string;
+    payload: Record<string, unknown>;
+    expectedKeys: string[];
+  }> = [
+    {
+      operation: "graph.compile",
+      payload: {
+        project: { schemaVersion: 3, title: "PINN architecture", nodes: [], edges: [] },
+      },
+      expectedKeys: ["project"],
+    },
+    {
+      operation: "graph.diff",
+      payload: {
+        v1: { schemaVersion: 3, nodes: [], edges: [] },
+        v2: { schemaVersion: 3, nodes: [], edges: [] },
+      },
+      expectedKeys: ["v1", "v2"],
+    },
+    {
+      operation: "plugin.analysis.run",
+      payload: {
+        pluginId: "myc.example",
+        pluginVersion: "1.0.0",
+        capability: "analysis.run",
+        input: { apiVersion: "researchcanvas.dev/plugin-call/v1alpha1" },
+      },
+      expectedKeys: ["capability", "input", "pluginId", "pluginVersion"],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const transport = new RecordingTransport();
+    const sdk = new HostSdk(transport);
+
+    assert.deepEqual(await sdk.call(testCase.operation, testCase.payload), { accepted: true });
+
+    const request = transport.request;
+    assert.ok(request, "Host SDK emitted a request");
+    assert.equal(request.operation, testCase.operation);
+    assert.match(request.operation, operationNames);
+    assert.equal(request.payload.kind, "inline");
+    if (request.payload.kind !== "inline") {
+      assert.fail(`${testCase.operation} must use an inline payload`);
+      return;
+    }
+    const value = request.payload.value as Record<string, unknown>;
+    assert.deepEqual(Object.keys(value).sort(), testCase.expectedKeys);
+    assert.deepEqual(request.payload.value, testCase.payload);
+  }
+});
 test("HostSdk requires BlobRef for oversized values", async () => {
   const sdk = new HostSdk(new RecordingTransport(), 32);
   await assert.rejects(

@@ -105,8 +105,8 @@ export async function cancelPdfJob(jobId: string): Promise<AgentJobStatus> {
 
 /** 阶段 4：图编译器——不变式、blockHash、逻辑链、矛盾链、BP 信念。 */
 export async function compileProject(project: ProjectState): Promise<PdfCompileResult> {
-  const { invoke } = await desktopModules();
-  return invoke<PdfCompileResult>("compile_project", { project });
+  await desktopModules();
+  return getDesktopHostSdk().call<PdfCompileResult>("graph.compile", { project });
 }
 
 /** 弹出文件选择框选择 PDF / Pick a PDF via the native dialog. */
