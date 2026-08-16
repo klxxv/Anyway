@@ -16,6 +16,7 @@ use crate::kernel::audit::{AuditLedger, AuditOutcome};
 use crate::kernel::blob::{BlobError, BlobRef, BlobScope, BlobStore, UploadLeaseId};
 use crate::kernel::bus::{AdmissionRequest, BusError, BusPayload, HostBus, OperationDescriptor};
 use crate::kernel::identity::{Capability, CapabilityLease, PrincipalId};
+use crate::kernel::package_gate::{PackageGate, ScanReport};
 use crate::kernel::policy::{
     AuthorizationSource, CapabilityPolicy, PolicyError, NATIVE_UI_PRINCIPAL_NAME,
     PLUGIN_LIST_OPERATION,
@@ -1100,8 +1101,15 @@ pub async fn kernel_host_call(
         }
     };
 
-    let handler_result =
-        dispatch(&request, Some(app), &*agent, kernel.blobs(), kernel.services()).await;
+    let handler_result = dispatch(
+        &request,
+        Some(app),
+        &*agent,
+        kernel.blobs(),
+        kernel.services(),
+        kernel.packages(),
+    )
+    .await;
     let outcome = if handler_result.is_ok() {
         AuditOutcome::Completed
     } else {
@@ -1138,6 +1146,7 @@ async fn dispatch(
     agent: &crate::agent_commands::AgentHostState,
     blobs: &RwLock<BlobStore>,
     services: &RwLock<ServiceRegistry>,
+    packages: &RwLock<PackageGate>,
 ) -> Result<Value, String> {
     match request.operation.as_str() {
         PLUGIN_LIST_OPERATION => {
@@ -1163,7 +1172,7 @@ async fn dispatch(
         }
         "plugin.install" => {
             let app = app.ok_or("plugin.install requires an application handle")?;
-            dispatch_plugin_install(request, app)
+            dispatch_plugin_install(request, app, packages)
         }
         "plugin.uninstall" => {
             let app = app.ok_or("plugin.uninstall requires an application handle")?;
@@ -1311,11 +1320,63 @@ async fn dispatch_plugin_connection_test(
     serde_json::to_value(result).map_err(|error| error.to_string())
 }
 
-fn dispatch_plugin_install(request: &HostCallRequest, app: AppHandle) -> Result<Value, String> {
+fn dispatch_plugin_install(
+    request: &HostCallRequest,
+    app: AppHandle,
+    packages: &RwLock<PackageGate>,
+) -> Result<Value, String> {
     let install_request = inline_request::<PluginInstallRequest>(request)
         .or_else(|error| Err(format!("invalid plugin.install request: {error}")))?;
+    // The digest is the gate key and is computed from the same resolved
+    // archive bytes the real install will read.
+    let digest = crate::plugins::package_digest(&app, &install_request.path)?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    // The package must pass the kernel supply-chain gate before any install
+    // side effect runs. A gate error aborts the install entirely.
+    run_package_gate(packages, &digest, now_ms)?;
     let installed = crate::plugins::install_myc_plugin(app, install_request.path)?;
     serde_json::to_value(installed).map_err(|error| error.to_string())
+}
+
+/// Runs the kernel PackageGate transaction (submit -> scan -> approve ->
+/// activate) for one package digest before the real install runs.
+///
+/// The scan is the lightweight, deterministic pre-check: the digest was
+/// already computed from a readable, non-empty resolved archive, so the
+/// report passes unconditionally; full manifest/signature/payload validation
+/// still happens inside `install_myc_plugin`. Every transition is
+/// fail-closed — a duplicate or previously rejected digest stops here and the
+/// install never runs.
+fn run_package_gate(
+    packages: &RwLock<PackageGate>,
+    digest: &str,
+    now_ms: u64,
+) -> Result<(), String> {
+    let mut gate = packages
+        .write()
+        .map_err(|_| "package gate lock is poisoned".to_string())?;
+    gate.submit(digest, now_ms)
+        .map_err(|error| format!("package gate rejected the install: {error}"))?;
+    gate.scan(
+        digest,
+        &ScanReport {
+            digest: digest.to_string(),
+            passed: true,
+            findings: Vec::new(),
+            scanner_id: "anyway.installer".to_string(),
+            scanner_version: "1".to_string(),
+        },
+        now_ms,
+    )
+    .map_err(|error| format!("package gate scan failed: {error}"))?;
+    gate.approve(digest, now_ms)
+        .map_err(|error| format!("package gate approval failed: {error}"))?;
+    gate.activate(digest, now_ms)
+        .map_err(|error| format!("package gate activation failed: {error}"))?;
+    Ok(())
 }
 
 fn dispatch_plugin_uninstall(request: &HostCallRequest, app: AppHandle) -> Result<Value, String> {
@@ -4087,5 +4148,70 @@ mod tests {
             ),
             Err(ServiceRegistryError::Expired { .. })
         ));
+    }
+
+    #[test]
+    fn package_gate_flow_activates_and_rejects_a_second_install_of_the_same_digest() {
+        use crate::kernel::package_gate::CandidateStatus;
+
+        let packages = RwLock::new(PackageGate::new());
+        let digest = "a".repeat(64);
+
+        run_package_gate(&packages, &digest, 1_000).expect("first install passes the gate");
+        assert_eq!(
+            packages.read().expect("gate read lock").status(&digest),
+            Some(CandidateStatus::Activated)
+        );
+
+        let second = run_package_gate(&packages, &digest, 2_000);
+        assert!(
+            second.is_err(),
+            "a second install of the same digest must be rejected by the gate"
+        );
+        let message = second.unwrap_err();
+        assert!(message.contains("already submitted"), "message: {message}");
+        assert_eq!(
+            packages.read().expect("gate read lock").status(&digest),
+            Some(CandidateStatus::Activated),
+            "the rejected second install must not change the gate state"
+        );
+    }
+
+    #[test]
+    fn package_gate_flow_rejects_a_digest_already_rejected_in_the_gate() {
+        use crate::kernel::package_gate::CandidateStatus;
+
+        let packages = RwLock::new(PackageGate::new());
+        let digest = "b".repeat(64);
+        {
+            let mut gate = packages.write().expect("gate write lock");
+            gate.submit(&digest, 1_000).expect("submits");
+            gate.scan(
+                &digest,
+                &ScanReport {
+                    digest: digest.clone(),
+                    passed: false,
+                    findings: vec!["signature verification failed".to_string()],
+                    scanner_id: "anyway.installer".to_string(),
+                    scanner_version: "1".to_string(),
+                },
+                1_000,
+            )
+            .expect("records the rejection");
+        }
+
+        let retry = run_package_gate(&packages, &digest, 2_000);
+        assert!(
+            retry.is_err(),
+            "a digest already rejected in the gate must never pass again"
+        );
+        let message = retry.unwrap_err();
+        assert!(message.contains("already submitted"), "message: {message}");
+        assert_eq!(
+            packages.read().expect("gate read lock").status(&digest),
+            Some(CandidateStatus::Rejected {
+                reason: "signature verification failed".to_string()
+            })
+        );
     }
 }

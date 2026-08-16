@@ -1763,6 +1763,24 @@ fn resolve_package_path(base: &Path, path: &Path) -> Result<PathBuf, String> {
     stage_external_myc_package(base, &input)
 }
 
+/// Computes the lowercase hex SHA-256 of a resolved plugin package archive.
+///
+/// The path is resolved exactly like `install_myc_plugin` (plugin base plus
+/// `resolve_package_path`), so the digest that keys the kernel PackageGate
+/// admission transaction covers the same staged bytes the real install reads.
+/// This is the gate's lightweight, deterministic pre-check: the archive must
+/// resolve and be readable, and it must not be empty; the full
+/// manifest/signature/payload validation still happens in `install_archive`.
+pub(crate) fn package_digest(app: &AppHandle, path: &str) -> Result<String, String> {
+    let base = plugin_base(app)?;
+    let input = resolve_package_path(&base, Path::new(path))?;
+    let bytes = fs::read(&input).map_err(|error| error.to_string())?;
+    if bytes.is_empty() {
+        return Err("Plugin package is empty".to_string());
+    }
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
+}
+
 #[tauri::command]
 pub fn install_myc_plugin(app: AppHandle, path: String) -> Result<InstalledMycPlugin, String> {
     let base = plugin_base(&app)?;
