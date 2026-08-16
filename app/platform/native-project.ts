@@ -10,6 +10,8 @@ import {
   projectExportFileName,
   renderProjectExport,
 } from "../plugins/workspace";
+import { HostSdk } from "./host-sdk";
+import { createDefaultTauriHostSdkTransport } from "./host-sdk-tauri";
 
 export interface FolderProjectSummary {
   path: string;
@@ -77,6 +79,13 @@ async function desktopModules() {
     import("@tauri-apps/plugin-dialog"),
   ]);
   return { invoke, dialog };
+}
+
+let desktopHostSdk: HostSdk | undefined;
+
+function getDesktopHostSdk(): HostSdk {
+  desktopHostSdk ??= new HostSdk(createDefaultTauriHostSdkTransport());
+  return desktopHostSdk;
 }
 
 export async function saveProjectNative(project: ProjectState) {
@@ -160,11 +169,10 @@ export async function listFolderEntries(
   root: string,
   path = root,
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<FolderTreeEntry[]>("list_folder_entries", {
+  await desktopModules();
+  return getDesktopHostSdk().call<FolderTreeEntry[]>("workspace.folder.list", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
     root,
     path,
   });
@@ -173,11 +181,10 @@ export async function listFolderEntries(
 export async function openGitWorkspace(command: EnabledWorkspaceCommand) {
   const path = await chooseDirectory(command.label);
   if (!path) return null;
-  const { invoke } = await desktopModules();
-  return invoke<GitWorkspaceSnapshot>("read_git_workspace", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitWorkspaceSnapshot>("workspace.git.read", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
     path,
   });
 }
@@ -196,11 +203,10 @@ export async function initializeGitWorkspace(
 }
 
 export async function readGitHubAccount(command: EnabledWorkspaceCommand) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("read_github_account", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>("workspace.github.read", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
   });
 }
 

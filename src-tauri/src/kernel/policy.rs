@@ -272,6 +272,18 @@ impl CapabilityPolicy {
                 "plugin.settings.read",
                 custom_capability("plugin.settings.read"),
             ),
+            (
+                "workspace.folder.list",
+                custom_capability("workspace.folder.list"),
+            ),
+            (
+                "workspace.git.read",
+                custom_capability("workspace.git.read"),
+            ),
+            (
+                "workspace.github.read",
+                custom_capability("workspace.github.read"),
+            ),
         ];
         let bootstrap_grants = bootstrap_operations
             .into_iter()
@@ -333,6 +345,18 @@ impl CapabilityPolicy {
             "plugin.settings.read" => (
                 "plugin.settings.read",
                 custom_capability("plugin.settings.read"),
+            ),
+            "workspace.folder.list" => (
+                "workspace.folder.list",
+                custom_capability("workspace.folder.list"),
+            ),
+            "workspace.git.read" => (
+                "workspace.git.read",
+                custom_capability("workspace.git.read"),
+            ),
+            "workspace.github.read" => (
+                "workspace.github.read",
+                custom_capability("workspace.github.read"),
             ),
             other => return Err(PolicyError::UnknownOperation(other.to_string())),
         };

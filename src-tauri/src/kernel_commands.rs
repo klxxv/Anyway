@@ -44,6 +44,9 @@ const MAX_BLOB_TEXT_BYTES: usize = 256;
 const MAIN_WEBVIEW_LABEL: &str = "main";
 const PLUGIN_LIST_MAX_INFLIGHT: usize = 8;
 const PLUGIN_SETTINGS_READ_MAX_INFLIGHT: usize = 16;
+const WORKSPACE_FOLDER_LIST_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_GIT_READ_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_GITHUB_READ_MAX_INFLIGHT: usize = 8;
 const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
@@ -152,6 +155,30 @@ struct ServiceCallRequest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PluginSettingsReadRequest {
+    plugin_id: String,
+    plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceFolderListRequest {
+    plugin_id: String,
+    plugin_version: String,
+    root: String,
+    path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceGitReadRequest {
+    plugin_id: String,
+    plugin_version: String,
+    path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceGithubReadRequest {
     plugin_id: String,
     plugin_version: String,
 }
@@ -403,6 +430,27 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "plugin.settings.read",
         PLUGIN_SETTINGS_READ_MAX_INFLIGHT,
     )?;
+    register_operation(
+        &mut bus,
+        "workspace.folder.list",
+        RpcTarget::new("workspace", "folder.list"),
+        "workspace.folder.list",
+        WORKSPACE_FOLDER_LIST_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "workspace.git.read",
+        RpcTarget::new("workspace", "git.read"),
+        "workspace.git.read",
+        WORKSPACE_GIT_READ_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "workspace.github.read",
+        RpcTarget::new("workspace", "github.read"),
+        "workspace.github.read",
+        WORKSPACE_GITHUB_READ_MAX_INFLIGHT,
+    )?;
     let kernel = KernelState::with_bus(bus, 64);
     register_agent_worker(&kernel)?;
     register_example_service(&kernel)?;
@@ -629,6 +677,18 @@ fn dispatch(
             let app = app.ok_or("plugin.settings.read requires an application handle")?;
             dispatch_plugin_settings_read(request, app)
         }
+        "workspace.folder.list" => {
+            let app = app.ok_or("workspace.folder.list requires an application handle")?;
+            dispatch_workspace_folder_list(request, app)
+        }
+        "workspace.git.read" => {
+            let app = app.ok_or("workspace.git.read requires an application handle")?;
+            dispatch_workspace_git_read(request, app)
+        }
+        "workspace.github.read" => {
+            let app = app.ok_or("workspace.github.read requires an application handle")?;
+            dispatch_workspace_github_read(request, app)
+        }
         "blob.write" => dispatch_blob_write(request, blobs),
         "blob.read" => dispatch_blob_read(request, blobs),
         "service.register" => dispatch_service_register(request, services),
@@ -649,6 +709,52 @@ fn dispatch_plugin_settings_read(
         read_request.plugin_version,
     )?;
     serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_workspace_folder_list(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let list_request = inline_request::<WorkspaceFolderListRequest>(request).or_else(|error| {
+        Err(format!("invalid workspace.folder.list request: {error}"))
+    })?;
+    let entries = crate::workspace_host::list_folder_entries(
+        app,
+        list_request.plugin_id,
+        list_request.plugin_version,
+        list_request.root,
+        list_request.path,
+    )?;
+    serde_json::to_value(entries).map_err(|error| error.to_string())
+}
+
+fn dispatch_workspace_git_read(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let read_request = inline_request::<WorkspaceGitReadRequest>(request)
+        .or_else(|error| Err(format!("invalid workspace.git.read request: {error}")))?;
+    let snapshot = crate::workspace_host::read_git_workspace(
+        app,
+        read_request.plugin_id,
+        read_request.plugin_version,
+        read_request.path,
+    )?;
+    serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_workspace_github_read(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let read_request = inline_request::<WorkspaceGithubReadRequest>(request)
+        .or_else(|error| Err(format!("invalid workspace.github.read request: {error}")))?;
+    let status = crate::workspace_host::read_github_account(
+        app,
+        read_request.plugin_id,
+        read_request.plugin_version,
+    )?;
+    serde_json::to_value(status).map_err(|error| error.to_string())
 }
 
 fn dispatch_blob_write(request: &HostCallRequest, blobs: &RwLock<BlobStore>) -> Result<Value, String> {
@@ -1123,6 +1229,127 @@ mod tests {
         assert!(
             serde_json::from_value::<PluginSettingsReadRequest>(missing_version).is_err(),
             "the DTO must require the plugin version"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_workspace_read_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("workspace.folder.list", "workspace", "folder.list"),
+            ("workspace.git.read", "workspace", "git.read"),
+            ("workspace.github.read", "workspace", "github.read"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn workspace_dtos_parse_identity_and_reject_unknown_fields() {
+        let folder_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "folder-list-1",
+            "operation": "workspace.folder.list",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "root": "/workspace",
+                    "path": "src"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let folder: WorkspaceFolderListRequest =
+            inline_request(&folder_request).expect("folder list DTO deserializes");
+        assert_eq!(folder.plugin_id, "myc.onedarkpro");
+        assert_eq!(folder.plugin_version, "1.3.0");
+        assert_eq!(folder.root, "/workspace");
+        assert_eq!(folder.path, "src");
+        assert!(
+            serde_json::from_value::<WorkspaceFolderListRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "root": "/workspace",
+                "path": "src",
+                "capability": "project.folder"
+            }))
+            .is_err(),
+            "the folder list DTO must reject the legacy capability field"
+        );
+
+        let git_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "git-read-1",
+            "operation": "workspace.git.read",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "path": "/workspace"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let git: WorkspaceGitReadRequest =
+            inline_request(&git_request).expect("git read DTO deserializes");
+        assert_eq!(git.plugin_id, "myc.onedarkpro");
+        assert_eq!(git.plugin_version, "1.3.0");
+        assert_eq!(git.path, "/workspace");
+        assert!(
+            serde_json::from_value::<WorkspaceGitReadRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "path": "/workspace",
+                "capability": "git.repository.read"
+            }))
+            .is_err(),
+            "the git read DTO must reject the legacy capability field"
+        );
+
+        let github_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "github-read-1",
+            "operation": "workspace.github.read",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let github: WorkspaceGithubReadRequest =
+            inline_request(&github_request).expect("github read DTO deserializes");
+        assert_eq!(github.plugin_id, "myc.onedarkpro");
+        assert_eq!(github.plugin_version, "1.3.0");
+        assert!(
+            serde_json::from_value::<WorkspaceGithubReadRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "capability": "git.account.read"
+            }))
+            .is_err(),
+            "the github read DTO must reject the legacy capability field"
+        );
+        assert!(
+            serde_json::from_value::<WorkspaceGithubReadRequest>(json!({
+                "pluginId": "myc.onedarkpro"
+            }))
+            .is_err(),
+            "the github read DTO must require the plugin version"
         );
     }
 
