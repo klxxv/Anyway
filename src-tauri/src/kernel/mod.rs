@@ -8,6 +8,7 @@ pub mod blob;
 pub mod bus;
 pub mod identity;
 pub mod lifecycle;
+pub mod package_gate;
 pub mod policy;
 pub mod rpc;
 pub mod scheduler;

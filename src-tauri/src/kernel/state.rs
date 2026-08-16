@@ -4,6 +4,7 @@ use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::blob::{BlobQuota, BlobStore};
 use super::bus::HostBus;
+use super::package_gate::PackageGate;
 use super::rpc::RpcLedger;
 use super::scheduler::Scheduler;
 use super::service_registry::ServiceRegistry;
@@ -22,6 +23,7 @@ pub struct KernelState {
     scheduler: Arc<RwLock<Scheduler>>,
     supervisor: Arc<RwLock<Supervisor>>,
     services: Arc<RwLock<ServiceRegistry>>,
+    packages: Arc<RwLock<PackageGate>>,
 }
 
 impl KernelState {
@@ -33,6 +35,7 @@ impl KernelState {
             scheduler: Arc::new(RwLock::new(Scheduler::default())),
             supervisor: Arc::new(RwLock::new(Supervisor::default())),
             services: Arc::new(RwLock::new(ServiceRegistry::default())),
+            packages: Arc::new(RwLock::new(PackageGate::default())),
         }
     }
 
@@ -103,6 +106,14 @@ impl KernelState {
 
     pub fn shared_services(&self) -> Arc<RwLock<ServiceRegistry>> {
         Arc::clone(&self.services)
+    }
+
+    pub fn packages(&self) -> &RwLock<PackageGate> {
+        self.packages.as_ref()
+    }
+
+    pub fn shared_packages(&self) -> Arc<RwLock<PackageGate>> {
+        Arc::clone(&self.packages)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {
@@ -213,6 +224,28 @@ mod tests {
                 .read()
                 .expect("service registry read lock")
                 .service_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn state_owns_the_package_gate_plane_synchronously() {
+        let state = Arc::new(KernelState::default());
+        let shared_packages = state.shared_packages();
+        let worker = std::thread::spawn(move || {
+            let packages = shared_packages
+                .read()
+                .expect("package gate read lock");
+            packages.candidate_count()
+        });
+
+        assert_eq!(worker.join().expect("worker completed"), 0);
+        assert_eq!(
+            state
+                .packages()
+                .read()
+                .expect("package gate read lock")
+                .candidate_count(),
             0
         );
     }
