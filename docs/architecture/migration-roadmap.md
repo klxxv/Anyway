@@ -97,8 +97,9 @@ This slice proves the common path without combining a new security boundary with
 | Install / uninstall / VSIX | ✅ Phase 8 — `install_myc_plugin`, `uninstall_myc_plugin`, and `import_vscode_vsix` now route through `plugin.install` / `plugin.uninstall` / `plugin.vsix.import`. |
 | Agent review / cancel | ✅ Phase 8 — `review_patch` and `cancel_job` now route through `agent.job.review` / `agent.job.cancel`. This completes the synchronous command migration surface (21 sync commands). |
 | Async gateway + login/ssh-upload | ✅ Phase 8 — `kernel_host_call`/`dispatch` are now async (Tauri async contract via `Result`), and `login_github_account`/`upload_github_ssh_key` route through `workspace.github.login` / `workspace.github.ssh.upload`. |
+| Agent start | ✅ Phase 8 — `start_pdf_job` and `start_document_batch` now route through `agent.job.start` / `agent.batch.start` via shared `queue_pdf_job`/`queue_document_batch` helpers. This completes the command migration surface (25 of 26 live commands). |
 
-Remaining entries are `save_plugin_artifact` (binary, needs the Blob data path) and `start_pdf_job`/`start_document_batch` (async orchestration spawning the private `run_document_batch`) — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
+Remaining entry is `save_plugin_artifact` — a binary (`Vec<u8>`) write that exceeds the 64 KB inline limit and therefore needs the Blob data path (upload bytes → BlobRef → inline reference), which is itself a tracked follow-up — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
 
 ## 🧪 Verification gates
 
