@@ -199,7 +199,7 @@ export async function uninstallMycPlugin(plugin: PluginReference): Promise<void>
 }
 
 /**
- * Reads host-owned plugin settings. The native command receives only the
+ * Reads host-owned plugin settings. The host operation receives only the
  * identity; the host remains authoritative for definitions and secrets.
  * Non-desktop and built-in catalog entries use a safe local fallback.
  */
@@ -211,8 +211,7 @@ export async function getPluginSettings(
   if (!hasTauriRuntime() || options.native === false) {
     return readBrowserSnapshot(plugin, definitions);
   }
-  const { invoke } = await import("@tauri-apps/api/core");
-  const raw = await invoke<unknown>("get_plugin_settings", {
+  const raw = await getDesktopHostSdk().call<unknown>("plugin.settings.read", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
   });

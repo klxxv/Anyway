@@ -32,6 +32,28 @@ test("HostSdk emits a principal-free, versioned envelope", async () => {
   assert.equal(transport.request?.operation, "graph.compile");
   assert.equal("principal" in (transport.request ?? {}), false);
 });
+test("plugin.settings.read emits a valid operation and identity payload", async () => {
+  const transport = new RecordingTransport();
+  const sdk = new HostSdk(transport);
+
+  const payload = { pluginId: "myc.onedarkpro", pluginVersion: "1.3.0" };
+  assert.deepEqual(await sdk.call("plugin.settings.read", payload), { accepted: true });
+
+  const request = transport.request;
+  assert.ok(request, "Host SDK emitted a request");
+  assert.equal(request.operation, "plugin.settings.read");
+  assert.match(request.operation, /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/);
+  assert.equal(request.payload.kind, "inline");
+  if (request.payload.kind !== "inline") {
+    assert.fail("settings read must use an inline payload");
+    return;
+  }
+  assert.deepEqual(Object.keys(request.payload.value as Record<string, unknown>).sort(), [
+    "pluginId",
+    "pluginVersion",
+  ]);
+  assert.deepEqual(request.payload.value, payload);
+});
 test("HostSdk requires BlobRef for oversized values", async () => {
   const sdk = new HostSdk(new RecordingTransport(), 32);
   await assert.rejects(

@@ -268,6 +268,10 @@ impl CapabilityPolicy {
             ("rpc.invoke", Capability::RpcInvoke),
             ("service.register", custom_capability("service.register")),
             ("service.call", custom_capability("service.call")),
+            (
+                "plugin.settings.read",
+                custom_capability("plugin.settings.read"),
+            ),
         ];
         let bootstrap_grants = bootstrap_operations
             .into_iter()
@@ -326,6 +330,10 @@ impl CapabilityPolicy {
             "process.spawn" => ("process.spawn", Capability::ProcessSpawn),
             "service.register" => ("service.register", custom_capability("service.register")),
             "service.call" => ("service.call", custom_capability("service.call")),
+            "plugin.settings.read" => (
+                "plugin.settings.read",
+                custom_capability("plugin.settings.read"),
+            ),
             other => return Err(PolicyError::UnknownOperation(other.to_string())),
         };
 
@@ -615,6 +623,26 @@ mod tests {
         assert!(policy.bootstrap_grants().iter().any(|grant| {
             grant.operation() == PLUGIN_CATALOG_READ_OPERATION
                 && grant.capability().name() == "plugin.catalog.read"
+                && grant.source() == GrantSource::NativeBootstrap
+        }));
+    }
+
+    #[test]
+    fn native_bootstrap_authorizes_plugin_settings_read_without_lease() {
+        let policy = CapabilityPolicy::new();
+        let principal = policy.native_ui_principal().clone();
+        let authorization = policy
+            .authorize("plugin.settings.read", &principal, &[], 10)
+            .expect("native bootstrap");
+
+        assert_eq!(authorization.source(), AuthorizationSource::NativeBootstrap);
+        assert_eq!(
+            authorization.capability().name(),
+            "plugin.settings.read"
+        );
+        assert!(policy.bootstrap_grants().iter().any(|grant| {
+            grant.operation() == "plugin.settings.read"
+                && grant.capability().name() == "plugin.settings.read"
                 && grant.source() == GrantSource::NativeBootstrap
         }));
     }

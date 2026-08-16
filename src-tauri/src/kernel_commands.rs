@@ -43,6 +43,7 @@ const MAX_TRACE_PARENT_BYTES: usize = 256;
 const MAX_BLOB_TEXT_BYTES: usize = 256;
 const MAIN_WEBVIEW_LABEL: &str = "main";
 const PLUGIN_LIST_MAX_INFLIGHT: usize = 8;
+const PLUGIN_SETTINGS_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
@@ -146,6 +147,13 @@ struct ServiceCallRequest {
     method: String,
     #[serde(default)]
     args: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PluginSettingsReadRequest {
+    plugin_id: String,
+    plugin_version: String,
 }
 
 impl TryFrom<WireServiceDescriptor> for ServiceDescriptor {
@@ -388,6 +396,13 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "service.call",
         SERVICE_CALL_MAX_INFLIGHT,
     )?;
+    register_operation(
+        &mut bus,
+        "plugin.settings.read",
+        RpcTarget::new("plugin", "settings.read"),
+        "plugin.settings.read",
+        PLUGIN_SETTINGS_READ_MAX_INFLIGHT,
+    )?;
     let kernel = KernelState::with_bus(bus, 64);
     register_agent_worker(&kernel)?;
     register_example_service(&kernel)?;
@@ -610,12 +625,30 @@ fn dispatch(
             let plugins = crate::plugins::query_installed_plugins(&app)?;
             serde_json::to_value(plugins).map_err(|error| error.to_string())
         }
+        "plugin.settings.read" => {
+            let app = app.ok_or("plugin.settings.read requires an application handle")?;
+            dispatch_plugin_settings_read(request, app)
+        }
         "blob.write" => dispatch_blob_write(request, blobs),
         "blob.read" => dispatch_blob_read(request, blobs),
         "service.register" => dispatch_service_register(request, services),
         "service.call" => dispatch_service_call(request, services),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
+}
+
+fn dispatch_plugin_settings_read(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let read_request = inline_request::<PluginSettingsReadRequest>(request)
+        .or_else(|error| Err(format!("invalid plugin.settings.read request: {error}")))?;
+    let snapshot = crate::plugins::get_plugin_settings(
+        app,
+        read_request.plugin_id,
+        read_request.plugin_version,
+    )?;
+    serde_json::to_value(snapshot).map_err(|error| error.to_string())
 }
 
 fn dispatch_blob_write(request: &HostCallRequest, blobs: &RwLock<BlobStore>) -> Result<Value, String> {
@@ -1036,6 +1069,60 @@ mod tests {
         assert_eq!(
             descriptor.required_capability().name(),
             "plugin.catalog.read"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_the_plugin_settings_read_route() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let operation = crate::kernel::bus::OperationId::new("plugin.settings.read").unwrap();
+        let descriptor = bus.operation(&operation).expect("registered operation");
+        assert_eq!(descriptor.route().service(), "plugin");
+        assert_eq!(descriptor.route().method(), "settings.read");
+        assert_eq!(
+            descriptor.required_capability().name(),
+            "plugin.settings.read"
+        );
+    }
+
+    #[test]
+    fn plugin_settings_read_dto_parses_identity_and_rejects_unknown_fields() {
+        let request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "settings-read-1",
+            "operation": "plugin.settings.read",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(request.validate(), Ok(()));
+
+        let dto: PluginSettingsReadRequest =
+            inline_request(&request).expect("plugin settings read DTO deserializes");
+        assert_eq!(dto.plugin_id, "myc.onedarkpro");
+        assert_eq!(dto.plugin_version, "1.3.0");
+
+        let unknown_field = json!({
+            "pluginId": "myc.onedarkpro",
+            "pluginVersion": "1.3.0",
+            "sneaky": true
+        });
+        assert!(
+            serde_json::from_value::<PluginSettingsReadRequest>(unknown_field).is_err(),
+            "the DTO must reject unknown fields"
+        );
+
+        let missing_version = json!({ "pluginId": "myc.onedarkpro" });
+        assert!(
+            serde_json::from_value::<PluginSettingsReadRequest>(missing_version).is_err(),
+            "the DTO must require the plugin version"
         );
     }
 
