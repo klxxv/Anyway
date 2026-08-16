@@ -506,6 +506,43 @@ test("workspace github login and ssh upload operations emit valid names and exac
     assert.deepEqual(request.payload.value, testCase.payload);
   }
 });
+test("plugin.connection.test emits a valid name and exact payload keys", async () => {
+  const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
+  const payload = {
+    pluginId: "myc.onedarkpro",
+    pluginVersion: "1.3.0",
+    connectionId: "openai",
+    actionId: "test-pdf-extraction",
+    values: { baseUrl: "https://api.example.com" },
+    secrets: { apiKey: { action: "set", value: "sk-secret" } },
+  };
+
+  const transport = new RecordingTransport();
+  const sdk = new HostSdk(transport);
+
+  assert.deepEqual(await sdk.call("plugin.connection.test", payload), { accepted: true });
+
+  const request = transport.request;
+  assert.ok(request, "Host SDK emitted a request");
+  assert.equal(request.operation, "plugin.connection.test");
+  assert.match(request.operation, operationNames);
+  assert.equal(request.payload.kind, "inline");
+  if (request.payload.kind !== "inline") {
+    assert.fail("plugin.connection.test must use an inline payload");
+    return;
+  }
+  const value = request.payload.value as Record<string, unknown>;
+  assert.deepEqual(Object.keys(value).sort(), [
+    "actionId",
+    "connectionId",
+    "pluginId",
+    "pluginVersion",
+    "secrets",
+    "values",
+  ]);
+  assert.equal("capability" in value, false, "the legacy capability field must not be forwarded");
+  assert.deepEqual(request.payload.value, payload);
+});
 test("graph and plugin analysis operations emit valid names and exact payload keys", async () => {
   const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
   const cases: Array<{

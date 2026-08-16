@@ -304,8 +304,7 @@ export async function testPluginConnection(
     throw new Error("MYC_DESKTOP_REQUIRED");
   }
   if (!write || typeof write !== "object") throw new Error("PLUGIN_SETTINGS_WRITE_REQUIRED");
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<PluginConnectionTestResult>("test_plugin_connection", {
+  return getDesktopHostSdk().call<PluginConnectionTestResult>("plugin.connection.test", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
     connectionId,

@@ -280,6 +280,10 @@ impl CapabilityPolicy {
                 "plugin.settings.reset",
                 custom_capability("plugin.settings.reset"),
             ),
+            (
+                "plugin.connection.test",
+                custom_capability("plugin.connection.test"),
+            ),
             ("plugin.install", custom_capability("plugin.install")),
             ("plugin.uninstall", custom_capability("plugin.uninstall")),
             (
@@ -422,6 +426,10 @@ impl CapabilityPolicy {
             "plugin.settings.reset" => (
                 "plugin.settings.reset",
                 custom_capability("plugin.settings.reset"),
+            ),
+            "plugin.connection.test" => (
+                "plugin.connection.test",
+                custom_capability("plugin.connection.test"),
             ),
             "plugin.install" => ("plugin.install", custom_capability("plugin.install")),
             "plugin.uninstall" => ("plugin.uninstall", custom_capability("plugin.uninstall")),

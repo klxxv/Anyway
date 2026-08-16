@@ -217,7 +217,7 @@ test("host settings render and invoke declarative connection test actions", () =
   assert.equal(privateZh["settings.credentialSource.options.hostSecret"], "在此应用中填写 API 密钥");
   assert.doesNotMatch(dialog, /secretKeep|secretReplace|secretClear/);
   assert.match(store, /pluginHost\.testPluginConnection/);
-  assert.match(client, /test_plugin_connection/);
+  assert.match(client, /plugin\.connection\.test/);
   assert.doesNotMatch(client, /console\.(log|debug|info).*secret/i);
 });
 
