@@ -74,12 +74,7 @@ pub fn run() {
             agent_commands::list_import_jobs,
             agent_commands::get_job_status,
             agent_commands::review_patch,
-            agent_commands::cancel_job,
-            llm_provider_registry::list_llm_providers,
-            llm_provider_registry::set_active_llm_provider,
-            llm_provider_registry::set_llm_api_key,
-            llm_provider_registry::has_llm_api_key,
-            llm_provider_registry::clear_llm_api_key
+            agent_commands::cancel_job
         ])
         .setup(|app| {
             if let Err(error) = plugins::install_pending_packages(app.handle()) {
