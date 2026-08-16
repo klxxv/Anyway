@@ -47,6 +47,8 @@ const PLUGIN_LIST_MAX_INFLIGHT: usize = 8;
 const PLUGIN_SETTINGS_READ_MAX_INFLIGHT: usize = 16;
 const PLUGIN_SETTINGS_WRITE_MAX_INFLIGHT: usize = 8;
 const PLUGIN_SETTINGS_RESET_MAX_INFLIGHT: usize = 8;
+const PROJECT_SAVE_MAX_INFLIGHT: usize = 8;
+const PROJECT_IMPORT_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_FOLDER_LIST_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GIT_READ_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GITHUB_READ_MAX_INFLIGHT: usize = 8;
@@ -179,6 +181,19 @@ struct PluginSettingsWriteRequest {
 struct PluginSettingsResetRequest {
     plugin_id: String,
     plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProjectSaveRequest {
+    path: String,
+    project: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProjectImportRequest {
+    path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -494,6 +509,20 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
     )?;
     register_operation(
         &mut bus,
+        "project.save",
+        RpcTarget::new("project", "save"),
+        "project.save",
+        PROJECT_SAVE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "project.import",
+        RpcTarget::new("project", "import"),
+        "project.import",
+        PROJECT_IMPORT_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
         "workspace.folder.list",
         RpcTarget::new("workspace", "folder.list"),
         "workspace.folder.list",
@@ -795,6 +824,8 @@ fn dispatch(
             let app = app.ok_or("plugin.settings.reset requires an application handle")?;
             dispatch_plugin_settings_reset(request, app)
         }
+        "project.save" => dispatch_project_save(request),
+        "project.import" => dispatch_project_import(request),
         "plugin.icon-theme.read" => {
             let app = app.ok_or("plugin.icon-theme.read requires an application handle")?;
             dispatch_icon_theme_read(request, app)
@@ -863,6 +894,20 @@ fn dispatch_plugin_settings_reset(
         reset_request.plugin_version,
     )?;
     serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_project_save(request: &HostCallRequest) -> Result<Value, String> {
+    let save_request = inline_request::<ProjectSaveRequest>(request)
+        .or_else(|error| Err(format!("invalid project.save request: {error}")))?;
+    let result = crate::projects::save_project_file(save_request.path, save_request.project)?;
+    serde_json::to_value(result).map_err(|error| error.to_string())
+}
+
+fn dispatch_project_import(request: &HostCallRequest) -> Result<Value, String> {
+    let import_request = inline_request::<ProjectImportRequest>(request)
+        .or_else(|error| Err(format!("invalid project.import request: {error}")))?;
+    let result = crate::projects::import_project_file(import_request.path)?;
+    serde_json::to_value(result).map_err(|error| error.to_string())
 }
 
 fn dispatch_icon_theme_read(
@@ -1581,6 +1626,104 @@ mod tests {
             }))
             .is_err(),
             "the reset DTO must require the plugin version"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_project_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("project.save", "project", "save"),
+            ("project.import", "project", "import"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn project_save_and_import_dtos_parse_and_reject_unknown_fields() {
+        let save_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "project-save-1",
+            "operation": "project.save",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "path": "/tmp/project.mycproj",
+                    "project": {
+                        "schemaVersion": 2,
+                        "title": "PINN architecture"
+                    }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(save_request.validate(), Ok(()));
+
+        let save: ProjectSaveRequest =
+            inline_request(&save_request).expect("project save DTO deserializes");
+        assert_eq!(save.path, "/tmp/project.mycproj");
+        assert_eq!(save.project["title"], "PINN architecture");
+
+        assert!(
+            serde_json::from_value::<ProjectSaveRequest>(json!({
+                "path": "/tmp/project.mycproj",
+                "project": {},
+                "sneaky": true
+            }))
+            .is_err(),
+            "the save DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<ProjectSaveRequest>(json!({
+                "project": {}
+            }))
+            .is_err(),
+            "the save DTO must require the path"
+        );
+        assert!(
+            serde_json::from_value::<ProjectSaveRequest>(json!({
+                "path": "/tmp/project.mycproj"
+            }))
+            .is_err(),
+            "the save DTO must require the project value"
+        );
+
+        let import_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "project-import-1",
+            "operation": "project.import",
+            "payload": {
+                "kind": "inline",
+                "value": { "path": "/tmp/project.mycproj" }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(import_request.validate(), Ok(()));
+
+        let import: ProjectImportRequest =
+            inline_request(&import_request).expect("project import DTO deserializes");
+        assert_eq!(import.path, "/tmp/project.mycproj");
+
+        assert!(
+            serde_json::from_value::<ProjectImportRequest>(json!({
+                "path": "/tmp/project.mycproj",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the import DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<ProjectImportRequest>(json!({})).is_err(),
+            "the import DTO must require the path"
         );
     }
 

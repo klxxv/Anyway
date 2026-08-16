@@ -130,8 +130,6 @@ export const REQUIRED_EXPORTS = Object.freeze({
 
 export const REQUIRED_TAURI_COMMANDS = Object.freeze({
   "app/platform/native-project.ts": [
-    "save_project_file",
-    "import_project_file",
     "save_plugin_artifact",
     "scan_project_folder",
     "initialize_git_workspace",

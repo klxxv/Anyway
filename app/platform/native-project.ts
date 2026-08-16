@@ -89,18 +89,18 @@ function getDesktopHostSdk(): HostSdk {
 }
 
 export async function saveProjectNative(project: ProjectState) {
-  const { invoke, dialog } = await desktopModules();
+  const { dialog } = await desktopModules();
   const path = await dialog.save({
     title: "Save Research Canvas project",
     defaultPath: `${projectFileStem(project)}.mycproj`,
     filters: [{ name: "Research Canvas project", extensions: [...projectFileExtensions] }],
   });
   if (!path) return null;
-  return invoke<NativeProjectFileResult>("save_project_file", { path, project });
+  return getDesktopHostSdk().call<NativeProjectFileResult>("project.save", { path, project });
 }
 
 export async function importProjectNative() {
-  const { invoke, dialog } = await desktopModules();
+  const { dialog } = await desktopModules();
   const path = await dialog.open({
     title: "Import Research Canvas project",
     multiple: false,
@@ -108,15 +108,12 @@ export async function importProjectNative() {
     filters: [{ name: "Research Canvas project", extensions: [...projectFileExtensions] }],
   });
   if (!path || Array.isArray(path)) return null;
-  return importProjectAtPath(path, invoke);
+  return importProjectAtPath(path);
 }
 
-export async function importProjectAtPath(
-  path: string,
-  suppliedInvoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
-) {
-  const invoke = suppliedInvoke ?? (await desktopModules()).invoke;
-  const result = await invoke<NativeProjectFileResult>("import_project_file", { path });
+export async function importProjectAtPath(path: string) {
+  await desktopModules();
+  const result = await getDesktopHostSdk().call<NativeProjectFileResult>("project.import", { path });
   if (!isProjectState(result.project)) throw new Error("PROJECT_FILE_INVALID");
   return { path: result.path, project: result.project };
 }

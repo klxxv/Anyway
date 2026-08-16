@@ -280,6 +280,8 @@ impl CapabilityPolicy {
                 "plugin.settings.reset",
                 custom_capability("plugin.settings.reset"),
             ),
+            ("project.save", custom_capability("project.save")),
+            ("project.import", custom_capability("project.import")),
             (
                 "workspace.folder.list",
                 custom_capability("workspace.folder.list"),
@@ -372,6 +374,8 @@ impl CapabilityPolicy {
                 "plugin.settings.reset",
                 custom_capability("plugin.settings.reset"),
             ),
+            "project.save" => ("project.save", custom_capability("project.save")),
+            "project.import" => ("project.import", custom_capability("project.import")),
             "workspace.folder.list" => (
                 "workspace.folder.list",
                 custom_capability("workspace.folder.list"),
@@ -716,6 +720,26 @@ mod tests {
         let principal = policy.native_ui_principal().clone();
 
         for operation in ["plugin.settings.write", "plugin.settings.reset"] {
+            let authorization = policy
+                .authorize(operation, &principal, &[], 10)
+                .expect("native bootstrap");
+
+            assert_eq!(authorization.source(), AuthorizationSource::NativeBootstrap);
+            assert_eq!(authorization.capability().name(), operation);
+            assert!(policy.bootstrap_grants().iter().any(|grant| {
+                grant.operation() == operation
+                    && grant.capability().name() == operation
+                    && grant.source() == GrantSource::NativeBootstrap
+            }));
+        }
+    }
+
+    #[test]
+    fn native_bootstrap_authorizes_project_save_and_import_without_lease() {
+        let policy = CapabilityPolicy::new();
+        let principal = policy.native_ui_principal().clone();
+
+        for operation in ["project.save", "project.import"] {
             let authorization = policy
                 .authorize(operation, &principal, &[], 10)
                 .expect("native bootstrap");
