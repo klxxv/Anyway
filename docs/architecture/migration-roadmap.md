@@ -102,8 +102,9 @@ This slice proves the common path without combining a new security boundary with
 | Plugin connection test | ✅ Phase 8 — `test_plugin_connection` now routes through `plugin.connection.test` (async, secrets-bearing DTO). |
 | Blob artifact save | ✅ Phase 8 — `save_plugin_artifact` now routes through a Blob multi-chunk upload (`blob.upload.begin/chunk/commit`) plus `plugin.artifact.save`. |
 | Legacy rollback retirement | ✅ Phase 8 — all ~36 legacy Tauri command registrations were removed, leaving `kernel_host_call` as the sole command entry point. **No privileged operation bypasses Kernel RPC.** |
+| Package-gate install transaction | ✅ Phase 8 — `plugin.install` now runs submit → scan → approve → activate through the `PackageGate` (keyed by the archive SHA-256) before the real install, so installation is gated and a duplicate/rejected digest cannot be installed again. |
 
-Remaining entries are the deeper architecture follow-ups (not command migrations): the package-discovery/install transaction (wire the Phase 7 `PackageGate` into `plugin.install`), unsigned-package provenance, streaming WASM inputs, and manifest-declaration-as-grant separation.
+Remaining entries are the deeper architecture follow-ups (not command migrations): mandatory signature provenance (unsigned packages still install via the permissive manifest/signature validation), streaming WASM inputs, and manifest-declaration-as-grant separation.
 
 ## 🧪 Verification gates
 
