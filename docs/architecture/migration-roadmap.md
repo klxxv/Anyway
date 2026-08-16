@@ -89,8 +89,9 @@ This slice proves the common path without combining a new security boundary with
 | `list_installed_plugins` rollback adapter | ✅ Phase 8 — the direct Tauri command was retired from the invoke handler after all frontend callers moved to `plugin.list`; the Rust function remains only for the internal LLM-provider registry. |
 | Plugin settings read | ✅ Phase 8 — `get_plugin_settings` now routes through `plugin.settings.read` on the Host SDK (frontend uses `HostSdk.call`); the legacy command stays as a rollback adapter and is retired once the write/reset paths follow. |
 | Workspace reads | ✅ Phase 8 — `list_folder_entries`, `read_git_workspace`, and `read_github_account` now route through `workspace.folder.list` / `workspace.git.read` / `workspace.github.read`; the DTOs drop the never-read `capability` field while the host re-checks each plugin's declared capability internally. |
+| Icon-theme + agent reads | ✅ Phase 8 — `read_icon_theme_asset`, `get_job_status`, `list_import_jobs`, and `get_import_batch_status` now route through `plugin.icon-theme.read` / `agent.job.status` / `agent.job.list` / `agent.batch.status`. The gateway now injects the managed `AgentHostState`, so State-backed handlers run behind Host Bus admission. |
 
-Remaining entries (package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, manifest-grant separation, and the remaining direct Tauri commands — mostly writes and agent/State-backed handlers) stay open for the AnMarket/install wiring and the Blob data-path follow-ups.
+Remaining entries are now exclusively WRITE/state-changing paths (settings write/reset, install/uninstall, VSIX import, project save/import, workspace scan/init/login/ssh/autosave, agent start/review/cancel) plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation. These stay open for the AnMarket/install wiring, the Blob data path, and the write-path audit/idempotency follow-ups.
 
 ## 🧪 Verification gates
 
