@@ -100,8 +100,10 @@ This slice proves the common path without combining a new security boundary with
 | Agent start | ✅ Phase 8 — `start_pdf_job` and `start_document_batch` now route through `agent.job.start` / `agent.batch.start` via shared `queue_pdf_job`/`queue_document_batch` helpers. |
 | Graph compile/diff + analysis run | ✅ Phase 8 — `compile_project`, `compute_diff`, and `execute_myc_plugin` now route through `graph.compile` / `graph.diff` / `plugin.analysis.run` (correcting an earlier under-count). |
 | Plugin connection test | ✅ Phase 8 — `test_plugin_connection` now routes through `plugin.connection.test` (async, secrets-bearing DTO). |
+| Blob artifact save | ✅ Phase 8 — `save_plugin_artifact` now routes through a Blob multi-chunk upload (`blob.upload.begin/chunk/commit`) plus `plugin.artifact.save`. |
+| Legacy rollback retirement | ✅ Phase 8 — all ~36 legacy Tauri command registrations were removed, leaving `kernel_host_call` as the sole command entry point. **No privileged operation bypasses Kernel RPC.** |
 
-Remaining entry is `save_plugin_artifact` (binary `Vec<u8>`, needs the Blob data path) — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
+Remaining entries are the deeper architecture follow-ups (not command migrations): the package-discovery/install transaction (wire the Phase 7 `PackageGate` into `plugin.install`), unsigned-package provenance, streaming WASM inputs, and manifest-declaration-as-grant separation.
 
 ## 🧪 Verification gates
 
