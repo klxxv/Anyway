@@ -389,8 +389,7 @@ export async function readIconThemeAsset(
   assetPath: string,
 ): Promise<string | null> {
   if (!hasTauriRuntime()) return null;
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<string>("read_icon_theme_asset", {
+  return getDesktopHostSdk().call<string>("plugin.icon-theme.read", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
     assetPath,

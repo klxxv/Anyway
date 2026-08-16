@@ -47,6 +47,10 @@ const PLUGIN_SETTINGS_READ_MAX_INFLIGHT: usize = 16;
 const WORKSPACE_FOLDER_LIST_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GIT_READ_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GITHUB_READ_MAX_INFLIGHT: usize = 8;
+const ICON_THEME_READ_MAX_INFLIGHT: usize = 8;
+const AGENT_JOB_STATUS_MAX_INFLIGHT: usize = 8;
+const AGENT_JOB_LIST_MAX_INFLIGHT: usize = 8;
+const AGENT_BATCH_STATUS_MAX_INFLIGHT: usize = 8;
 const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
@@ -181,6 +185,32 @@ struct WorkspaceGitReadRequest {
 struct WorkspaceGithubReadRequest {
     plugin_id: String,
     plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IconThemeReadRequest {
+    plugin_id: String,
+    plugin_version: String,
+    asset_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JobStatusRequest {
+    job_id: String,
+}
+
+/// Unit-style DTO: `agent.job.list` carries no required fields and still
+/// deserializes an empty inline payload.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentJobListRequest {}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BatchStatusRequest {
+    batch_id: String,
 }
 
 impl TryFrom<WireServiceDescriptor> for ServiceDescriptor {
@@ -451,6 +481,34 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "workspace.github.read",
         WORKSPACE_GITHUB_READ_MAX_INFLIGHT,
     )?;
+    register_operation(
+        &mut bus,
+        "plugin.icon-theme.read",
+        RpcTarget::new("plugin", "icon-theme.read"),
+        "plugin.icon-theme.read",
+        ICON_THEME_READ_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "agent.job.status",
+        RpcTarget::new("agent", "job.status"),
+        "agent.job.status",
+        AGENT_JOB_STATUS_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "agent.job.list",
+        RpcTarget::new("agent", "job.list"),
+        "agent.job.list",
+        AGENT_JOB_LIST_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "agent.batch.status",
+        RpcTarget::new("agent", "batch.status"),
+        "agent.batch.status",
+        AGENT_BATCH_STATUS_MAX_INFLIGHT,
+    )?;
     let kernel = KernelState::with_bus(bus, 64);
     register_agent_worker(&kernel)?;
     register_example_service(&kernel)?;
@@ -566,6 +624,7 @@ pub fn kernel_host_call(
     app: AppHandle,
     kernel: State<'_, KernelState>,
     policy: State<'_, CapabilityPolicyState>,
+    agent: State<'_, crate::agent_commands::AgentHostState>,
     request: HostCallRequest,
 ) -> HostCallResponse {
     let response_request_id = request.request_id.clone();
@@ -644,7 +703,7 @@ pub fn kernel_host_call(
         }
     };
 
-    let handler_result = dispatch(&request, Some(app), kernel.blobs(), kernel.services());
+    let handler_result = dispatch(&request, Some(app), &*agent, kernel.blobs(), kernel.services());
     let finish_result = kernel
         .write()
         .map_err(|_| "kernel bus lock is poisoned".to_string())
@@ -664,6 +723,7 @@ pub fn kernel_host_call(
 fn dispatch(
     request: &HostCallRequest,
     app: Option<AppHandle>,
+    agent: &crate::agent_commands::AgentHostState,
     blobs: &RwLock<BlobStore>,
     services: &RwLock<ServiceRegistry>,
 ) -> Result<Value, String> {
@@ -677,6 +737,10 @@ fn dispatch(
             let app = app.ok_or("plugin.settings.read requires an application handle")?;
             dispatch_plugin_settings_read(request, app)
         }
+        "plugin.icon-theme.read" => {
+            let app = app.ok_or("plugin.icon-theme.read requires an application handle")?;
+            dispatch_icon_theme_read(request, app)
+        }
         "workspace.folder.list" => {
             let app = app.ok_or("workspace.folder.list requires an application handle")?;
             dispatch_workspace_folder_list(request, app)
@@ -689,6 +753,9 @@ fn dispatch(
             let app = app.ok_or("workspace.github.read requires an application handle")?;
             dispatch_workspace_github_read(request, app)
         }
+        "agent.job.status" => dispatch_agent_job_status(request, agent),
+        "agent.job.list" => dispatch_agent_job_list(request, agent),
+        "agent.batch.status" => dispatch_agent_batch_status(request, agent),
         "blob.write" => dispatch_blob_write(request, blobs),
         "blob.read" => dispatch_blob_read(request, blobs),
         "service.register" => dispatch_service_register(request, services),
@@ -709,6 +776,75 @@ fn dispatch_plugin_settings_read(
         read_request.plugin_version,
     )?;
     serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_icon_theme_read(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let read_request = inline_request::<IconThemeReadRequest>(request).or_else(|error| {
+        Err(format!("invalid plugin.icon-theme.read request: {error}"))
+    })?;
+    let data_url = crate::plugins::read_icon_theme_asset(
+        app,
+        read_request.plugin_id,
+        read_request.plugin_version,
+        read_request.asset_path,
+    )?;
+    serde_json::to_value(data_url).map_err(|error| error.to_string())
+}
+
+fn dispatch_agent_job_status(
+    request: &HostCallRequest,
+    agent: &crate::agent_commands::AgentHostState,
+) -> Result<Value, String> {
+    let status_request = inline_request::<JobStatusRequest>(request)
+        .or_else(|error| Err(format!("invalid agent.job.status request: {error}")))?;
+    let host = agent
+        .0
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let job = host
+        .get_job(&status_request.job_id)
+        .ok_or_else(|| format!("Job not found: {}", status_request.job_id))?;
+    serde_json::to_value(crate::agent_commands::PdfJobStatus::from(job))
+        .map_err(|error| error.to_string())
+}
+
+fn dispatch_agent_job_list(
+    request: &HostCallRequest,
+    agent: &crate::agent_commands::AgentHostState,
+) -> Result<Value, String> {
+    inline_request::<AgentJobListRequest>(request)
+        .or_else(|error| Err(format!("invalid agent.job.list request: {error}")))?;
+    let host = agent
+        .0
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let mut jobs = host
+        .list_jobs()
+        .into_iter()
+        .map(crate::agent_commands::PdfJobStatus::from)
+        .collect::<Vec<_>>();
+    jobs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    serde_json::to_value(jobs).map_err(|error| error.to_string())
+}
+
+fn dispatch_agent_batch_status(
+    request: &HostCallRequest,
+    agent: &crate::agent_commands::AgentHostState,
+) -> Result<Value, String> {
+    let status_request = inline_request::<BatchStatusRequest>(request)
+        .or_else(|error| Err(format!("invalid agent.batch.status request: {error}")))?;
+    let host = agent
+        .0
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let batch = host
+        .get_batch(&status_request.batch_id)
+        .ok_or_else(|| format!("Batch not found: {}", status_request.batch_id))?;
+    let status = crate::agent_commands::import_batch_status(&host, batch)?;
+    serde_json::to_value(status).map_err(|error| error.to_string())
 }
 
 fn dispatch_workspace_folder_list(
@@ -1350,6 +1486,142 @@ mod tests {
             }))
             .is_err(),
             "the github read DTO must require the plugin version"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_agent_and_icon_theme_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("plugin.icon-theme.read", "plugin", "icon-theme.read"),
+            ("agent.job.status", "agent", "job.status"),
+            ("agent.job.list", "agent", "job.list"),
+            ("agent.batch.status", "agent", "batch.status"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn agent_and_icon_theme_dtos_parse_identity_and_reject_unknown_fields() {
+        let icon_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "icon-read-1",
+            "operation": "plugin.icon-theme.read",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "assetPath": "icons/theme.json"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let icon: IconThemeReadRequest =
+            inline_request(&icon_request).expect("icon theme read DTO deserializes");
+        assert_eq!(icon.plugin_id, "myc.onedarkpro");
+        assert_eq!(icon.plugin_version, "1.3.0");
+        assert_eq!(icon.asset_path, "icons/theme.json");
+        assert!(
+            serde_json::from_value::<IconThemeReadRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "assetPath": "icons/theme.json",
+                "capability": "plugin.icon-theme.read"
+            }))
+            .is_err(),
+            "the icon theme read DTO must reject the legacy capability field"
+        );
+        assert!(
+            serde_json::from_value::<IconThemeReadRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0"
+            }))
+            .is_err(),
+            "the icon theme read DTO must require the asset path"
+        );
+
+        let job_status_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "job-status-1",
+            "operation": "agent.job.status",
+            "payload": {
+                "kind": "inline",
+                "value": { "jobId": "job-1" }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let job_status: JobStatusRequest =
+            inline_request(&job_status_request).expect("job status DTO deserializes");
+        assert_eq!(job_status.job_id, "job-1");
+        assert!(
+            serde_json::from_value::<JobStatusRequest>(json!({
+                "jobId": "job-1",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the job status DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<JobStatusRequest>(json!({})).is_err(),
+            "the job status DTO must require the job id"
+        );
+
+        let job_list_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "job-list-1",
+            "operation": "agent.job.list",
+            "payload": {
+                "kind": "inline",
+                "value": {}
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        inline_request::<AgentJobListRequest>(&job_list_request)
+            .expect("job list DTO deserializes an empty payload");
+        assert!(
+            serde_json::from_value::<AgentJobListRequest>(json!({
+                "jobId": "job-1"
+            }))
+            .is_err(),
+            "the job list DTO must reject unknown fields"
+        );
+
+        let batch_status_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "batch-status-1",
+            "operation": "agent.batch.status",
+            "payload": {
+                "kind": "inline",
+                "value": { "batchId": "batch-1" }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let batch_status: BatchStatusRequest =
+            inline_request(&batch_status_request).expect("batch status DTO deserializes");
+        assert_eq!(batch_status.batch_id, "batch-1");
+        assert!(
+            serde_json::from_value::<BatchStatusRequest>(json!({
+                "batchId": "batch-1",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the batch status DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<BatchStatusRequest>(json!({})).is_err(),
+            "the batch status DTO must require the batch id"
         );
     }
 

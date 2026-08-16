@@ -746,7 +746,7 @@ async fn run_document_batch(
     }
 }
 
-fn import_batch_status(host: &AgentHost, batch: &ImportBatch) -> Result<ImportBatchStatus, String> {
+pub(crate) fn import_batch_status(host: &AgentHost, batch: &ImportBatch) -> Result<ImportBatchStatus, String> {
     let jobs = batch
         .job_ids
         .iter()

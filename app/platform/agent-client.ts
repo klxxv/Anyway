@@ -5,6 +5,8 @@ import type {
   StartPdfJobRequest,
 } from "../plugins/agent-contracts";
 import type { ProjectState } from "../lib/research-types";
+import { HostSdk } from "./host-sdk";
+import { createDefaultTauriHostSdkTransport } from "./host-sdk-tauri";
 
 /**
  * PDF Agent 桌面桥接：仅做 invoke 参数序列化，不持有任何 Agent 状态。
@@ -56,6 +58,13 @@ async function desktopModules() {
   return { invoke, dialog };
 }
 
+let desktopHostSdk: HostSdk | undefined;
+
+function getDesktopHostSdk(): HostSdk {
+  desktopHostSdk ??= new HostSdk(createDefaultTauriHostSdkTransport());
+  return desktopHostSdk;
+}
+
 /** 启动 PDF 处理 Job：调用 Rust 端完整管线（校验→提取→OCR→DocumentMap→语义→补丁→审阅）。 */
 export async function startPdfJob(pdfPath: string): Promise<AgentJobStatus> {
   const { invoke } = await desktopModules();
@@ -70,19 +79,19 @@ export async function startDocumentBatch(paths: string[]): Promise<ImportBatchSt
 }
 
 export async function getImportBatchStatus(batchId: string): Promise<ImportBatchStatus> {
-  const { invoke } = await desktopModules();
-  return invoke<ImportBatchStatus>("get_import_batch_status", { batchId });
+  await desktopModules();
+  return getDesktopHostSdk().call<ImportBatchStatus>("agent.batch.status", { batchId });
 }
 
 export async function listImportJobs(): Promise<AgentJobStatus[]> {
-  const { invoke } = await desktopModules();
-  return invoke<AgentJobStatus[]>("list_import_jobs");
+  await desktopModules();
+  return getDesktopHostSdk().call<AgentJobStatus[]>("agent.job.list", {});
 }
 
 /** 查询 Job 状态快照 / Query a job's status snapshot. */
 export async function getPdfJobStatus(jobId: string): Promise<AgentJobStatus> {
-  const { invoke } = await desktopModules();
-  return invoke<AgentJobStatus>("get_job_status", { jobId });
+  await desktopModules();
+  return getDesktopHostSdk().call<AgentJobStatus>("agent.job.status", { jobId });
 }
 
 /** 审阅裁决：接受或拒绝 Agent 提议的 GraphPatch / Review decision. */

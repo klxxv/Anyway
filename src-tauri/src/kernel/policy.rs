@@ -284,6 +284,16 @@ impl CapabilityPolicy {
                 "workspace.github.read",
                 custom_capability("workspace.github.read"),
             ),
+            (
+                "plugin.icon-theme.read",
+                custom_capability("plugin.icon-theme.read"),
+            ),
+            ("agent.job.status", custom_capability("agent.job.status")),
+            ("agent.job.list", custom_capability("agent.job.list")),
+            (
+                "agent.batch.status",
+                custom_capability("agent.batch.status"),
+            ),
         ];
         let bootstrap_grants = bootstrap_operations
             .into_iter()
@@ -357,6 +367,19 @@ impl CapabilityPolicy {
             "workspace.github.read" => (
                 "workspace.github.read",
                 custom_capability("workspace.github.read"),
+            ),
+            "plugin.icon-theme.read" => (
+                "plugin.icon-theme.read",
+                custom_capability("plugin.icon-theme.read"),
+            ),
+            "agent.job.status" => (
+                "agent.job.status",
+                custom_capability("agent.job.status"),
+            ),
+            "agent.job.list" => ("agent.job.list", custom_capability("agent.job.list")),
+            "agent.batch.status" => (
+                "agent.batch.status",
+                custom_capability("agent.batch.status"),
             ),
             other => return Err(PolicyError::UnknownOperation(other.to_string())),
         };
