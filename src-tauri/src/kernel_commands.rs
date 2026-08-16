@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::kernel::audit::{AuditLedger, AuditOutcome};
-use crate::kernel::blob::{BlobError, BlobRef, BlobScope, BlobStore};
+use crate::kernel::blob::{BlobError, BlobRef, BlobScope, BlobStore, UploadLeaseId};
 use crate::kernel::bus::{AdmissionRequest, BusError, BusPayload, HostBus, OperationDescriptor};
 use crate::kernel::identity::{Capability, CapabilityLease, PrincipalId};
 use crate::kernel::policy::{
@@ -75,6 +75,10 @@ const AGENT_JOB_START_MAX_INFLIGHT: usize = 8;
 const AGENT_BATCH_START_MAX_INFLIGHT: usize = 8;
 const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
+const BLOB_UPLOAD_BEGIN_MAX_INFLIGHT: usize = 8;
+const BLOB_UPLOAD_CHUNK_MAX_INFLIGHT: usize = 8;
+const BLOB_UPLOAD_COMMIT_MAX_INFLIGHT: usize = 8;
+const PLUGIN_ARTIFACT_SAVE_MAX_INFLIGHT: usize = 8;
 const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
 const BLOB_READ_TTL_MS: u64 = 30_000;
 const SERVICE_REGISTER_MAX_INFLIGHT: usize = 8;
@@ -140,6 +144,37 @@ struct BlobReadRequest {
     r#ref: HostBlobRef,
     #[serde(default)]
     workspace: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BlobUploadBeginRequest {
+    scope: String,
+    media_type: String,
+    size: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BlobUploadChunkRequest {
+    lease_id: u128,
+    content_base64: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BlobUploadCommitRequest {
+    lease_id: u128,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PluginArtifactSaveRequest {
+    plugin_id: String,
+    plugin_version: String,
+    format: String,
+    path: String,
+    blob_ref: HostBlobRef,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -608,6 +643,34 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         RpcTarget::new("blob", "read"),
         "blob.read",
         BLOB_READ_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "blob.upload.begin",
+        RpcTarget::new("blob", "upload.begin"),
+        "blob.upload.begin",
+        BLOB_UPLOAD_BEGIN_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "blob.upload.chunk",
+        RpcTarget::new("blob", "upload.chunk"),
+        "blob.upload.chunk",
+        BLOB_UPLOAD_CHUNK_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "blob.upload.commit",
+        RpcTarget::new("blob", "upload.commit"),
+        "blob.upload.commit",
+        BLOB_UPLOAD_COMMIT_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "plugin.artifact.save",
+        RpcTarget::new("plugin", "artifact.save"),
+        "plugin.artifact.save",
+        PLUGIN_ARTIFACT_SAVE_MAX_INFLIGHT,
     )?;
     register_operation(
         &mut bus,
@@ -1173,6 +1236,13 @@ async fn dispatch(
         }
         "blob.write" => dispatch_blob_write(request, blobs),
         "blob.read" => dispatch_blob_read(request, blobs),
+        "blob.upload.begin" => dispatch_blob_upload_begin(request, blobs),
+        "blob.upload.chunk" => dispatch_blob_upload_chunk(request, blobs),
+        "blob.upload.commit" => dispatch_blob_upload_commit(request, blobs),
+        "plugin.artifact.save" => {
+            let app = app.ok_or("plugin.artifact.save requires an application handle")?;
+            dispatch_plugin_artifact_save(request, app, blobs)
+        }
         "service.register" => dispatch_service_register(request, services),
         "service.call" => dispatch_service_call(request, services),
         _ => Err("operation has no registered kernel handler".to_string()),
@@ -1658,6 +1728,129 @@ fn dispatch_blob_read(request: &HostCallRequest, blobs: &RwLock<BlobStore>) -> R
         "mediaType": reference.media_type(),
         "contentBase64": base64::engine::general_purpose::STANDARD.encode(chunk),
     }))
+}
+
+fn dispatch_blob_upload_begin(
+    request: &HostCallRequest,
+    blobs: &RwLock<BlobStore>,
+) -> Result<Value, String> {
+    let begin_request = inline_request::<BlobUploadBeginRequest>(request)
+        .or_else(|error| Err(format!("invalid blob.upload.begin request: {error}")))?;
+    // The frontend addresses export artifacts with the "plugin" wire scope,
+    // which is not a wire form the strict parser accepts. It means "private
+    // to the native UI host", so bind it to that principal's private scope;
+    // every other value must parse through the strict wire grammar.
+    let scope = if begin_request.scope == "plugin" {
+        BlobScope::private(NATIVE_UI_PRINCIPAL_NAME)
+            .expect("the native UI principal is a valid private scope")
+    } else {
+        BlobScope::from_wire(&begin_request.scope)
+            .map_err(|error| format!("invalid blob scope: {error}"))?
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let owner = NATIVE_UI_PRINCIPAL_NAME;
+    let mut store = blobs
+        .write()
+        .map_err(|_| "blob store lock is poisoned".to_string())?;
+    let lease = store
+        .begin_upload(
+            owner,
+            scope,
+            begin_request.media_type.clone(),
+            begin_request.size,
+            now_ms,
+            BLOB_UPLOAD_TTL_MS,
+        )
+        .map_err(|error| blob_error_message("begin upload", &error))?;
+    Ok(json!({ "leaseId": lease.value() }))
+}
+
+fn dispatch_blob_upload_chunk(
+    request: &HostCallRequest,
+    blobs: &RwLock<BlobStore>,
+) -> Result<Value, String> {
+    let chunk_request = inline_request::<BlobUploadChunkRequest>(request)
+        .or_else(|error| Err(format!("invalid blob.upload.chunk request: {error}")))?;
+    let content = base64::engine::general_purpose::STANDARD
+        .decode(&chunk_request.content_base64)
+        .map_err(|_| "blob chunk must be base64".to_string())?;
+    if content.len() > MAX_BLOB_CHUNK_BYTES {
+        return Err(format!(
+            "blob chunk exceeds the {} byte chunk limit",
+            MAX_BLOB_CHUNK_BYTES
+        ));
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let owner = NATIVE_UI_PRINCIPAL_NAME;
+    let mut store = blobs
+        .write()
+        .map_err(|_| "blob store lock is poisoned".to_string())?;
+    let uploaded = store
+        .upload_chunk(
+            UploadLeaseId::from_value(chunk_request.lease_id),
+            owner,
+            &content,
+            now_ms,
+        )
+        .map_err(|error| blob_error_message("upload chunk", &error))?;
+    Ok(json!({ "uploadedBytes": uploaded }))
+}
+
+fn dispatch_blob_upload_commit(
+    request: &HostCallRequest,
+    blobs: &RwLock<BlobStore>,
+) -> Result<Value, String> {
+    let commit_request = inline_request::<BlobUploadCommitRequest>(request)
+        .or_else(|error| Err(format!("invalid blob.upload.commit request: {error}")))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let owner = NATIVE_UI_PRINCIPAL_NAME;
+    let mut store = blobs
+        .write()
+        .map_err(|_| "blob store lock is poisoned".to_string())?;
+    let reference = store
+        .commit_upload(
+            UploadLeaseId::from_value(commit_request.lease_id),
+            owner,
+            now_ms,
+        )
+        .map_err(|error| blob_error_message("commit upload", &error))?;
+    Ok(blob_ref_to_json(&reference, owner))
+}
+
+fn dispatch_plugin_artifact_save(
+    request: &HostCallRequest,
+    app: AppHandle,
+    blobs: &RwLock<BlobStore>,
+) -> Result<Value, String> {
+    let save_request = inline_request::<PluginArtifactSaveRequest>(request)
+        .or_else(|error| Err(format!("invalid plugin.artifact.save request: {error}")))?;
+    let reference = host_blob_ref_to_kernel(&save_request.blob_ref)?;
+    let data = {
+        let store = blobs
+            .read()
+            .map_err(|_| "blob store lock is poisoned".to_string())?;
+        store
+            .read_blob_bytes(&reference, NATIVE_UI_PRINCIPAL_NAME)
+            .map_err(|error| blob_error_message("read artifact bytes", &error))?
+    };
+    let saved = crate::workspace_host::save_plugin_artifact(
+        app,
+        save_request.plugin_id,
+        save_request.plugin_version,
+        save_request.format,
+        save_request.path,
+        data,
+    )?;
+    serde_json::to_value(saved).map_err(|error| error.to_string())
 }
 
 fn dispatch_service_register(
@@ -3492,6 +3685,254 @@ mod tests {
         }))
         .unwrap();
         assert!(dispatch_blob_write(&not_base64, state.blobs()).is_err());
+    }
+
+    #[test]
+    fn default_kernel_state_registers_blob_upload_and_artifact_save_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("blob.upload.begin", "blob", "upload.begin"),
+            ("blob.upload.chunk", "blob", "upload.chunk"),
+            ("blob.upload.commit", "blob", "upload.commit"),
+            ("plugin.artifact.save", "plugin", "artifact.save"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn blob_upload_and_artifact_save_dtos_parse_and_reject_unknown_or_missing_fields() {
+        let begin_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-upload-begin-1",
+            "operation": "blob.upload.begin",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "scope": "plugin",
+                    "mediaType": "application/pdf",
+                    "size": 4096
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(begin_request.validate(), Ok(()));
+        let begin: BlobUploadBeginRequest =
+            inline_request(&begin_request).expect("blob upload begin DTO deserializes");
+        assert_eq!(begin.scope, "plugin");
+        assert_eq!(begin.media_type, "application/pdf");
+        assert_eq!(begin.size, 4096);
+        assert!(
+            serde_json::from_value::<BlobUploadBeginRequest>(json!({
+                "scope": "plugin",
+                "mediaType": "application/pdf",
+                "size": 4096,
+                "sneaky": true
+            }))
+            .is_err(),
+            "the begin DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<BlobUploadBeginRequest>(json!({
+                "scope": "plugin",
+                "mediaType": "application/pdf"
+            }))
+            .is_err(),
+            "the begin DTO must require the size"
+        );
+
+        let chunk_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-upload-chunk-1",
+            "operation": "blob.upload.chunk",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "leaseId": 7,
+                    "contentBase64": "YWJjZA=="
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(chunk_request.validate(), Ok(()));
+        let chunk: BlobUploadChunkRequest =
+            inline_request(&chunk_request).expect("blob upload chunk DTO deserializes");
+        assert_eq!(chunk.lease_id, 7);
+        assert_eq!(chunk.content_base64, "YWJjZA==");
+        assert!(
+            serde_json::from_value::<BlobUploadChunkRequest>(json!({
+                "leaseId": 7,
+                "contentBase64": "YWJjZA==",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the chunk DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<BlobUploadChunkRequest>(json!({
+                "leaseId": 7
+            }))
+            .is_err(),
+            "the chunk DTO must require the base64 content"
+        );
+
+        let commit_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-upload-commit-1",
+            "operation": "blob.upload.commit",
+            "payload": {
+                "kind": "inline",
+                "value": { "leaseId": 7 }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(commit_request.validate(), Ok(()));
+        let commit: BlobUploadCommitRequest =
+            inline_request(&commit_request).expect("blob upload commit DTO deserializes");
+        assert_eq!(commit.lease_id, 7);
+        assert!(
+            serde_json::from_value::<BlobUploadCommitRequest>(json!({
+                "leaseId": 7,
+                "sneaky": true
+            }))
+            .is_err(),
+            "the commit DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<BlobUploadCommitRequest>(json!({})).is_err(),
+            "the commit DTO must require the lease id"
+        );
+
+        let save_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "plugin-artifact-save-1",
+            "operation": "plugin.artifact.save",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.example",
+                    "pluginVersion": "1.0.0",
+                    "format": "pdf",
+                    "path": "/tmp/example.pdf",
+                    "blobRef": {
+                        "algorithm": "sha256",
+                        "digest": "a".repeat(64),
+                        "size": 4096,
+                        "mediaType": "application/pdf",
+                        "scope": "private:native.ui",
+                        "owner": "native.ui",
+                        "retentionClass": "session"
+                    }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(save_request.validate(), Ok(()));
+        let save: PluginArtifactSaveRequest =
+            inline_request(&save_request).expect("plugin artifact save DTO deserializes");
+        assert_eq!(save.plugin_id, "myc.example");
+        assert_eq!(save.plugin_version, "1.0.0");
+        assert_eq!(save.format, "pdf");
+        assert_eq!(save.path, "/tmp/example.pdf");
+        assert_eq!(save.blob_ref.digest, "a".repeat(64));
+        assert!(
+            serde_json::from_value::<PluginArtifactSaveRequest>(json!({
+                "pluginId": "myc.example",
+                "pluginVersion": "1.0.0",
+                "format": "pdf",
+                "path": "/tmp/example.pdf",
+                "blobRef": {},
+                "sneaky": true
+            }))
+            .is_err(),
+            "the artifact save DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<PluginArtifactSaveRequest>(json!({
+                "pluginId": "myc.example",
+                "pluginVersion": "1.0.0",
+                "format": "pdf",
+                "path": "/tmp/example.pdf"
+            }))
+            .is_err(),
+            "the artifact save DTO must require the blob ref"
+        );
+    }
+
+    #[test]
+    fn blob_upload_begin_chunk_commit_round_trips_multiple_chunks() {
+        let state = create_kernel_state().expect("kernel state");
+
+        let begin_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-upload-begin-1",
+            "operation": "blob.upload.begin",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "scope": "plugin",
+                    "mediaType": "text/plain",
+                    "size": 6
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let begun = dispatch_blob_upload_begin(&begin_request, state.blobs())
+            .expect("blob.upload.begin succeeded");
+        let lease_id = begun["leaseId"].as_u64().expect("lease id");
+
+        for (index, chunk) in ["YWJj", "ZGVm"].iter().enumerate() {
+            let chunk_request: HostCallRequest = serde_json::from_value(json!({
+                "apiVersion": HOST_SDK_API_VERSION,
+                "requestId": format!("blob-upload-chunk-{index}"),
+                "operation": "blob.upload.chunk",
+                "payload": {
+                    "kind": "inline",
+                    "value": {
+                        "leaseId": lease_id,
+                        "contentBase64": chunk
+                    }
+                },
+                "deadlineMs": 30_000
+            }))
+            .unwrap();
+            let uploaded = dispatch_blob_upload_chunk(&chunk_request, state.blobs())
+                .expect("blob.upload.chunk succeeded");
+            assert_eq!(uploaded["uploadedBytes"], 3);
+        }
+
+        let commit_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-upload-commit-1",
+            "operation": "blob.upload.commit",
+            "payload": {
+                "kind": "inline",
+                "value": { "leaseId": lease_id }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let committed = dispatch_blob_upload_commit(&commit_request, state.blobs())
+            .expect("blob.upload.commit succeeded");
+        assert_eq!(committed["size"], 6);
+        assert_eq!(committed["algorithm"], "sha256");
+        assert_eq!(committed["scope"], "private:native.ui");
+        assert_eq!(committed["owner"], NATIVE_UI_PRINCIPAL_NAME);
+        assert_eq!(
+            committed["digest"],
+            crate::kernel::blob::BlobDigest::sha256(b"abcdef").to_hex()
+        );
     }
 
     #[test]

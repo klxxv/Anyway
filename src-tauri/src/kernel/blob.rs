@@ -287,6 +287,20 @@ impl Default for BlobQuota {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UploadLeaseId(u128);
 
+impl UploadLeaseId {
+    /// Expose the raw id so a gateway can serialize the lease across calls.
+    pub fn value(self) -> u128 {
+        self.0
+    }
+
+    /// Reconstruct a lease id from a value the gateway deserialized. The
+    /// store still binds every lease to its owner, so a caller-supplied id is
+    /// never authority on its own.
+    pub fn from_value(value: u128) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ReadLeaseId(u128);
 
@@ -599,6 +613,23 @@ impl BlobStore {
             .remove(&lease_id)
             .map(|_| ())
             .ok_or(BlobError::LeaseNotFound)
+    }
+
+    /// Clone the stored bytes behind a committed reference after re-checking
+    /// the reference scope against the caller. This is a host-side convenience
+    /// for bounded reads (for example artifact save); the lease-based
+    /// [`Self::open_read`]/[`Self::read_chunk`] path stays untouched for
+    /// streaming consumers.
+    pub fn read_blob_bytes(&self, blob: &BlobRef, caller: &str) -> Result<Vec<u8>, BlobError> {
+        validate_token(caller, MAX_OWNER_LEN, "read caller")?;
+        if !blob.scope.allows(caller, None) {
+            return Err(BlobError::ScopeDenied);
+        }
+        let stored = self
+            .blobs
+            .get(&blob.digest)
+            .ok_or(BlobError::BlobNotFound)?;
+        Ok(stored.bytes.clone())
     }
 
     /// Remove expired leases and unpinned blobs that have been idle long enough.
@@ -978,5 +1009,40 @@ mod tests {
         assert_eq!(report.expired_uploads, 1);
         assert_eq!(store.inflight_bytes(), 0);
         assert_eq!(store.active_upload_count(), 0);
+    }
+
+    #[test]
+    fn read_blob_bytes_round_trips_after_begin_chunk_commit() {
+        let mut store = store();
+        let scope = BlobScope::private("native.ui").unwrap();
+        let lease = store
+            .begin_upload(
+                "native.ui",
+                scope.clone(),
+                "application/octet-stream",
+                6,
+                0,
+                50,
+            )
+            .unwrap();
+        assert_eq!(UploadLeaseId::from_value(lease.value()), lease);
+        store.upload_chunk(lease, "native.ui", b"ab", 1).unwrap();
+        store.upload_chunk(lease, "native.ui", b"cdef", 2).unwrap();
+        let reference = store.commit_upload(lease, "native.ui", 3).unwrap();
+
+        assert_eq!(
+            store.read_blob_bytes(&reference, "native.ui").unwrap(),
+            b"abcdef"
+        );
+        assert_eq!(
+            store.read_blob_bytes(&reference, "plugin.other"),
+            Err(BlobError::ScopeDenied)
+        );
+
+        let missing = BlobRef::from_content(b"nope", "text/plain", BlobScope::Shared).unwrap();
+        assert_eq!(
+            store.read_blob_bytes(&missing, "native.ui"),
+            Err(BlobError::BlobNotFound)
+        );
     }
 }

@@ -263,6 +263,22 @@ impl CapabilityPolicy {
                 custom_capability("plugin.catalog.read"),
             ),
             ("blob.read", Capability::BlobRead),
+            (
+                "blob.upload.begin",
+                custom_capability("blob.upload.begin"),
+            ),
+            (
+                "blob.upload.chunk",
+                custom_capability("blob.upload.chunk"),
+            ),
+            (
+                "blob.upload.commit",
+                custom_capability("blob.upload.commit"),
+            ),
+            (
+                "plugin.artifact.save",
+                custom_capability("plugin.artifact.save"),
+            ),
             ("graph.read", Capability::GraphRead),
             ("ui.register", Capability::UiRegister),
             ("rpc.invoke", Capability::RpcInvoke),
@@ -404,6 +420,22 @@ impl CapabilityPolicy {
             ),
             "blob.read" => ("blob.read", Capability::BlobRead),
             "blob.write" => ("blob.write", Capability::BlobWrite),
+            "blob.upload.begin" => (
+                "blob.upload.begin",
+                custom_capability("blob.upload.begin"),
+            ),
+            "blob.upload.chunk" => (
+                "blob.upload.chunk",
+                custom_capability("blob.upload.chunk"),
+            ),
+            "blob.upload.commit" => (
+                "blob.upload.commit",
+                custom_capability("blob.upload.commit"),
+            ),
+            "plugin.artifact.save" => (
+                "plugin.artifact.save",
+                custom_capability("plugin.artifact.save"),
+            ),
             "rpc.invoke" => ("rpc.invoke", Capability::RpcInvoke),
             "graph.read" => ("graph.read", Capability::GraphRead),
             "graph.patch.propose" => ("graph.patch.propose", Capability::GraphPatchPropose),

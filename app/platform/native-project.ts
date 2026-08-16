@@ -10,7 +10,7 @@ import {
   projectExportFileName,
   renderProjectExport,
 } from "../plugins/workspace";
-import { HostSdk } from "./host-sdk";
+import { HostSdk, type HostBlobRef } from "./host-sdk";
 import { createDefaultTauriHostSdkTransport } from "./host-sdk-tauri";
 
 export interface FolderProjectSummary {
@@ -88,6 +88,15 @@ function getDesktopHostSdk(): HostSdk {
   return desktopHostSdk;
 }
 
+const BLOB_UPLOAD_CHUNK_BYTES = 16 * 1024;
+
+/** Encode one upload slice as base64; btoa over a binary string is fine here. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 export async function saveProjectNative(project: ProjectState) {
   const { dialog } = await desktopModules();
   const path = await dialog.save({
@@ -124,7 +133,7 @@ export async function exportProjectWithPlugin(
   format: "pdf" | "svg" | "png",
 ) {
   if (!command.formats?.includes(format)) throw new Error("PLUGIN_FORMAT_NOT_DECLARED");
-  const { invoke, dialog } = await desktopModules();
+  const { dialog } = await desktopModules();
   const path = await dialog.save({
     title: command.label,
     defaultPath: projectExportFileName(project, format),
@@ -132,13 +141,31 @@ export async function exportProjectWithPlugin(
   });
   if (!path) return null;
   const data = await renderProjectExport(project, format);
-  return invoke<string>("save_plugin_artifact", {
+  const mediaType =
+    format === "pdf" ? "application/pdf" : format === "png" ? "image/png" : "image/svg+xml";
+  const sdk = getDesktopHostSdk();
+  // The artifact can reach 32 MB, far beyond the 64 KB Host SDK inline limit,
+  // so the bytes go through the Blob Store as a multi-chunk upload and the
+  // committed reference is handed to plugin.artifact.save.
+  const { leaseId } = await sdk.call<{ leaseId: string | number }>("blob.upload.begin", {
+    scope: "plugin",
+    mediaType,
+    size: data.byteLength,
+  });
+  for (let offset = 0; offset < data.byteLength; offset += BLOB_UPLOAD_CHUNK_BYTES) {
+    const chunk = data.subarray(offset, offset + BLOB_UPLOAD_CHUNK_BYTES);
+    await sdk.call("blob.upload.chunk", {
+      leaseId,
+      contentBase64: bytesToBase64(chunk),
+    });
+  }
+  const blobRef = await sdk.call<HostBlobRef>("blob.upload.commit", { leaseId });
+  return sdk.call<string>("plugin.artifact.save", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
     format,
     path,
-    data: Array.from(data),
+    blobRef,
   });
 }
 

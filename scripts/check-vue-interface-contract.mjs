@@ -129,9 +129,7 @@ export const REQUIRED_EXPORTS = Object.freeze({
 });
 
 export const REQUIRED_TAURI_COMMANDS = Object.freeze({
-  "app/platform/native-project.ts": [
-    "save_plugin_artifact",
-  ],
+  "app/platform/native-project.ts": [],
   "app/platform/agent-client.ts": [],
   "app/plugins/tauri-client.ts": [],
 });

@@ -631,3 +631,67 @@ test("BlobRef validation separates content identity from a bounded scope", () =>
     retentionClass: "request",
   }));
 });
+test("blob upload and artifact save operations emit valid names and exact payload keys", async () => {
+  const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
+  const blobRef = {
+    algorithm: "sha256",
+    digest: "a".repeat(64),
+    size: 4096,
+    mediaType: "application/pdf",
+    scope: "private:native.ui",
+    owner: "native.ui",
+    retentionClass: "session",
+  } as const;
+  const cases: Array<{
+    operation: string;
+    payload: Record<string, unknown>;
+    expectedKeys: string[];
+  }> = [
+    {
+      operation: "blob.upload.begin",
+      payload: { scope: "plugin", mediaType: "application/pdf", size: 4096 },
+      expectedKeys: ["mediaType", "scope", "size"],
+    },
+    {
+      operation: "blob.upload.chunk",
+      payload: { leaseId: 7, contentBase64: "YWJjZA==" },
+      expectedKeys: ["contentBase64", "leaseId"],
+    },
+    {
+      operation: "blob.upload.commit",
+      payload: { leaseId: 7 },
+      expectedKeys: ["leaseId"],
+    },
+    {
+      operation: "plugin.artifact.save",
+      payload: {
+        pluginId: "myc.example",
+        pluginVersion: "1.0.0",
+        format: "pdf",
+        path: "/tmp/example.pdf",
+        blobRef,
+      },
+      expectedKeys: ["blobRef", "format", "path", "pluginId", "pluginVersion"],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const transport = new RecordingTransport();
+    const sdk = new HostSdk(transport);
+
+    assert.deepEqual(await sdk.call(testCase.operation, testCase.payload), { accepted: true });
+
+    const request = transport.request;
+    assert.ok(request, "Host SDK emitted a request");
+    assert.equal(request.operation, testCase.operation);
+    assert.match(request.operation, operationNames);
+    assert.equal(request.payload.kind, "inline");
+    if (request.payload.kind !== "inline") {
+      assert.fail(`${testCase.operation} must use an inline payload`);
+      return;
+    }
+    const value = request.payload.value as Record<string, unknown>;
+    assert.deepEqual(Object.keys(value).sort(), testCase.expectedKeys);
+    assert.deepEqual(request.payload.value, testCase.payload);
+  }
+});
