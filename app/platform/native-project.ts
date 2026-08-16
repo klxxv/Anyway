@@ -151,13 +151,15 @@ async function chooseDirectory(title: string) {
 export async function openFolderWorkspace(command: EnabledWorkspaceCommand) {
   const path = await chooseDirectory(command.label);
   if (!path) return null;
-  const { invoke } = await desktopModules();
-  const projects = await invoke<FolderProjectSummary[]>("scan_project_folder", {
-    pluginId: command.plugin.id,
-    pluginVersion: command.plugin.version,
-    capability: command.capability,
-    path,
-  });
+  await desktopModules();
+  const projects = await getDesktopHostSdk().call<FolderProjectSummary[]>(
+    "workspace.folder.scan",
+    {
+      pluginId: command.plugin.id,
+      pluginVersion: command.plugin.version,
+      path,
+    },
+  );
   return { path, projects };
 }
 
@@ -190,11 +192,10 @@ export async function initializeGitWorkspace(
   command: EnabledWorkspaceCommand,
   path: string,
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitWorkspaceSnapshot>("initialize_git_workspace", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitWorkspaceSnapshot>("workspace.git.init", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
     path,
   });
 }
@@ -220,13 +221,15 @@ export async function generateGitHubSshKey(
   command: EnabledWorkspaceCommand,
   comment: string,
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("generate_github_ssh_key", {
-    pluginId: command.plugin.id,
-    pluginVersion: command.plugin.version,
-    capability: command.capability,
-    comment,
-  });
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>(
+    "workspace.github.ssh.generate",
+    {
+      pluginId: command.plugin.id,
+      pluginVersion: command.plugin.version,
+      comment,
+    },
+  );
 }
 
 export async function uploadGitHubSshKey(
@@ -248,11 +251,10 @@ export async function gitAutosaveProject(
   project: ProjectState,
   message = "Research Canvas autosave",
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitWorkspaceSnapshot>("git_autosave_project", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitWorkspaceSnapshot>("workspace.git.autosave", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
     repoPath,
     projectPath: `.research-canvas/${projectFileStem(project)}.mycproj`,
     project,

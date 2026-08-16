@@ -295,6 +295,22 @@ impl CapabilityPolicy {
                 custom_capability("workspace.github.read"),
             ),
             (
+                "workspace.folder.scan",
+                custom_capability("workspace.folder.scan"),
+            ),
+            (
+                "workspace.git.init",
+                custom_capability("workspace.git.init"),
+            ),
+            (
+                "workspace.github.ssh.generate",
+                custom_capability("workspace.github.ssh.generate"),
+            ),
+            (
+                "workspace.git.autosave",
+                custom_capability("workspace.git.autosave"),
+            ),
+            (
                 "plugin.icon-theme.read",
                 custom_capability("plugin.icon-theme.read"),
             ),
@@ -387,6 +403,22 @@ impl CapabilityPolicy {
             "workspace.github.read" => (
                 "workspace.github.read",
                 custom_capability("workspace.github.read"),
+            ),
+            "workspace.folder.scan" => (
+                "workspace.folder.scan",
+                custom_capability("workspace.folder.scan"),
+            ),
+            "workspace.git.init" => (
+                "workspace.git.init",
+                custom_capability("workspace.git.init"),
+            ),
+            "workspace.github.ssh.generate" => (
+                "workspace.github.ssh.generate",
+                custom_capability("workspace.github.ssh.generate"),
+            ),
+            "workspace.git.autosave" => (
+                "workspace.git.autosave",
+                custom_capability("workspace.git.autosave"),
             ),
             "plugin.icon-theme.read" => (
                 "plugin.icon-theme.read",

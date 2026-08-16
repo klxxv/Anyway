@@ -52,6 +52,10 @@ const PROJECT_IMPORT_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_FOLDER_LIST_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GIT_READ_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GITHUB_READ_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_FOLDER_SCAN_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_GIT_INIT_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_GITHUB_SSH_GENERATE_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_GIT_AUTOSAVE_MAX_INFLIGHT: usize = 8;
 const ICON_THEME_READ_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_STATUS_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_LIST_MAX_INFLIGHT: usize = 8;
@@ -218,6 +222,41 @@ struct WorkspaceGitReadRequest {
 struct WorkspaceGithubReadRequest {
     plugin_id: String,
     plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceFolderScanRequest {
+    plugin_id: String,
+    plugin_version: String,
+    path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceGitInitRequest {
+    plugin_id: String,
+    plugin_version: String,
+    path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceGithubSshGenerateRequest {
+    plugin_id: String,
+    plugin_version: String,
+    comment: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceGitAutosaveRequest {
+    plugin_id: String,
+    plugin_version: String,
+    repo_path: String,
+    project_path: String,
+    project: serde_json::Value,
+    message: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -544,6 +583,34 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
     )?;
     register_operation(
         &mut bus,
+        "workspace.folder.scan",
+        RpcTarget::new("workspace", "folder.scan"),
+        "workspace.folder.scan",
+        WORKSPACE_FOLDER_SCAN_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "workspace.git.init",
+        RpcTarget::new("workspace", "git.init"),
+        "workspace.git.init",
+        WORKSPACE_GIT_INIT_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "workspace.github.ssh.generate",
+        RpcTarget::new("workspace", "github.ssh.generate"),
+        "workspace.github.ssh.generate",
+        WORKSPACE_GITHUB_SSH_GENERATE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "workspace.git.autosave",
+        RpcTarget::new("workspace", "git.autosave"),
+        "workspace.git.autosave",
+        WORKSPACE_GIT_AUTOSAVE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
         "plugin.icon-theme.read",
         RpcTarget::new("plugin", "icon-theme.read"),
         "plugin.icon-theme.read",
@@ -842,6 +909,22 @@ fn dispatch(
             let app = app.ok_or("workspace.github.read requires an application handle")?;
             dispatch_workspace_github_read(request, app)
         }
+        "workspace.folder.scan" => {
+            let app = app.ok_or("workspace.folder.scan requires an application handle")?;
+            dispatch_workspace_folder_scan(request, app)
+        }
+        "workspace.git.init" => {
+            let app = app.ok_or("workspace.git.init requires an application handle")?;
+            dispatch_workspace_git_init(request, app)
+        }
+        "workspace.github.ssh.generate" => {
+            let app = app.ok_or("workspace.github.ssh.generate requires an application handle")?;
+            dispatch_workspace_github_ssh_generate(request, app)
+        }
+        "workspace.git.autosave" => {
+            let app = app.ok_or("workspace.git.autosave requires an application handle")?;
+            dispatch_workspace_git_autosave(request, app)
+        }
         "agent.job.status" => dispatch_agent_job_status(request, agent),
         "agent.job.list" => dispatch_agent_job_list(request, agent),
         "agent.batch.status" => dispatch_agent_batch_status(request, agent),
@@ -1023,6 +1106,71 @@ fn dispatch_workspace_github_read(
         read_request.plugin_version,
     )?;
     serde_json::to_value(status).map_err(|error| error.to_string())
+}
+
+fn dispatch_workspace_folder_scan(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let scan_request = inline_request::<WorkspaceFolderScanRequest>(request)
+        .or_else(|error| Err(format!("invalid workspace.folder.scan request: {error}")))?;
+    let projects = crate::workspace_host::scan_project_folder(
+        app,
+        scan_request.plugin_id,
+        scan_request.plugin_version,
+        scan_request.path,
+    )?;
+    serde_json::to_value(projects).map_err(|error| error.to_string())
+}
+
+fn dispatch_workspace_git_init(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let init_request = inline_request::<WorkspaceGitInitRequest>(request)
+        .or_else(|error| Err(format!("invalid workspace.git.init request: {error}")))?;
+    let snapshot = crate::workspace_host::initialize_git_workspace(
+        app,
+        init_request.plugin_id,
+        init_request.plugin_version,
+        init_request.path,
+    )?;
+    serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_workspace_github_ssh_generate(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let generate_request = inline_request::<WorkspaceGithubSshGenerateRequest>(request).or_else(
+        |error| Err(format!("invalid workspace.github.ssh.generate request: {error}")),
+    )?;
+    let status = crate::workspace_host::generate_github_ssh_key(
+        app,
+        generate_request.plugin_id,
+        generate_request.plugin_version,
+        generate_request.comment,
+    )?;
+    serde_json::to_value(status).map_err(|error| error.to_string())
+}
+
+fn dispatch_workspace_git_autosave(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let autosave_request = inline_request::<WorkspaceGitAutosaveRequest>(request).or_else(|error| {
+        Err(format!("invalid workspace.git.autosave request: {error}"))
+    })?;
+    let snapshot = crate::workspace_host::git_autosave_project(
+        app,
+        autosave_request.plugin_id,
+        autosave_request.plugin_version,
+        autosave_request.repo_path,
+        autosave_request.project_path,
+        autosave_request.project,
+        autosave_request.message,
+    )?;
+    serde_json::to_value(snapshot).map_err(|error| error.to_string())
 }
 
 fn dispatch_blob_write(request: &HostCallRequest, blobs: &RwLock<BlobStore>) -> Result<Value, String> {
@@ -1845,6 +1993,195 @@ mod tests {
             }))
             .is_err(),
             "the github read DTO must require the plugin version"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_workspace_write_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("workspace.folder.scan", "workspace", "folder.scan"),
+            ("workspace.git.init", "workspace", "git.init"),
+            (
+                "workspace.github.ssh.generate",
+                "workspace",
+                "github.ssh.generate",
+            ),
+            ("workspace.git.autosave", "workspace", "git.autosave"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn workspace_write_dtos_parse_identity_and_reject_unknown_fields() {
+        let scan_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "folder-scan-1",
+            "operation": "workspace.folder.scan",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "path": "/workspace"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let scan: WorkspaceFolderScanRequest =
+            inline_request(&scan_request).expect("folder scan DTO deserializes");
+        assert_eq!(scan.plugin_id, "myc.onedarkpro");
+        assert_eq!(scan.plugin_version, "1.3.0");
+        assert_eq!(scan.path, "/workspace");
+        assert!(
+            serde_json::from_value::<WorkspaceFolderScanRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "path": "/workspace",
+                "capability": "project.folder"
+            }))
+            .is_err(),
+            "the folder scan DTO must reject the legacy capability field"
+        );
+        assert!(
+            serde_json::from_value::<WorkspaceFolderScanRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0"
+            }))
+            .is_err(),
+            "the folder scan DTO must require the path"
+        );
+
+        let init_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "git-init-1",
+            "operation": "workspace.git.init",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "path": "/workspace"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let init: WorkspaceGitInitRequest =
+            inline_request(&init_request).expect("git init DTO deserializes");
+        assert_eq!(init.plugin_id, "myc.onedarkpro");
+        assert_eq!(init.plugin_version, "1.3.0");
+        assert_eq!(init.path, "/workspace");
+        assert!(
+            serde_json::from_value::<WorkspaceGitInitRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "path": "/workspace",
+                "capability": "git.repository.init"
+            }))
+            .is_err(),
+            "the git init DTO must reject the legacy capability field"
+        );
+
+        let ssh_generate_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "ssh-generate-1",
+            "operation": "workspace.github.ssh.generate",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "comment": "research@canvas"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let ssh_generate: WorkspaceGithubSshGenerateRequest =
+            inline_request(&ssh_generate_request).expect("ssh generate DTO deserializes");
+        assert_eq!(ssh_generate.plugin_id, "myc.onedarkpro");
+        assert_eq!(ssh_generate.plugin_version, "1.3.0");
+        assert_eq!(ssh_generate.comment, "research@canvas");
+        assert!(
+            serde_json::from_value::<WorkspaceGithubSshGenerateRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "comment": "research@canvas",
+                "capability": "git.ssh.generate"
+            }))
+            .is_err(),
+            "the ssh generate DTO must reject the legacy capability field"
+        );
+        assert!(
+            serde_json::from_value::<WorkspaceGithubSshGenerateRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0"
+            }))
+            .is_err(),
+            "the ssh generate DTO must require the comment"
+        );
+
+        let autosave_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "git-autosave-1",
+            "operation": "workspace.git.autosave",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "repoPath": "/workspace",
+                    "projectPath": ".research-canvas/pinn.mycproj",
+                    "project": {
+                        "schemaVersion": 2,
+                        "title": "PINN architecture"
+                    },
+                    "message": "Research Canvas autosave"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let autosave: WorkspaceGitAutosaveRequest =
+            inline_request(&autosave_request).expect("git autosave DTO deserializes");
+        assert_eq!(autosave.plugin_id, "myc.onedarkpro");
+        assert_eq!(autosave.plugin_version, "1.3.0");
+        assert_eq!(autosave.repo_path, "/workspace");
+        assert_eq!(autosave.project_path, ".research-canvas/pinn.mycproj");
+        assert_eq!(autosave.project["title"], "PINN architecture");
+        assert_eq!(autosave.message, "Research Canvas autosave");
+        assert!(
+            serde_json::from_value::<WorkspaceGitAutosaveRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "repoPath": "/workspace",
+                "projectPath": ".research-canvas/pinn.mycproj",
+                "project": {},
+                "message": "Research Canvas autosave",
+                "capability": "git.autosave"
+            }))
+            .is_err(),
+            "the git autosave DTO must reject the legacy capability field"
+        );
+        assert!(
+            serde_json::from_value::<WorkspaceGitAutosaveRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "repoPath": "/workspace",
+                "projectPath": ".research-canvas/pinn.mycproj",
+                "project": {}
+            }))
+            .is_err(),
+            "the git autosave DTO must require the message"
         );
     }
 

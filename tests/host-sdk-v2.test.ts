@@ -255,6 +255,82 @@ test("project persistence operations emit valid names and exact payload keys", a
     assert.deepEqual(request.payload.value, testCase.payload);
   }
 });
+test("workspace write operations emit valid names and capability-free inline payloads", async () => {
+  const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
+  const cases: Array<{
+    operation: string;
+    payload: Record<string, unknown>;
+    expectedKeys: string[];
+  }> = [
+    {
+      operation: "workspace.folder.scan",
+      payload: {
+        pluginId: "myc.onedarkpro",
+        pluginVersion: "1.3.0",
+        path: "/workspace",
+      },
+      expectedKeys: ["path", "pluginId", "pluginVersion"],
+    },
+    {
+      operation: "workspace.git.init",
+      payload: {
+        pluginId: "myc.onedarkpro",
+        pluginVersion: "1.3.0",
+        path: "/workspace",
+      },
+      expectedKeys: ["path", "pluginId", "pluginVersion"],
+    },
+    {
+      operation: "workspace.github.ssh.generate",
+      payload: {
+        pluginId: "myc.onedarkpro",
+        pluginVersion: "1.3.0",
+        comment: "research@canvas",
+      },
+      expectedKeys: ["comment", "pluginId", "pluginVersion"],
+    },
+    {
+      operation: "workspace.git.autosave",
+      payload: {
+        pluginId: "myc.onedarkpro",
+        pluginVersion: "1.3.0",
+        repoPath: "/workspace",
+        projectPath: ".research-canvas/pinn.mycproj",
+        project: { schemaVersion: 2, title: "PINN architecture" },
+        message: "Research Canvas autosave",
+      },
+      expectedKeys: [
+        "message",
+        "pluginId",
+        "pluginVersion",
+        "project",
+        "projectPath",
+        "repoPath",
+      ],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const transport = new RecordingTransport();
+    const sdk = new HostSdk(transport);
+
+    assert.deepEqual(await sdk.call(testCase.operation, testCase.payload), { accepted: true });
+
+    const request = transport.request;
+    assert.ok(request, "Host SDK emitted a request");
+    assert.equal(request.operation, testCase.operation);
+    assert.match(request.operation, operationNames);
+    assert.equal(request.payload.kind, "inline");
+    if (request.payload.kind !== "inline") {
+      assert.fail(`${testCase.operation} must use an inline payload`);
+      return;
+    }
+    const value = request.payload.value as Record<string, unknown>;
+    assert.deepEqual(Object.keys(value).sort(), testCase.expectedKeys);
+    assert.equal("capability" in value, false, "the legacy capability field must not be forwarded");
+    assert.deepEqual(request.payload.value, testCase.payload);
+  }
+});
 test("HostSdk requires BlobRef for oversized values", async () => {
   const sdk = new HostSdk(new RecordingTransport(), 32);
   await assert.rejects(

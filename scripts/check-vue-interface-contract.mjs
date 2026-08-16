@@ -131,12 +131,8 @@ export const REQUIRED_EXPORTS = Object.freeze({
 export const REQUIRED_TAURI_COMMANDS = Object.freeze({
   "app/platform/native-project.ts": [
     "save_plugin_artifact",
-    "scan_project_folder",
-    "initialize_git_workspace",
     "login_github_account",
-    "generate_github_ssh_key",
     "upload_github_ssh_key",
-    "git_autosave_project",
   ],
   "app/platform/agent-client.ts": [
     "start_pdf_job",
