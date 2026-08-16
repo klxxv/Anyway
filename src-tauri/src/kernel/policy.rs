@@ -313,6 +313,14 @@ impl CapabilityPolicy {
                 custom_capability("workspace.github.ssh.generate"),
             ),
             (
+                "workspace.github.login",
+                custom_capability("workspace.github.login"),
+            ),
+            (
+                "workspace.github.ssh.upload",
+                custom_capability("workspace.github.ssh.upload"),
+            ),
+            (
                 "workspace.git.autosave",
                 custom_capability("workspace.git.autosave"),
             ),
@@ -435,6 +443,14 @@ impl CapabilityPolicy {
             "workspace.github.ssh.generate" => (
                 "workspace.github.ssh.generate",
                 custom_capability("workspace.github.ssh.generate"),
+            ),
+            "workspace.github.login" => (
+                "workspace.github.login",
+                custom_capability("workspace.github.login"),
+            ),
+            "workspace.github.ssh.upload" => (
+                "workspace.github.ssh.upload",
+                custom_capability("workspace.github.ssh.upload"),
             ),
             "workspace.git.autosave" => (
                 "workspace.git.autosave",

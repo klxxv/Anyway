@@ -58,6 +58,8 @@ const WORKSPACE_GITHUB_READ_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_FOLDER_SCAN_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GIT_INIT_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GITHUB_SSH_GENERATE_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_GITHUB_LOGIN_MAX_INFLIGHT: usize = 8;
+const WORKSPACE_GITHUB_SSH_UPLOAD_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GIT_AUTOSAVE_MAX_INFLIGHT: usize = 8;
 const ICON_THEME_READ_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_STATUS_MAX_INFLIGHT: usize = 8;
@@ -246,6 +248,21 @@ struct WorkspaceGitReadRequest {
 struct WorkspaceGithubReadRequest {
     plugin_id: String,
     plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceGithubLoginRequest {
+    plugin_id: String,
+    plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceGithubSshUploadRequest {
+    plugin_id: String,
+    plugin_version: String,
+    path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -664,6 +681,20 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
     )?;
     register_operation(
         &mut bus,
+        "workspace.github.login",
+        RpcTarget::new("workspace", "github.login"),
+        "workspace.github.login",
+        WORKSPACE_GITHUB_LOGIN_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "workspace.github.ssh.upload",
+        RpcTarget::new("workspace", "github.ssh.upload"),
+        "workspace.github.ssh.upload",
+        WORKSPACE_GITHUB_SSH_UPLOAD_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
         "workspace.git.autosave",
         RpcTarget::new("workspace", "git.autosave"),
         "workspace.git.autosave",
@@ -820,40 +851,45 @@ fn register_operation(
 ///
 /// Identity is derived from the invoking WebView and is never deserialized
 /// from `request`. The initial policy intentionally admits only `main`.
+///
+/// The gateway is async so migrated handlers can await blocking work off the
+/// IPC path. Tauri async commands must return `Result`, so every handled
+/// outcome stays inside the `HostCallResponse` envelope (`Ok`); `Err` is never
+/// produced because the envelope already carries the structured error.
 #[tauri::command]
-pub fn kernel_host_call(
+pub async fn kernel_host_call(
     window: WebviewWindow,
     app: AppHandle,
     kernel: State<'_, KernelState>,
     policy: State<'_, CapabilityPolicyState>,
     agent: State<'_, crate::agent_commands::AgentHostState>,
     request: HostCallRequest,
-) -> HostCallResponse {
+) -> Result<HostCallResponse, String> {
     let response_request_id = request.request_id.clone();
     if window.label() != MAIN_WEBVIEW_LABEL {
-        return HostCallResponse::failure(
+        return Ok(HostCallResponse::failure(
             response_request_id,
             "HOST_TRANSPORT_DENIED",
             "webview is not authorized for the native UI principal",
             false,
-        );
+        ));
     }
     if let Err(error) = request.validate() {
-        return HostCallResponse::failure(
+        return Ok(HostCallResponse::failure(
             response_request_id,
             "HOST_INVALID_REQUEST",
             error.message(),
             false,
-        );
+        ));
     }
     if request.operation == PLUGIN_LIST_OPERATION {
         if let Err(error) = request.require_empty_inline_payload() {
-            return HostCallResponse::failure(
+            return Ok(HostCallResponse::failure(
                 response_request_id,
                 "HOST_INVALID_REQUEST",
                 error.message(),
                 false,
-            );
+            ));
         }
     }
 
@@ -863,12 +899,12 @@ pub fn kernel_host_call(
     let selected_lease_ids = match parse_lease_ids(&request.capability_lease_ids) {
         Ok(ids) => ids,
         Err(message) => {
-            return HostCallResponse::failure(
+            return Ok(HostCallResponse::failure(
                 response_request_id,
                 "HOST_INVALID_REQUEST",
                 message,
                 false,
-            )
+            ))
         }
     };
     let lease = match authorize_for_bus(&policy, &request, &principal, &selected_lease_ids, now_ms)
@@ -882,7 +918,7 @@ pub fn kernel_host_call(
                 now_ms,
                 AuditOutcome::Denied,
             );
-            return policy_failure(response_request_id, error);
+            return Ok(policy_failure(response_request_id, error));
         }
     };
 
@@ -900,24 +936,25 @@ pub fn kernel_host_call(
         BusPayload::Empty,
     ) {
         Ok(admission) => admission,
-        Err(error) => return bus_failure(response_request_id, error),
+        Err(error) => return Ok(bus_failure(response_request_id, error)),
     };
     let handle = match kernel.write() {
         Ok(mut bus) => match bus.begin(admission, now_ms) {
             Ok(handle) => handle,
-            Err(error) => return bus_failure(response_request_id, error),
+            Err(error) => return Ok(bus_failure(response_request_id, error)),
         },
         Err(_) => {
-            return HostCallResponse::failure(
+            return Ok(HostCallResponse::failure(
                 response_request_id,
                 "HOST_INTERNAL",
                 "kernel bus lock is poisoned",
                 false,
-            )
+            ))
         }
     };
 
-    let handler_result = dispatch(&request, Some(app), &*agent, kernel.blobs(), kernel.services());
+    let handler_result =
+        dispatch(&request, Some(app), &*agent, kernel.blobs(), kernel.services()).await;
     let outcome = if handler_result.is_ok() {
         AuditOutcome::Completed
     } else {
@@ -929,18 +966,26 @@ pub fn kernel_host_call(
         .map_err(|_| "kernel bus lock is poisoned".to_string())
         .and_then(|mut bus| bus.finish(&handle).map_err(|error| error.to_string()));
     if let Err(message) = finish_result {
-        return HostCallResponse::failure(response_request_id, "HOST_INTERNAL", message, false);
+        return Ok(HostCallResponse::failure(
+            response_request_id,
+            "HOST_INTERNAL",
+            message,
+            false,
+        ));
     }
 
     match handler_result {
-        Ok(value) => HostCallResponse::success(response_request_id, value),
-        Err(message) => {
-            HostCallResponse::failure(response_request_id, "HOST_HANDLER_FAILED", message, false)
-        }
+        Ok(value) => Ok(HostCallResponse::success(response_request_id, value)),
+        Err(message) => Ok(HostCallResponse::failure(
+            response_request_id,
+            "HOST_HANDLER_FAILED",
+            message,
+            false,
+        )),
     }
 }
 
-fn dispatch(
+async fn dispatch(
     request: &HostCallRequest,
     app: Option<AppHandle>,
     agent: &crate::agent_commands::AgentHostState,
@@ -1006,6 +1051,14 @@ fn dispatch(
         "workspace.github.ssh.generate" => {
             let app = app.ok_or("workspace.github.ssh.generate requires an application handle")?;
             dispatch_workspace_github_ssh_generate(request, app)
+        }
+        "workspace.github.login" => {
+            let app = app.ok_or("workspace.github.login requires an application handle")?;
+            dispatch_workspace_github_login(request, app).await
+        }
+        "workspace.github.ssh.upload" => {
+            let app = app.ok_or("workspace.github.ssh.upload requires an application handle")?;
+            dispatch_workspace_github_ssh_upload(request, app).await
         }
         "workspace.git.autosave" => {
             let app = app.ok_or("workspace.git.autosave requires an application handle")?;
@@ -1303,6 +1356,38 @@ fn dispatch_workspace_github_ssh_generate(
         generate_request.plugin_version,
         generate_request.comment,
     )?;
+    serde_json::to_value(status).map_err(|error| error.to_string())
+}
+
+async fn dispatch_workspace_github_login(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let login_request = inline_request::<WorkspaceGithubLoginRequest>(request)
+        .or_else(|error| Err(format!("invalid workspace.github.login request: {error}")))?;
+    let status = crate::workspace_host::login_github_account(
+        app,
+        login_request.plugin_id,
+        login_request.plugin_version,
+    )
+    .await?;
+    serde_json::to_value(status).map_err(|error| error.to_string())
+}
+
+async fn dispatch_workspace_github_ssh_upload(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let upload_request = inline_request::<WorkspaceGithubSshUploadRequest>(request).or_else(
+        |error| Err(format!("invalid workspace.github.ssh.upload request: {error}")),
+    )?;
+    let status = crate::workspace_host::upload_github_ssh_key(
+        app,
+        upload_request.plugin_id,
+        upload_request.plugin_version,
+        upload_request.path,
+    )
+    .await?;
     serde_json::to_value(status).map_err(|error| error.to_string())
 }
 
@@ -2453,6 +2538,108 @@ mod tests {
             }))
             .is_err(),
             "the git autosave DTO must require the message"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_workspace_github_login_and_ssh_upload_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("workspace.github.login", "workspace", "github.login"),
+            (
+                "workspace.github.ssh.upload",
+                "workspace",
+                "github.ssh.upload",
+            ),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn workspace_github_login_and_ssh_upload_dtos_parse_and_reject_unknown_fields() {
+        let login_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "github-login-1",
+            "operation": "workspace.github.login",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(login_request.validate(), Ok(()));
+
+        let login: WorkspaceGithubLoginRequest =
+            inline_request(&login_request).expect("github login DTO deserializes");
+        assert_eq!(login.plugin_id, "myc.onedarkpro");
+        assert_eq!(login.plugin_version, "1.3.0");
+        assert!(
+            serde_json::from_value::<WorkspaceGithubLoginRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "capability": "git.account.login"
+            }))
+            .is_err(),
+            "the github login DTO must reject the legacy capability field"
+        );
+        assert!(
+            serde_json::from_value::<WorkspaceGithubLoginRequest>(json!({
+                "pluginId": "myc.onedarkpro"
+            }))
+            .is_err(),
+            "the github login DTO must require the plugin version"
+        );
+
+        let upload_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "github-ssh-upload-1",
+            "operation": "workspace.github.ssh.upload",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "path": "/home/user/.ssh/id_ed25519.pub"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(upload_request.validate(), Ok(()));
+
+        let upload: WorkspaceGithubSshUploadRequest =
+            inline_request(&upload_request).expect("github ssh upload DTO deserializes");
+        assert_eq!(upload.plugin_id, "myc.onedarkpro");
+        assert_eq!(upload.plugin_version, "1.3.0");
+        assert_eq!(upload.path, "/home/user/.ssh/id_ed25519.pub");
+        assert!(
+            serde_json::from_value::<WorkspaceGithubSshUploadRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "path": "/home/user/.ssh/id_ed25519.pub",
+                "capability": "git.ssh.upload"
+            }))
+            .is_err(),
+            "the github ssh upload DTO must reject the legacy capability field"
+        );
+        assert!(
+            serde_json::from_value::<WorkspaceGithubSshUploadRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0"
+            }))
+            .is_err(),
+            "the github ssh upload DTO must require the path"
         );
     }
 

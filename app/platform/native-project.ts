@@ -209,11 +209,10 @@ export async function readGitHubAccount(command: EnabledWorkspaceCommand) {
 }
 
 export async function loginGitHubAccount(command: EnabledWorkspaceCommand) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("login_github_account", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>("workspace.github.login", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
   });
 }
 
@@ -236,11 +235,10 @@ export async function uploadGitHubSshKey(
   command: EnabledWorkspaceCommand,
   path: string,
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("upload_github_ssh_key", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>("workspace.github.ssh.upload", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
-    capability: command.capability,
     path,
   });
 }
