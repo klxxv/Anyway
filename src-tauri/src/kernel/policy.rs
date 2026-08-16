@@ -273,6 +273,14 @@ impl CapabilityPolicy {
                 custom_capability("plugin.settings.read"),
             ),
             (
+                "plugin.settings.write",
+                custom_capability("plugin.settings.write"),
+            ),
+            (
+                "plugin.settings.reset",
+                custom_capability("plugin.settings.reset"),
+            ),
+            (
                 "workspace.folder.list",
                 custom_capability("workspace.folder.list"),
             ),
@@ -355,6 +363,14 @@ impl CapabilityPolicy {
             "plugin.settings.read" => (
                 "plugin.settings.read",
                 custom_capability("plugin.settings.read"),
+            ),
+            "plugin.settings.write" => (
+                "plugin.settings.write",
+                custom_capability("plugin.settings.write"),
+            ),
+            "plugin.settings.reset" => (
+                "plugin.settings.reset",
+                custom_capability("plugin.settings.reset"),
             ),
             "workspace.folder.list" => (
                 "workspace.folder.list",
@@ -692,6 +708,26 @@ mod tests {
                 && grant.capability().name() == "plugin.settings.read"
                 && grant.source() == GrantSource::NativeBootstrap
         }));
+    }
+
+    #[test]
+    fn native_bootstrap_authorizes_plugin_settings_write_and_reset_without_lease() {
+        let policy = CapabilityPolicy::new();
+        let principal = policy.native_ui_principal().clone();
+
+        for operation in ["plugin.settings.write", "plugin.settings.reset"] {
+            let authorization = policy
+                .authorize(operation, &principal, &[], 10)
+                .expect("native bootstrap");
+
+            assert_eq!(authorization.source(), AuthorizationSource::NativeBootstrap);
+            assert_eq!(authorization.capability().name(), operation);
+            assert!(policy.bootstrap_grants().iter().any(|grant| {
+                grant.operation() == operation
+                    && grant.capability().name() == operation
+                    && grant.source() == GrantSource::NativeBootstrap
+            }));
+        }
     }
 
     #[test]

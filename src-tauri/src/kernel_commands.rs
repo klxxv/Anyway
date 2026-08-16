@@ -45,6 +45,8 @@ const MAX_BLOB_TEXT_BYTES: usize = 256;
 const MAIN_WEBVIEW_LABEL: &str = "main";
 const PLUGIN_LIST_MAX_INFLIGHT: usize = 8;
 const PLUGIN_SETTINGS_READ_MAX_INFLIGHT: usize = 16;
+const PLUGIN_SETTINGS_WRITE_MAX_INFLIGHT: usize = 8;
+const PLUGIN_SETTINGS_RESET_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_FOLDER_LIST_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GIT_READ_MAX_INFLIGHT: usize = 8;
 const WORKSPACE_GITHUB_READ_MAX_INFLIGHT: usize = 8;
@@ -160,6 +162,21 @@ struct ServiceCallRequest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PluginSettingsReadRequest {
+    plugin_id: String,
+    plugin_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PluginSettingsWriteRequest {
+    plugin_id: String,
+    plugin_version: String,
+    values: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PluginSettingsResetRequest {
     plugin_id: String,
     plugin_version: String,
 }
@@ -463,6 +480,20 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
     )?;
     register_operation(
         &mut bus,
+        "plugin.settings.write",
+        RpcTarget::new("plugin", "settings.write"),
+        "plugin.settings.write",
+        PLUGIN_SETTINGS_WRITE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "plugin.settings.reset",
+        RpcTarget::new("plugin", "settings.reset"),
+        "plugin.settings.reset",
+        PLUGIN_SETTINGS_RESET_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
         "workspace.folder.list",
         RpcTarget::new("workspace", "folder.list"),
         "workspace.folder.list",
@@ -756,6 +787,14 @@ fn dispatch(
             let app = app.ok_or("plugin.settings.read requires an application handle")?;
             dispatch_plugin_settings_read(request, app)
         }
+        "plugin.settings.write" => {
+            let app = app.ok_or("plugin.settings.write requires an application handle")?;
+            dispatch_plugin_settings_write(request, app)
+        }
+        "plugin.settings.reset" => {
+            let app = app.ok_or("plugin.settings.reset requires an application handle")?;
+            dispatch_plugin_settings_reset(request, app)
+        }
         "plugin.icon-theme.read" => {
             let app = app.ok_or("plugin.icon-theme.read requires an application handle")?;
             dispatch_icon_theme_read(request, app)
@@ -793,6 +832,35 @@ fn dispatch_plugin_settings_read(
         app,
         read_request.plugin_id,
         read_request.plugin_version,
+    )?;
+    serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_plugin_settings_write(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let write_request = inline_request::<PluginSettingsWriteRequest>(request)
+        .or_else(|error| Err(format!("invalid plugin.settings.write request: {error}")))?;
+    let snapshot = crate::plugins::set_plugin_settings(
+        app,
+        write_request.plugin_id,
+        write_request.plugin_version,
+        write_request.values,
+    )?;
+    serde_json::to_value(snapshot).map_err(|error| error.to_string())
+}
+
+fn dispatch_plugin_settings_reset(
+    request: &HostCallRequest,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let reset_request = inline_request::<PluginSettingsResetRequest>(request)
+        .or_else(|error| Err(format!("invalid plugin.settings.reset request: {error}")))?;
+    let snapshot = crate::plugins::reset_plugin_settings(
+        app,
+        reset_request.plugin_id,
+        reset_request.plugin_version,
     )?;
     serde_json::to_value(snapshot).map_err(|error| error.to_string())
 }
@@ -1408,6 +1476,111 @@ mod tests {
         assert!(
             serde_json::from_value::<PluginSettingsReadRequest>(missing_version).is_err(),
             "the DTO must require the plugin version"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_plugin_settings_write_and_reset_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("plugin.settings.write", "plugin", "settings.write"),
+            ("plugin.settings.reset", "plugin", "settings.reset"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn plugin_settings_write_and_reset_dtos_parse_and_reject_unknown_fields() {
+        let write_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "settings-write-1",
+            "operation": "plugin.settings.write",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0",
+                    "values": {
+                        "theme": "dark",
+                        "retries": 3
+                    }
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(write_request.validate(), Ok(()));
+
+        let write: PluginSettingsWriteRequest =
+            inline_request(&write_request).expect("plugin settings write DTO deserializes");
+        assert_eq!(write.plugin_id, "myc.onedarkpro");
+        assert_eq!(write.plugin_version, "1.3.0");
+        assert_eq!(write.values.get("theme").and_then(Value::as_str), Some("dark"));
+        assert_eq!(write.values.get("retries").and_then(Value::as_u64), Some(3));
+        assert_eq!(write.values.len(), 2);
+
+        assert!(
+            serde_json::from_value::<PluginSettingsWriteRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "values": {},
+                "sneaky": true
+            }))
+            .is_err(),
+            "the write DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<PluginSettingsWriteRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0"
+            }))
+            .is_err(),
+            "the write DTO must require the values map"
+        );
+
+        let reset_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "settings-reset-1",
+            "operation": "plugin.settings.reset",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "pluginId": "myc.onedarkpro",
+                    "pluginVersion": "1.3.0"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(reset_request.validate(), Ok(()));
+
+        let reset: PluginSettingsResetRequest =
+            inline_request(&reset_request).expect("plugin settings reset DTO deserializes");
+        assert_eq!(reset.plugin_id, "myc.onedarkpro");
+        assert_eq!(reset.plugin_version, "1.3.0");
+
+        assert!(
+            serde_json::from_value::<PluginSettingsResetRequest>(json!({
+                "pluginId": "myc.onedarkpro",
+                "pluginVersion": "1.3.0",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the reset DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<PluginSettingsResetRequest>(json!({
+                "pluginId": "myc.onedarkpro"
+            }))
+            .is_err(),
+            "the reset DTO must require the plugin version"
         );
     }
 

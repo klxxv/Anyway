@@ -239,13 +239,12 @@ export async function savePluginSettings(
     writeBrowserSnapshot(next);
     return next;
   }
-  const { invoke } = await import("@tauri-apps/api/core");
   const nativeValues: Record<string, unknown> = { ...write.values };
   for (const [id, mutation] of Object.entries(write.secrets)) {
     if (mutation.action === "set") nativeValues[id] = mutation.value;
     if (mutation.action === "clear") nativeValues[id] = null;
   }
-  const raw = await invoke<unknown>("set_plugin_settings", {
+  const raw = await getDesktopHostSdk().call<unknown>("plugin.settings.write", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
     values: nativeValues,
@@ -266,8 +265,7 @@ export async function resetPluginSettings(
     }
     return defaults;
   }
-  const { invoke } = await import("@tauri-apps/api/core");
-  const raw = await invoke<unknown>("reset_plugin_settings", {
+  const raw = await getDesktopHostSdk().call<unknown>("plugin.settings.reset", {
     pluginId: plugin.id,
     pluginVersion: plugin.version,
   });
