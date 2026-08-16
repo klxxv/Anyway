@@ -96,8 +96,9 @@ This slice proves the common path without combining a new security boundary with
 | Sync workspace writes | ✅ Phase 8 — `scan_project_folder`, `initialize_git_workspace`, `generate_github_ssh_key`, and `git_autosave_project` now route through `workspace.folder.scan` / `workspace.git.init` / `workspace.github.ssh.generate` / `workspace.git.autosave`. |
 | Install / uninstall / VSIX | ✅ Phase 8 — `install_myc_plugin`, `uninstall_myc_plugin`, and `import_vscode_vsix` now route through `plugin.install` / `plugin.uninstall` / `plugin.vsix.import`. |
 | Agent review / cancel | ✅ Phase 8 — `review_patch` and `cancel_job` now route through `agent.job.review` / `agent.job.cancel`. This completes the synchronous command migration surface (21 sync commands). |
+| Async gateway + login/ssh-upload | ✅ Phase 8 — `kernel_host_call`/`dispatch` are now async (Tauri async contract via `Result`), and `login_github_account`/`upload_github_ssh_key` route through `workspace.github.login` / `workspace.github.ssh.upload`. |
 
-Remaining entries are the async/binary write paths — `save_plugin_artifact` (binary, needs the Blob data path), `login_github_account`/`upload_github_ssh_key` (async, needs async dispatch), and `start_pdf_job`/`start_document_batch` (async, State-backed) — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
+Remaining entries are `save_plugin_artifact` (binary, needs the Blob data path) and `start_pdf_job`/`start_document_batch` (async orchestration spawning the private `run_document_batch`) — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
 
 ## 🧪 Verification gates
 
