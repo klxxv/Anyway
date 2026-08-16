@@ -136,8 +136,6 @@ export const REQUIRED_TAURI_COMMANDS = Object.freeze({
   ],
   "app/platform/agent-client.ts": [
     "start_pdf_job",
-    "review_patch",
-    "cancel_job",
     "compile_project",
   ],
   "app/plugins/tauri-client.ts": [

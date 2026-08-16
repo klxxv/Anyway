@@ -326,6 +326,14 @@ impl CapabilityPolicy {
                 "agent.batch.status",
                 custom_capability("agent.batch.status"),
             ),
+            (
+                "agent.job.review",
+                custom_capability("agent.job.review"),
+            ),
+            (
+                "agent.job.cancel",
+                custom_capability("agent.job.cancel"),
+            ),
         ];
         let bootstrap_grants = bootstrap_operations
             .into_iter()
@@ -444,6 +452,14 @@ impl CapabilityPolicy {
             "agent.batch.status" => (
                 "agent.batch.status",
                 custom_capability("agent.batch.status"),
+            ),
+            "agent.job.review" => (
+                "agent.job.review",
+                custom_capability("agent.job.review"),
+            ),
+            "agent.job.cancel" => (
+                "agent.job.cancel",
+                custom_capability("agent.job.cancel"),
             ),
             other => return Err(PolicyError::UnknownOperation(other.to_string())),
         };

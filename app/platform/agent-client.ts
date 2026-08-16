@@ -1,7 +1,6 @@
 import type {
   AgentJobStatus,
   ImportBatchStatus,
-  ReviewPatchRequest,
   StartPdfJobRequest,
 } from "../plugins/agent-contracts";
 import type { ProjectState } from "../lib/research-types";
@@ -96,15 +95,14 @@ export async function getPdfJobStatus(jobId: string): Promise<AgentJobStatus> {
 
 /** 审阅裁决：接受或拒绝 Agent 提议的 GraphPatch / Review decision. */
 export async function reviewPdfPatch(jobId: string, accept: boolean): Promise<AgentJobStatus> {
-  const { invoke } = await desktopModules();
-  const request: ReviewPatchRequest = { jobId, accept };
-  return invoke<AgentJobStatus>("review_patch", { request });
+  await desktopModules();
+  return getDesktopHostSdk().call<AgentJobStatus>("agent.job.review", { jobId, accept });
 }
 
 /** 取消进行中的 Job / Cancel an in-progress job. */
 export async function cancelPdfJob(jobId: string): Promise<AgentJobStatus> {
-  const { invoke } = await desktopModules();
-  return invoke<AgentJobStatus>("cancel_job", { jobId });
+  await desktopModules();
+  return getDesktopHostSdk().call<AgentJobStatus>("agent.job.cancel", { jobId });
 }
 
 /** 阶段 4：图编译器——不变式、blockHash、逻辑链、矛盾链、BP 信念。 */

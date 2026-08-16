@@ -63,6 +63,8 @@ const ICON_THEME_READ_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_STATUS_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_LIST_MAX_INFLIGHT: usize = 8;
 const AGENT_BATCH_STATUS_MAX_INFLIGHT: usize = 8;
+const AGENT_JOB_REVIEW_MAX_INFLIGHT: usize = 8;
+const AGENT_JOB_CANCEL_MAX_INFLIGHT: usize = 8;
 const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
@@ -305,6 +307,21 @@ struct AgentJobListRequest {}
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BatchStatusRequest {
     batch_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentJobReviewRequest {
+    job_id: String,
+    accept: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentJobCancelRequest {
+    job_id: String,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 impl TryFrom<WireServiceDescriptor> for ServiceDescriptor {
@@ -680,6 +697,20 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "agent.batch.status",
         AGENT_BATCH_STATUS_MAX_INFLIGHT,
     )?;
+    register_operation(
+        &mut bus,
+        "agent.job.review",
+        RpcTarget::new("agent", "job.review"),
+        "agent.job.review",
+        AGENT_JOB_REVIEW_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "agent.job.cancel",
+        RpcTarget::new("agent", "job.cancel"),
+        "agent.job.cancel",
+        AGENT_JOB_CANCEL_MAX_INFLIGHT,
+    )?;
     let kernel = KernelState::with_bus(bus, 64);
     register_agent_worker(&kernel)?;
     register_example_service(&kernel)?;
@@ -983,6 +1014,8 @@ fn dispatch(
         "agent.job.status" => dispatch_agent_job_status(request, agent),
         "agent.job.list" => dispatch_agent_job_list(request, agent),
         "agent.batch.status" => dispatch_agent_batch_status(request, agent),
+        "agent.job.review" => dispatch_agent_job_review(request, agent),
+        "agent.job.cancel" => dispatch_agent_job_cancel(request, agent),
         "blob.write" => dispatch_blob_write(request, blobs),
         "blob.read" => dispatch_blob_read(request, blobs),
         "service.register" => dispatch_service_register(request, services),
@@ -1140,6 +1173,45 @@ fn dispatch_agent_batch_status(
         .ok_or_else(|| format!("Batch not found: {}", status_request.batch_id))?;
     let status = crate::agent_commands::import_batch_status(&host, batch)?;
     serde_json::to_value(status).map_err(|error| error.to_string())
+}
+
+fn dispatch_agent_job_review(
+    request: &HostCallRequest,
+    agent: &crate::agent_commands::AgentHostState,
+) -> Result<Value, String> {
+    let review_request = inline_request::<AgentJobReviewRequest>(request)
+        .or_else(|error| Err(format!("invalid agent.job.review request: {error}")))?;
+    let mut host = agent
+        .0
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    host.review_patch(&review_request.job_id, review_request.accept)?;
+    let job = host
+        .get_job(&review_request.job_id)
+        .ok_or_else(|| "Job vanished".to_string())?;
+    serde_json::to_value(crate::agent_commands::PdfJobStatus::from(job))
+        .map_err(|error| error.to_string())
+}
+
+fn dispatch_agent_job_cancel(
+    request: &HostCallRequest,
+    agent: &crate::agent_commands::AgentHostState,
+) -> Result<Value, String> {
+    let cancel_request = inline_request::<AgentJobCancelRequest>(request)
+        .or_else(|error| Err(format!("invalid agent.job.cancel request: {error}")))?;
+    let mut host = agent
+        .0
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let reason = cancel_request
+        .reason
+        .unwrap_or_else(|| "Cancelled by user".to_string());
+    host.cancel_job(&cancel_request.job_id, &reason)?;
+    let job = host
+        .get_job(&cancel_request.job_id)
+        .ok_or_else(|| "Job vanished".to_string())?;
+    serde_json::to_value(crate::agent_commands::PdfJobStatus::from(job))
+        .map_err(|error| error.to_string())
 }
 
 fn dispatch_workspace_folder_list(
@@ -2517,6 +2589,95 @@ mod tests {
         assert!(
             serde_json::from_value::<BatchStatusRequest>(json!({})).is_err(),
             "the batch status DTO must require the batch id"
+        );
+    }
+
+    #[test]
+    fn default_kernel_state_registers_agent_review_and_cancel_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("agent.job.review", "agent", "job.review"),
+            ("agent.job.cancel", "agent", "job.cancel"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn agent_review_and_cancel_dtos_parse_and_reject_unknown_fields() {
+        let review_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "job-review-1",
+            "operation": "agent.job.review",
+            "payload": {
+                "kind": "inline",
+                "value": { "jobId": "job-1", "accept": true }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(review_request.validate(), Ok(()));
+        let review: AgentJobReviewRequest =
+            inline_request(&review_request).expect("agent job review DTO deserializes");
+        assert_eq!(review.job_id, "job-1");
+        assert!(review.accept);
+        assert!(
+            serde_json::from_value::<AgentJobReviewRequest>(json!({
+                "jobId": "job-1",
+                "accept": true,
+                "sneaky": true
+            }))
+            .is_err(),
+            "the review DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<AgentJobReviewRequest>(json!({
+                "jobId": "job-1"
+            }))
+            .is_err(),
+            "the review DTO must require the accept bool"
+        );
+
+        let cancel_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "job-cancel-1",
+            "operation": "agent.job.cancel",
+            "payload": {
+                "kind": "inline",
+                "value": { "jobId": "job-1", "reason": "stale" }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(cancel_request.validate(), Ok(()));
+        let cancel: AgentJobCancelRequest =
+            inline_request(&cancel_request).expect("agent job cancel DTO deserializes");
+        assert_eq!(cancel.job_id, "job-1");
+        assert_eq!(cancel.reason.as_deref(), Some("stale"));
+
+        let cancel_default: AgentJobCancelRequest = serde_json::from_value(json!({
+            "jobId": "job-1"
+        }))
+        .expect("the cancel DTO defaults the reason");
+        assert_eq!(cancel_default.reason, None);
+        assert!(
+            serde_json::from_value::<AgentJobCancelRequest>(json!({
+                "jobId": "job-1",
+                "reason": "stale",
+                "sneaky": true
+            }))
+            .is_err(),
+            "the cancel DTO must reject unknown fields"
+        );
+        assert!(
+            serde_json::from_value::<AgentJobCancelRequest>(json!({})).is_err(),
+            "the cancel DTO must require the job id"
         );
     }
 
