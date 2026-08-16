@@ -39,42 +39,7 @@ pub fn run() {
         .manage(llm_provider_registry::ProviderRegistryState::default())
         .manage(kernel_commands::CapabilityPolicyState::default())
         .invoke_handler(tauri::generate_handler![
-            kernel_commands::kernel_host_call,
-            graph_cmds::compute_graph_layout,
-            graph_cmds::layout_project_view,
-            graph_cmds::compile_project,
-            graph_cmds::compute_diff,
-            deepseek_client::set_deepseek_api_key,
-            deepseek_client::has_deepseek_api_key,
-            deepseek_client::clear_deepseek_api_key,
-            plugins::install_myc_plugin,
-            plugins::uninstall_myc_plugin,
-            plugins::read_icon_theme_asset,
-            vsix_importer::import_vscode_vsix,
-            plugins::get_plugin_settings,
-            plugins::set_plugin_settings,
-            plugins::reset_plugin_settings,
-            plugins::test_plugin_connection,
-            plugins::execute_myc_plugin,
-            projects::save_project_file,
-            projects::import_project_file,
-            workspace_host::save_plugin_artifact,
-            workspace_host::scan_project_folder,
-            workspace_host::list_folder_entries,
-            workspace_host::read_git_workspace,
-            workspace_host::initialize_git_workspace,
-            workspace_host::read_github_account,
-            workspace_host::login_github_account,
-            workspace_host::generate_github_ssh_key,
-            workspace_host::upload_github_ssh_key,
-            workspace_host::git_autosave_project,
-            agent_commands::start_pdf_job,
-            agent_commands::start_document_batch,
-            agent_commands::get_import_batch_status,
-            agent_commands::list_import_jobs,
-            agent_commands::get_job_status,
-            agent_commands::review_patch,
-            agent_commands::cancel_job
+            kernel_commands::kernel_host_call
         ])
         .setup(|app| {
             if let Err(error) = plugins::install_pending_packages(app.handle()) {

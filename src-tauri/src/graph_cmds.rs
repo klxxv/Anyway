@@ -71,6 +71,7 @@ pub fn compute_diff(v1: Value, v2: Value) -> Result<Value, String> {
 /// Deterministic layout: given a project, mode, optional root id and params,
 /// return the computed presentation result (positions / annotations / node & edge ids).
 #[tauri::command]
+#[allow(dead_code)] // superseded by compile_project + frontend layout; retained for compiler parity
 pub fn compute_graph_layout(
     project: Value,
     mode: String,
@@ -136,6 +137,7 @@ pub fn compile_project(project: Value) -> Result<Value, String> {
 /// Intent-driven layout: read mode + params from one `views[]` entry, then
 /// compute → fallback → override with pinned coordinates only.
 #[tauri::command]
+#[allow(dead_code)] // superseded by compile_project + frontend layout; retained for compiler parity
 pub fn layout_project_view(
     project: Value,
     view: Value,
