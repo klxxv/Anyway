@@ -6,13 +6,15 @@
 use std::sync::RwLock;
 use std::time::Instant;
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, State, WebviewWindow};
 
+use crate::kernel::blob::{BlobError, BlobRef, BlobScope, BlobStore};
 use crate::kernel::bus::{AdmissionRequest, BusError, BusPayload, HostBus, OperationDescriptor};
-use crate::kernel::identity::{CapabilityLease, PrincipalId};
+use crate::kernel::identity::{Capability, CapabilityLease, PrincipalId};
 use crate::kernel::policy::{
     AuthorizationSource, CapabilityPolicy, PolicyError, NATIVE_UI_PRINCIPAL_NAME,
     PLUGIN_LIST_OPERATION,
@@ -23,6 +25,7 @@ use crate::kernel::state::KernelState;
 pub const HOST_SDK_API_VERSION: &str = "anyway.dev/host-rpc/v1alpha1";
 pub const MAX_HOST_DEADLINE_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_INLINE_PAYLOAD_BYTES: usize = 64 * 1_024;
+pub const MAX_BLOB_CHUNK_BYTES: usize = 16 * 1_024;
 const MAX_REQUEST_ID_BYTES: usize = 128;
 const MAX_OPERATION_BYTES: usize = 160;
 const MAX_LEASE_IDS: usize = 32;
@@ -31,6 +34,10 @@ const MAX_TRACE_PARENT_BYTES: usize = 256;
 const MAX_BLOB_TEXT_BYTES: usize = 256;
 const MAIN_WEBVIEW_LABEL: &str = "main";
 const PLUGIN_LIST_MAX_INFLIGHT: usize = 8;
+const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
+const BLOB_READ_MAX_INFLIGHT: usize = 16;
+const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
+const BLOB_READ_TTL_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -71,6 +78,22 @@ enum BlobRetentionClass {
     Session,
     Plugin,
     Persistent,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BlobWriteRequest {
+    scope: String,
+    media_type: String,
+    content_base64: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BlobReadRequest {
+    r#ref: HostBlobRef,
+    #[serde(default)]
+    workspace: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -256,20 +279,48 @@ impl HostCallResponse {
 /// Construct the managed state used by the single Tauri gateway.
 pub fn create_kernel_state() -> Result<KernelState, String> {
     let mut bus = HostBus::default();
-    let requirement = CapabilityPolicy::operation_requirement(PLUGIN_LIST_OPERATION)
-        .map_err(|error| error.to_string())?;
-    let route = RpcTarget::new("plugins", "list").map_err(|error| error.to_string())?;
-    let descriptor = OperationDescriptor::new(
+    register_operation(
+        &mut bus,
         PLUGIN_LIST_OPERATION,
-        route,
-        requirement.capability().clone(),
-        requirement.scope().clone(),
+        RpcTarget::new("plugins", "list"),
+        "plugin.catalog.read",
         PLUGIN_LIST_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "blob.write",
+        RpcTarget::new("blob", "write"),
+        "blob.write",
+        BLOB_WRITE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "blob.read",
+        RpcTarget::new("blob", "read"),
+        "blob.read",
+        BLOB_READ_MAX_INFLIGHT,
+    )?;
+    Ok(KernelState::with_bus(bus, 64))
+}
+
+fn register_operation(
+    bus: &mut HostBus,
+    operation: &str,
+    route: Result<RpcTarget, crate::kernel::rpc::RpcError>,
+    capability: &str,
+    max_inflight: usize,
+) -> Result<(), String> {
+    let route = route.map_err(|error| error.to_string())?;
+    let capability = Capability::custom(capability).map_err(|error| error.to_string())?;
+    let descriptor = OperationDescriptor::new(
+        operation,
+        route,
+        capability,
+        crate::kernel::identity::CapabilityScope::Global,
+        max_inflight,
     )
     .map_err(|error| error.to_string())?;
-    bus.register_operation(descriptor)
-        .map_err(|error| error.to_string())?;
-    Ok(KernelState::new(bus))
+    bus.register_operation(descriptor).map_err(|error| error.to_string())
 }
 
 /// The only Host SDK command exposed to the trusted Vue shell.
@@ -360,7 +411,7 @@ pub fn kernel_host_call(
         }
     };
 
-    let handler_result = dispatch(&request, app);
+    let handler_result = dispatch(&request, Some(app), kernel.blobs());
     let finish_result = kernel
         .write()
         .map_err(|_| "kernel bus lock is poisoned".to_string())
@@ -377,14 +428,155 @@ pub fn kernel_host_call(
     }
 }
 
-fn dispatch(request: &HostCallRequest, app: AppHandle) -> Result<Value, String> {
+fn dispatch(
+    request: &HostCallRequest,
+    app: Option<AppHandle>,
+    blobs: &RwLock<BlobStore>,
+) -> Result<Value, String> {
     match request.operation.as_str() {
         PLUGIN_LIST_OPERATION => {
+            let app = app.ok_or("plugin.list requires an application handle")?;
             let plugins = crate::plugins::query_installed_plugins(&app)?;
             serde_json::to_value(plugins).map_err(|error| error.to_string())
         }
+        "blob.write" => dispatch_blob_write(request, blobs),
+        "blob.read" => dispatch_blob_read(request, blobs),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
+}
+
+fn dispatch_blob_write(request: &HostCallRequest, blobs: &RwLock<BlobStore>) -> Result<Value, String> {
+    let write_request = inline_request::<BlobWriteRequest>(request).or_else(|error| {
+        Err(format!("invalid blob.write request: {error}"))
+    })?;
+    let content = base64::engine::general_purpose::STANDARD
+        .decode(&write_request.content_base64)
+        .map_err(|_| "blob content must be base64".to_string())?;
+    if content.len() > MAX_BLOB_CHUNK_BYTES {
+        return Err(format!(
+            "blob.content exceeds the {} byte chunk limit",
+            MAX_BLOB_CHUNK_BYTES
+        ));
+    }
+    let scope = BlobScope::from_wire(&write_request.scope)
+        .map_err(|error| format!("invalid blob scope: {error}"))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let owner = NATIVE_UI_PRINCIPAL_NAME;
+    let mut store = blobs
+        .write()
+        .map_err(|_| "blob store lock is poisoned".to_string())?;
+    let lease = store
+        .begin_upload(
+            owner,
+            scope,
+            write_request.media_type.clone(),
+            content.len() as u64,
+            now_ms,
+            BLOB_UPLOAD_TTL_MS,
+        )
+        .map_err(|error| blob_error_message("begin upload", &error))?;
+    store
+        .upload_chunk(lease, owner, &content, now_ms)
+        .map_err(|error| blob_error_message("upload chunk", &error))?;
+    let reference = store
+        .commit_upload(lease, owner, now_ms)
+        .map_err(|error| blob_error_message("commit upload", &error))?;
+    Ok(blob_ref_to_json(&reference, owner))
+}
+
+fn dispatch_blob_read(request: &HostCallRequest, blobs: &RwLock<BlobStore>) -> Result<Value, String> {
+    let read_request = inline_request::<BlobReadRequest>(request).or_else(|error| {
+        Err(format!("invalid blob.read request: {error}"))
+    })?;
+    let reference = host_blob_ref_to_kernel(&read_request.r#ref)?;
+    let workspace = read_request.workspace.as_deref();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let owner = NATIVE_UI_PRINCIPAL_NAME;
+    let mut store = blobs
+        .write()
+        .map_err(|_| "blob store lock is poisoned".to_string())?;
+    if let Some(workspace) = workspace {
+        validate_token_text(workspace, "blob.read workspace")?;
+    }
+    let read_lease = store
+        .open_read(&reference, owner, workspace, now_ms, BLOB_READ_TTL_MS)
+        .map_err(|error| blob_error_message("open read", &error))?;
+    let chunk = store
+        .read_chunk(read_lease, owner, 0, MAX_BLOB_CHUNK_BYTES, now_ms)
+        .map_err(|error| blob_error_message("read chunk", &error))?;
+    store
+        .close_read(read_lease, owner)
+        .map_err(|error| blob_error_message("close read", &error))?;
+    Ok(json!({
+        "digest": reference.digest().to_hex(),
+        "size": reference.size(),
+        "mediaType": reference.media_type(),
+        "contentBase64": base64::engine::general_purpose::STANDARD.encode(chunk),
+    }))
+}
+
+fn inline_request<T: for<'de> serde::Deserialize<'de>>(
+    request: &HostCallRequest,
+) -> Result<T, String> {
+    match &request.payload {
+        HostPayload::Inline { value } => {
+            serde_json::from_value(value.clone()).map_err(|error| error.to_string())
+        }
+        HostPayload::Blob { .. } => Err("operation expects an inline payload".to_string()),
+    }
+}
+
+fn host_blob_ref_to_kernel(r#ref: &HostBlobRef) -> Result<BlobRef, String> {
+    let digest_bytes = hex_decode(&r#ref.digest).ok_or("blob digest must be lowercase hex")?;
+    let digest =
+        <[u8; 32]>::try_from(digest_bytes.as_slice()).map_err(|_| "blob digest must be 32 bytes")?;
+    let scope = BlobScope::from_wire(&r#ref.scope).map_err(|error| error.to_string())?;
+    BlobRef::new(
+        crate::kernel::blob::BlobDigest::new(digest),
+        r#ref.size,
+        r#ref.media_type.clone(),
+        scope,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn blob_ref_to_json(reference: &BlobRef, owner: &str) -> Value {
+    json!({
+        "algorithm": "sha256",
+        "digest": reference.digest().to_hex(),
+        "size": reference.size(),
+        "mediaType": reference.media_type(),
+        "scope": reference.scope().to_wire(),
+        "owner": owner,
+        "retentionClass": "session",
+    })
+}
+
+fn blob_error_message(stage: &str, error: &BlobError) -> String {
+    format!("blob {stage} failed: {error}")
+}
+
+fn validate_token_text(value: &str, kind: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > MAX_BLOB_TEXT_BYTES || value.chars().any(char::is_control) {
+        return Err(format!("invalid {kind}"));
+    }
+    Ok(())
+}
+
+fn hex_decode(value: &str) -> Option<Vec<u8>> {
+    if value.len() % 2 != 0 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..value.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).ok())
+        .collect()
 }
 
 fn authorize_for_bus(
@@ -645,5 +837,105 @@ mod tests {
         assert_eq!(lease.capability().name(), "plugin.catalog.read");
         assert!(lease.is_active_at(1_000));
         assert!(!lease.is_active_at(31_000));
+    }
+
+    #[test]
+    fn default_kernel_state_registers_blob_operations() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        for operation in ["blob.write", "blob.read"] {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), "blob");
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn blob_write_and_read_round_trip_through_the_store() {
+        let state = create_kernel_state().expect("kernel state");
+
+        let write_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-write-1",
+            "operation": "blob.write",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "scope": "shared",
+                    "mediaType": "text/plain",
+                    "contentBase64": "YW55d2F5IGJsb2IgY29udGVudA=="
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let written = dispatch_blob_write(&write_request, state.blobs())
+            .expect("blob.write succeeded");
+        assert_eq!(written["algorithm"], "sha256");
+        assert_eq!(written["size"], 19);
+        assert_eq!(written["owner"], NATIVE_UI_PRINCIPAL_NAME);
+        assert_eq!(written["scope"], "shared");
+
+        let read_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-read-1",
+            "operation": "blob.read",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "ref": written,
+                    "workspace": null
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let read = dispatch_blob_read(&read_request, state.blobs()).expect("blob.read succeeded");
+        assert_eq!(read["size"], 19);
+        assert_eq!(
+            read["contentBase64"],
+            "YW55d2F5IGJsb2IgY29udGVudA=="
+        );
+        assert_eq!(read["digest"], written["digest"]);
+    }
+
+    #[test]
+    fn blob_write_rejects_oversized_and_malformed_content() {
+        let state = create_kernel_state().expect("kernel state");
+
+        let oversized: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-write-2",
+            "operation": "blob.write",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "scope": "shared",
+                    "mediaType": "text/plain",
+                    "contentBase64": "A".repeat(MAX_BLOB_CHUNK_BYTES * 2)
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert!(dispatch_blob_write(&oversized, state.blobs()).is_err());
+
+        let not_base64: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-write-3",
+            "operation": "blob.write",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "scope": "shared",
+                    "mediaType": "text/plain",
+                    "contentBase64": "!!!not-base64!!!"
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert!(dispatch_blob_write(&not_base64, state.blobs()).is_err());
     }
 }

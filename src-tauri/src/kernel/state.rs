@@ -1,31 +1,74 @@
-//! Thread-safe ownership boundary for the Tauri-independent host bus.
+//! Thread-safe ownership boundary for the Tauri-independent kernel models.
 
 use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use super::blob::{BlobQuota, BlobStore};
 use super::bus::HostBus;
+use super::rpc::RpcLedger;
 
 /// Application state that can be registered with Tauri's managed state.
 ///
-/// The state owns only synchronization and the admission/routing model. It has
-/// no Tauri types so unit tests and non-Tauri transports can share the same
-/// kernel state boundary.
+/// The state owns synchronization and the admission/routing model plus the
+/// Phase 3 data and control planes. It has no Tauri types so unit tests and
+/// non-Tauri transports can share the same kernel state boundary.
 pub struct KernelState {
     bus: Arc<RwLock<HostBus>>,
+    blobs: Arc<RwLock<BlobStore>>,
+    rpc: Arc<RwLock<RpcLedger>>,
 }
 
 impl KernelState {
-    pub fn new(bus: HostBus) -> Self {
+    pub fn new(bus: HostBus, blobs: BlobStore, rpc: RpcLedger) -> Self {
         Self {
             bus: Arc::new(RwLock::new(bus)),
+            blobs: Arc::new(RwLock::new(blobs)),
+            rpc: Arc::new(RwLock::new(rpc)),
         }
+    }
+
+    /// Build the thread-safe kernel with default Phase 3 quota and inflight
+    /// limits. `max_inflight` is the RPC ledger limit; blob quota uses its own
+    /// defaults unless overridden.
+    pub fn with_defaults(max_inflight: usize) -> Self {
+        Self::new(
+            HostBus::default(),
+            BlobStore::new(BlobQuota::default()).expect("default blob quota is valid"),
+            RpcLedger::new(max_inflight).expect("rpc ledger max inflight is non-zero"),
+        )
+    }
+
+    /// Build the kernel around a pre-registered bus while keeping default
+    /// Phase 3 blob quota and RPC ledger limits.
+    pub fn with_bus(bus: HostBus, max_inflight: usize) -> Self {
+        Self::new(
+            bus,
+            BlobStore::new(BlobQuota::default()).expect("default blob quota is valid"),
+            RpcLedger::new(max_inflight).expect("rpc ledger max inflight is non-zero"),
+        )
     }
 
     pub fn bus(&self) -> &RwLock<HostBus> {
         self.bus.as_ref()
     }
 
+    pub fn blobs(&self) -> &RwLock<BlobStore> {
+        self.blobs.as_ref()
+    }
+
+    pub fn rpc(&self) -> &RwLock<RpcLedger> {
+        self.rpc.as_ref()
+    }
+
     pub fn shared_bus(&self) -> Arc<RwLock<HostBus>> {
         Arc::clone(&self.bus)
+    }
+
+    pub fn shared_blobs(&self) -> Arc<RwLock<BlobStore>> {
+        Arc::clone(&self.blobs)
+    }
+
+    pub fn shared_rpc(&self) -> Arc<RwLock<RpcLedger>> {
+        Arc::clone(&self.rpc)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {
@@ -39,7 +82,7 @@ impl KernelState {
 
 impl Default for KernelState {
     fn default() -> Self {
-        Self::new(HostBus::default())
+        Self::with_defaults(super::bus::DEFAULT_MAX_INFLIGHT_PER_PRINCIPAL)
     }
 }
 
@@ -60,5 +103,24 @@ mod tests {
 
         assert_eq!(worker.join().expect("worker completed"), 0);
         assert_eq!(state.read().expect("bus read lock").operation_count(), 0);
+    }
+
+    #[test]
+    fn state_owns_blob_and_rpc_planes_synchronously() {
+        let state = Arc::new(KernelState::default());
+        let shared_blobs = state.shared_blobs();
+        let shared_rpc = state.shared_rpc();
+        let worker = std::thread::spawn(move || {
+            let blobs = shared_blobs.read().expect("blob read lock");
+            let rpc = shared_rpc.read().expect("rpc read lock");
+            (blobs.stored_blob_count(), rpc.active_count())
+        });
+
+        assert_eq!(worker.join().expect("worker completed"), (0, 0));
+        assert_eq!(
+            state.blobs().read().expect("blob read lock").stored_blob_count(),
+            0
+        );
+        assert_eq!(state.rpc().read().expect("rpc read lock").active_count(), 0);
     }
 }

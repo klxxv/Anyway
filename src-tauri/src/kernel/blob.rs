@@ -138,6 +138,32 @@ impl BlobScope {
             Self::Workspace(expected) => workspace == Some(expected.as_str()),
         }
     }
+
+    /// Parse a wire-format scope produced by [`Self::to_wire`]. This is a
+    /// metadata helper, not an authorization decision; the read lease opens
+    /// only after `open_read` re-checks scope against the bound caller.
+    pub fn from_wire(value: &str) -> Result<Self, BlobError> {
+        if value == "shared" {
+            return Ok(Self::Shared);
+        }
+        let (kind, subject) = value
+            .split_once(':')
+            .ok_or(BlobError::InvalidArgument("scope must be shared|workspace:id|private:id"))?;
+        match kind {
+            "workspace" => Self::workspace(subject),
+            "private" => Self::private(subject),
+            _ => Err(BlobError::InvalidArgument("unknown scope kind")),
+        }
+    }
+
+    /// Deterministic wire representation of a scope for one BlobRef round trip.
+    pub fn to_wire(&self) -> String {
+        match self {
+            Self::Shared => "shared".to_string(),
+            Self::Workspace(identifier) => format!("workspace:{identifier}"),
+            Self::Private(principal) => format!("private:{principal}"),
+        }
+    }
 }
 
 /// Immutable metadata plus the content address. There are no mutating methods.
@@ -908,6 +934,26 @@ mod tests {
         let report = store.sweep(25, 0);
         assert_eq!(report.deleted_blobs, 1);
         assert_eq!(store.stored_bytes(), 0);
+    }
+
+    #[test]
+    fn scopes_round_trip_through_wire_representation() {
+        assert_eq!(BlobScope::from_wire("shared").unwrap(), BlobScope::Shared);
+        assert_eq!(BlobScope::from_wire("shared").unwrap().to_wire(), "shared");
+        let workspace = BlobScope::from_wire("workspace:proj.1").unwrap();
+        assert_eq!(workspace, BlobScope::Workspace("proj.1".to_string()));
+        assert_eq!(workspace.to_wire(), "workspace:proj.1");
+        let private = BlobScope::from_wire("private:plugin.a").unwrap();
+        assert_eq!(private, BlobScope::Private("plugin.a".to_string()));
+        assert_eq!(private.to_wire(), "private:plugin.a");
+        assert!(matches!(
+            BlobScope::from_wire("open:anyone"),
+            Err(BlobError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            BlobScope::from_wire("workspace"),
+            Err(BlobError::InvalidArgument(_))
+        ));
     }
 
     #[test]
