@@ -22,6 +22,14 @@ use crate::kernel::policy::{
 use crate::kernel::rpc::{RequestId, RpcTarget};
 use crate::kernel::state::KernelState;
 
+/// Named worker declaration for the in-process document agent pool.
+pub const AGENT_HOST_WORKER_ID: &str = "worker.agent-host";
+pub const AGENT_HOST_POOL: &str = "agent";
+
+/// Dedicated principal for the in-process agent host so its workload pool
+/// never consumes the native UI principal's quotas or capabilities.
+pub const AGENT_HOST_PRINCIPAL: &str = "worker.agent-host";
+
 pub const HOST_SDK_API_VERSION: &str = "anyway.dev/host-rpc/v1alpha1";
 pub const MAX_HOST_DEADLINE_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_INLINE_PAYLOAD_BYTES: usize = 64 * 1_024;
@@ -300,7 +308,55 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "blob.read",
         BLOB_READ_MAX_INFLIGHT,
     )?;
-    Ok(KernelState::with_bus(bus, 64))
+    let kernel = KernelState::with_bus(bus, 64);
+    register_agent_worker(&kernel)?;
+    Ok(kernel)
+}
+
+/// Declare and start the in-process agent host as a supervised worker.
+///
+/// The adapter for a shared thread pool does not spawn a process; starting
+/// means the pool is ready to accept queued jobs. The supervisor still
+/// records the incarnation and receives health observations from the gate.
+fn register_agent_worker(kernel: &KernelState) -> Result<(), String> {
+    use crate::kernel::lifecycle::LifecycleSpec;
+    use crate::kernel::supervisor::{WorkerObservation, WorkerSpec};
+
+    let worker_id = crate::kernel::identity::WorkerId::new(AGENT_HOST_WORKER_ID)
+        .map_err(|error| error.to_string())?;
+    let principal = PrincipalId::new(AGENT_HOST_PRINCIPAL).map_err(|e| e.to_string())?;
+    let mut supervisor = kernel.supervisor().write().map_err(|error| error.to_string())?;
+    supervisor
+        .register(WorkerSpec::thread_pool(
+            worker_id.clone(),
+            principal,
+            None,
+            AGENT_HOST_POOL,
+            LifecycleSpec::default(),
+        ))
+        .map_err(|error| error.to_string())?;
+    supervisor
+        .start(&worker_id)
+        .map_err(|error| error.to_string())?;
+    supervisor
+        .observe(&worker_id, WorkerObservation::Started)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Build the transport gate that lets agent batches run against the kernel
+/// scheduler and supervisor planes instead of a global serial mutex.
+pub fn agent_gate_for(kernel: &KernelState) -> crate::agent_commands::AgentJobGate {
+    use crate::kernel::scheduler::DEFAULT_PER_PRINCIPAL_QUOTA;
+
+    crate::agent_commands::AgentJobGate::new(
+        kernel.shared_schedulers(),
+        kernel.shared_supervisor(),
+        crate::kernel::identity::WorkerId::new(AGENT_HOST_WORKER_ID)
+            .expect("agent worker id is valid"),
+        PrincipalId::new(AGENT_HOST_PRINCIPAL).expect("agent host principal is valid"),
+        DEFAULT_PER_PRINCIPAL_QUOTA,
+    )
 }
 
 fn register_operation(

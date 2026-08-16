@@ -143,6 +143,24 @@ impl From<InvalidTransition> for SupervisorError {
     }
 }
 
+impl std::fmt::Display for SupervisorError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateWorker(worker_id) => {
+                write!(formatter, "duplicate worker {worker_id}")
+            }
+            Self::UnknownWorker(worker_id) => {
+                write!(formatter, "unknown worker {worker_id}")
+            }
+            Self::Lifecycle(error) => {
+                write!(formatter, "lifecycle: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SupervisorError {}
+
 struct WorkerRecord {
     spec: WorkerSpec,
     lifecycle: LifecycleMachine,
@@ -167,6 +185,11 @@ impl Supervisor {
         self.workers
             .insert(spec.worker_id.clone(), WorkerRecord { spec, lifecycle });
         Ok(())
+    }
+
+    /// Number of registered worker records, for ledger and test snapshots.
+    pub fn worker_count(&self) -> usize {
+        self.workers.len()
     }
 
     pub fn snapshot(&self, worker_id: &WorkerId) -> Result<WorkerSnapshot, SupervisorError> {
@@ -414,5 +437,24 @@ mod tests {
             supervisor.start(&missing),
             Err(SupervisorError::UnknownWorker(missing))
         );
+    }
+
+    #[test]
+    fn supervisor_errors_stringify_for_transport_boundaries() {
+        let (worker, _, _) = ids("stringify");
+        let unknown = SupervisorError::UnknownWorker(worker.clone()).to_string();
+        assert!(unknown.contains("unknown worker"), "message: {unknown}");
+        assert!(unknown.contains(&worker.to_string()), "message: {unknown}");
+
+        let duplicate = SupervisorError::DuplicateWorker(worker.clone()).to_string();
+        assert!(duplicate.contains("duplicate worker"), "message: {duplicate}");
+
+        let lifecycle = SupervisorError::Lifecycle(InvalidTransition {
+            state: LifecycleState::Declared,
+            event: LifecycleEvent::StartSucceeded,
+        })
+        .to_string();
+        assert!(lifecycle.contains("lifecycle:"), "message: {lifecycle}");
+        assert!(lifecycle.contains("StartSucceeded"), "message: {lifecycle}");
     }
 }

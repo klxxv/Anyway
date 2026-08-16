@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use sha2::Digest;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Manager, State};
 
 use crate::agent_host::{
@@ -19,6 +19,10 @@ use crate::agent_host::{
     ReasoningActivity, RepairAuditEntry, RepairAuditRecord,
 };
 use crate::deepseek_client;
+use crate::kernel::identity::{PrincipalId, WorkerId};
+use crate::kernel::lifecycle::FailureReason;
+use crate::kernel::scheduler::Scheduler;
+use crate::kernel::supervisor::{Supervisor, SupervisorAction, WorkerObservation};
 use crate::llm_client::{
     ApiFormat, CallRole, LlmClientAdapter, PdfAgentLlmClient, PdfAgentLlmConfig, PdfAgentTransport,
 };
@@ -31,15 +35,131 @@ use semantic_pipeline::{
 };
 
 /// 宿主管理的全局 AgentHost 状态 / Host-managed global AgentHost state.
-pub struct AgentHostState(
-    pub Mutex<AgentHost>,
-    /// One permit for the first implementation: batches and files execute serially.
-    pub tokio::sync::Mutex<()>,
-);
+pub struct AgentHostState(pub Mutex<AgentHost>, pub AgentJobGate);
 
 impl AgentHostState {
+    /// Serial fallback for tests and legacy callers: a quota-one gate with
+    /// private scheduler and supervisor planes. Production wiring uses
+    /// [`AgentHostState::with_gate`] so jobs share the kernel planes.
     pub fn new(host: AgentHost) -> Self {
-        Self(Mutex::new(host), tokio::sync::Mutex::new(()))
+        Self(Mutex::new(host), AgentJobGate::serial())
+    }
+
+    /// Production constructor: agent batches queue through the kernel-owned
+    /// gate and report observations to the kernel supervisor.
+    pub fn with_gate(host: AgentHost, gate: AgentJobGate) -> Self {
+        Self(Mutex::new(host), gate)
+    }
+}
+
+/// Phase 4 transport gate for agent batches.
+///
+/// The gate pairs a Tokio semaphore (the async waiting point) with the pure
+/// kernel [`Scheduler`] (the accounting ledger). The semaphore is sized to
+/// the same quota, so the scheduler admission cannot fail for a gate-built
+/// permit; the scheduler snapshot remains the kernel-owned source of truth
+/// for inflight work per principal.
+pub struct AgentJobGate {
+    scheduler: Arc<RwLock<Scheduler>>,
+    supervisor: Arc<RwLock<Supervisor>>,
+    worker_id: WorkerId,
+    principal: PrincipalId,
+    quota: usize,
+    semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+impl AgentJobGate {
+    /// Build a gate backed by kernel scheduler and supervisor planes.
+    pub fn new(
+        scheduler: Arc<RwLock<Scheduler>>,
+        supervisor: Arc<RwLock<Supervisor>>,
+        worker_id: WorkerId,
+        principal: PrincipalId,
+        quota: usize,
+    ) -> Self {
+        Self {
+            scheduler,
+            supervisor,
+            worker_id,
+            principal,
+            quota,
+            semaphore: Arc::new(tokio::sync::Semaphore::new(quota)),
+        }
+    }
+
+    /// Quota-one gate with private planes, preserving the previous serial
+    /// behavior for tests and legacy construction paths.
+    pub fn serial() -> Self {
+        Self::new(
+            Arc::new(RwLock::new(Scheduler::with_default_quota(1).expect("quota one"))),
+            Arc::new(RwLock::new(Supervisor::default())),
+            WorkerId::new("worker.agent-host.serial").expect("serial worker id"),
+            PrincipalId::new(crate::kernel::policy::NATIVE_UI_PRINCIPAL_NAME)
+                .expect("native ui principal"),
+            1,
+        )
+    }
+
+    pub fn principal(&self) -> &PrincipalId {
+        &self.principal
+    }
+
+    pub fn quota(&self) -> usize {
+        self.quota
+    }
+
+    /// Wait for a job slot, then record the reservation in the kernel
+    /// scheduler. The returned permit releases both on drop.
+    pub async fn acquire(&self) -> JobPermit {
+        let semaphore = Arc::clone(&self.semaphore);
+        let semaphore_permit = semaphore
+            .acquire_owned()
+            .await
+            .expect("agent gate semaphore is never closed");
+        {
+            let mut scheduler = self
+                .scheduler
+                .write()
+                .expect("agent gate scheduler lock");
+            scheduler
+                .acquire(&self.principal)
+                .expect("semaphore already bounds concurrency to the quota");
+        }
+        JobPermit {
+            _semaphore: semaphore_permit,
+            scheduler: Arc::clone(&self.scheduler),
+            principal: self.principal.clone(),
+        }
+    }
+
+    /// Report a lifecycle observation to the kernel supervisor for the
+    /// declared agent worker. The action is advisory for an in-process pool.
+    pub fn observe(&self, observation: WorkerObservation) -> SupervisorAction {
+        self.supervisor
+            .write()
+            .map_err(|error| format!("supervisor lock: {error}"))
+            .map(|mut supervisor| {
+                supervisor
+                    .observe(&self.worker_id, observation)
+                    .unwrap_or(SupervisorAction::Noop)
+            })
+            .unwrap_or(SupervisorAction::Noop)
+    }
+}
+
+/// Held for the duration of one queued batch; releases the scheduler slot
+/// and the semaphore permit on drop.
+pub struct JobPermit {
+    _semaphore: tokio::sync::OwnedSemaphorePermit,
+    scheduler: Arc<RwLock<Scheduler>>,
+    principal: PrincipalId,
+}
+
+impl Drop for JobPermit {
+    fn drop(&mut self) {
+        if let Ok(mut scheduler) = self.scheduler.write() {
+            scheduler.release(&self.principal);
+        }
     }
 }
 
@@ -585,7 +705,8 @@ async fn run_document_batch(
     request: StartDocumentBatchRequest,
 ) {
     let state = app.state::<AgentHostState>();
-    let _serial_permit = state.1.lock().await;
+    let _permit = state.1.acquire().await;
+    let mut healthy = true;
     for (job_id, path) in batch.job_ids.iter().zip(request.paths.iter()) {
         let terminal = state
             .0
@@ -604,6 +725,7 @@ async fn run_document_batch(
             Err(error) => Err(error),
         };
         if let Err(error) = outcome {
+            healthy = false;
             if let Ok(mut host) = state.0.lock() {
                 let terminal = host
                     .get_job(job_id)
@@ -614,6 +736,13 @@ async fn run_document_batch(
                 }
             }
         }
+    }
+    if healthy {
+        state.1.observe(WorkerObservation::Healthy { ticks: 1 });
+    } else {
+        state
+            .1
+            .observe(WorkerObservation::Failed(FailureReason::Crash));
     }
 }
 
@@ -1755,5 +1884,63 @@ mod tests {
         assert!(ops.iter().any(|op| {
             op["edge"]["id"] == "pdf-edge-s1-s1.1" && op["edge"]["type"] == "part_of"
         }));
+    }
+
+    #[test]
+    fn agent_gate_admits_two_concurrent_batches_and_fails_closed_on_the_third() {
+        let scheduler = Arc::new(RwLock::new(
+            crate::kernel::scheduler::Scheduler::with_default_quota(2)
+                .expect("quota two is valid"),
+        ));
+        let supervisor = Arc::new(RwLock::new(Supervisor::default()));
+        let gate = AgentJobGate::new(
+            Arc::clone(&scheduler),
+            Arc::clone(&supervisor),
+            WorkerId::new("worker.agent-host.test").expect("worker id"),
+            PrincipalId::new("worker.agent-host.test").expect("principal"),
+            2,
+        );
+
+        // Two independent batches occupy the quota concurrently.
+        let first = tauri::async_runtime::block_on(gate.acquire());
+        let second = tauri::async_runtime::block_on(gate.acquire());
+        assert_eq!(
+            scheduler
+                .read()
+                .expect("scheduler read lock")
+                .inflight(gate.principal()),
+            2
+        );
+
+        // A third batch for the same principal fails closed at the shared
+        // accounting plane; the semaphore is sized to the same quota.
+        assert_eq!(
+            scheduler
+                .write()
+                .expect("scheduler write lock")
+                .acquire(gate.principal()),
+            Err(crate::kernel::scheduler::SchedulerError::QuotaExhausted {
+                principal: gate.principal().clone(),
+                quota: 2,
+            })
+        );
+
+        // Dropping permits drains the ledger so slots return.
+        drop(second);
+        assert_eq!(
+            scheduler
+                .read()
+                .expect("scheduler read lock")
+                .inflight(gate.principal()),
+            1
+        );
+        drop(first);
+        assert_eq!(
+            scheduler
+                .read()
+                .expect("scheduler read lock")
+                .inflight(gate.principal()),
+            0
+        );
     }
 }

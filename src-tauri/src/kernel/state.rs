@@ -5,16 +5,21 @@ use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use super::blob::{BlobQuota, BlobStore};
 use super::bus::HostBus;
 use super::rpc::RpcLedger;
+use super::scheduler::Scheduler;
+use super::supervisor::Supervisor;
 
 /// Application state that can be registered with Tauri's managed state.
 ///
 /// The state owns synchronization and the admission/routing model plus the
-/// Phase 3 data and control planes. It has no Tauri types so unit tests and
-/// non-Tauri transports can share the same kernel state boundary.
+/// Phase 3 data and control planes and the Phase 4 scheduler and supervisor
+/// planes. It has no Tauri types so unit tests and non-Tauri transports can
+/// share the same kernel state boundary.
 pub struct KernelState {
     bus: Arc<RwLock<HostBus>>,
     blobs: Arc<RwLock<BlobStore>>,
     rpc: Arc<RwLock<RpcLedger>>,
+    scheduler: Arc<RwLock<Scheduler>>,
+    supervisor: Arc<RwLock<Supervisor>>,
 }
 
 impl KernelState {
@@ -23,6 +28,8 @@ impl KernelState {
             bus: Arc::new(RwLock::new(bus)),
             blobs: Arc::new(RwLock::new(blobs)),
             rpc: Arc::new(RwLock::new(rpc)),
+            scheduler: Arc::new(RwLock::new(Scheduler::default())),
+            supervisor: Arc::new(RwLock::new(Supervisor::default())),
         }
     }
 
@@ -59,6 +66,14 @@ impl KernelState {
         self.rpc.as_ref()
     }
 
+    pub fn schedulers(&self) -> &RwLock<Scheduler> {
+        self.scheduler.as_ref()
+    }
+
+    pub fn supervisor(&self) -> &RwLock<Supervisor> {
+        self.supervisor.as_ref()
+    }
+
     pub fn shared_bus(&self) -> Arc<RwLock<HostBus>> {
         Arc::clone(&self.bus)
     }
@@ -69,6 +84,14 @@ impl KernelState {
 
     pub fn shared_rpc(&self) -> Arc<RwLock<RpcLedger>> {
         Arc::clone(&self.rpc)
+    }
+
+    pub fn shared_schedulers(&self) -> Arc<RwLock<Scheduler>> {
+        Arc::clone(&self.scheduler)
+    }
+
+    pub fn shared_supervisor(&self) -> Arc<RwLock<Supervisor>> {
+        Arc::clone(&self.supervisor)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {
@@ -122,5 +145,42 @@ mod tests {
             0
         );
         assert_eq!(state.rpc().read().expect("rpc read lock").active_count(), 0);
+    }
+
+    #[test]
+    fn state_owns_scheduler_and_supervisor_planes_synchronously() {
+        let state = Arc::new(KernelState::default());
+        let shared_schedulers = state.shared_schedulers();
+        let shared_supervisor = state.shared_supervisor();
+        let worker = std::thread::spawn(move || {
+            let schedulers = shared_schedulers.read().expect("scheduler read lock");
+            let supervisor = shared_supervisor.read().expect("supervisor read lock");
+            (schedulers.config().default_per_principal_quota, supervisor.worker_count())
+        });
+
+        assert_eq!(
+            worker.join().expect("worker completed"),
+            (
+                crate::kernel::scheduler::DEFAULT_PER_PRINCIPAL_QUOTA,
+                0
+            )
+        );
+        assert_eq!(
+            state
+                .schedulers()
+                .read()
+                .expect("scheduler read lock")
+                .config()
+                .default_per_principal_quota,
+            crate::kernel::scheduler::DEFAULT_PER_PRINCIPAL_QUOTA
+        );
+        assert_eq!(
+            state
+                .supervisor()
+                .read()
+                .expect("supervisor read lock")
+                .worker_count(),
+            0
+        );
     }
 }

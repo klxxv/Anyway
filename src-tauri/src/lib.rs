@@ -26,15 +26,17 @@ pub use semantic_pipeline;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let kernel_state = kernel_commands::create_kernel_state()
+        .expect("kernel Host Bus routes must be valid");
+    let agent_gate = kernel_commands::agent_gate_for(&kernel_state);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(agent_commands::AgentHostState::new(
+        .manage(kernel_state)
+        .manage(agent_commands::AgentHostState::with_gate(
             agent_host::AgentHost::new(std::env::temp_dir()),
+            agent_gate,
         ))
         .manage(llm_provider_registry::ProviderRegistryState::default())
-        .manage(
-            kernel_commands::create_kernel_state().expect("kernel Host Bus routes must be valid"),
-        )
         .manage(kernel_commands::CapabilityPolicyState::default())
         .invoke_handler(tauri::generate_handler![
             kernel_commands::kernel_host_call,
