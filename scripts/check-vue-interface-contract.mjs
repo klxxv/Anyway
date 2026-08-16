@@ -150,7 +150,6 @@ export const REQUIRED_TAURI_COMMANDS = Object.freeze({
     "compile_project",
   ],
   "app/plugins/tauri-client.ts": [
-    "list_installed_plugins",
     "install_myc_plugin",
     "uninstall_myc_plugin",
     "execute_myc_plugin",

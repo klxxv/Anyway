@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import {
-  pluginReference,
-  type GraphPatchOperation,
-  type PluginGraphPatch,
+import { pluginReference } from "../../../app/plugins/contracts";
+import type {
+  GraphPatchOperation,
+  PluginGraphPatch,
 } from "../../../app/plugins/contracts";
 import {
   operationSubject,

@@ -49,7 +49,6 @@ pub fn run() {
             deepseek_client::clear_deepseek_api_key,
             plugins::install_myc_plugin,
             plugins::uninstall_myc_plugin,
-            plugins::list_installed_plugins,
             plugins::read_icon_theme_asset,
             vsix_importer::import_vscode_vsix,
             plugins::get_plugin_settings,

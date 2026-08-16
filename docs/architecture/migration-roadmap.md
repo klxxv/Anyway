@@ -86,8 +86,9 @@ This slice proves the common path without combining a new security boundary with
 | --- | --- |
 | Agent jobs use one global async mutex | ✅ Phase 4 — `kernel/scheduler.rs` per-principal quota + `AgentJobGate` (tokio semaphore backed by the kernel scheduler); two independent batches run concurrently within quota. |
 | Plugin UI is limited to existing host dialogs | ✅ Phase 5 slice — `PluginSlot` + host slot registry + `UiIrActionRequest` → Host SDK dispatch (`app/platform/ui-ir-dispatch.ts`); the renderer is wired but not yet mounted in the workspace shell. |
+| `list_installed_plugins` rollback adapter | ✅ Phase 8 — the direct Tauri command was retired from the invoke handler after all frontend callers moved to `plugin.list`; the Rust function remains only for the internal LLM-provider registry. |
 
-Remaining entries (package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, manifest-grant separation) stay open for the AnMarket/install wiring and Blob data-path follow-ups.
+Remaining entries (package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, manifest-grant separation, and the other direct Tauri commands) stay open for the AnMarket/install wiring and the Blob data-path follow-ups.
 
 ## 🧪 Verification gates
 

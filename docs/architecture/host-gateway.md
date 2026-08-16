@@ -8,7 +8,7 @@ _Phase 2 implementation record for the first Vue-to-Kernel Host Bus vertical sli
 
 The Vue plugin catalog now calls `HostSdk.call("plugin.list", {})`. The SDK sends one versioned envelope through the single `kernel_host_call` Tauri command. Rust validates the envelope, binds `native.ui` from the invoking `main` WebView, authorizes the operation, admits it to the Host Bus, invokes a read-only catalog query, and finishes the Bus handle before returning the response.
 
-`list_installed_plugins` remains registered as a compatibility command, but this Vue call site no longer uses it. Keeping the old command is the Phase 2 rollback boundary; removing it is a later migration step after all callers use the Host SDK.
+The `list_installed_plugins` direct command was retired in Phase 8 once every frontend caller had migrated to the Host SDK. The read-only `plugin.list` operation and the internal catalog query are the only remaining catalog paths; the `list_installed_plugins` Rust function is retained solely for the internal LLM-provider registry.
 
 ## 🔗 Current data flow
 
