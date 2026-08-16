@@ -104,7 +104,10 @@ This slice proves the common path without combining a new security boundary with
 | Legacy rollback retirement | ✅ Phase 8 — all ~36 legacy Tauri command registrations were removed, leaving `kernel_host_call` as the sole command entry point. **No privileged operation bypasses Kernel RPC.** |
 | Package-gate install transaction | ✅ Phase 8 — `plugin.install` now runs submit → scan → approve → activate through the `PackageGate` (keyed by the archive SHA-256) before the real install, so installation is gated and a duplicate/rejected digest cannot be installed again. |
 
-Remaining entries are the deeper architecture follow-ups (not command migrations): mandatory signature provenance (unsigned packages still install via the permissive manifest/signature validation), streaming WASM inputs, and manifest-declaration-as-grant separation.
+Remaining entries are the deeper architecture follow-ups (not command migrations):
+- **Mandatory signature provenance (BLOCKED on packaging)** — the built `.myc` packages are unsigned (no `signature` field; `build_myc_plugin.py` does not sign), and the publisher id is `Research Canvas Community`, not the built-in `researchcanvas` trust root. Enforcing mandatory signatures in `read_archive_manifest_from_archive` is a one-line code change, but it would reject every existing package until the packages are re-signed with the offline Ed25519 secret key (not available in this session).
+- Streaming WASM inputs (`plugin.analysis.run` still passes one-shot JSON rather than BlobRef).
+- Manifest-declaration-as-grant separation (the host-mediated `require_plugin_capability` still reads the manifest `capabilities` directly instead of a kernel grant).
 
 ## 🧪 Verification gates
 
