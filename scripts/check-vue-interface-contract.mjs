@@ -133,7 +133,6 @@ export const REQUIRED_TAURI_COMMANDS = Object.freeze({
     "save_plugin_artifact",
   ],
   "app/platform/agent-client.ts": [
-    "start_pdf_job",
     "compile_project",
   ],
   "app/plugins/tauri-client.ts": [

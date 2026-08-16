@@ -205,6 +205,46 @@ test("agent job review and cancel operations emit valid names and exact payload 
     assert.deepEqual(request.payload.value, testCase.payload);
   }
 });
+test("agent job start and batch start operations emit valid names and exact payload keys", async () => {
+  const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
+  const cases: Array<{
+    operation: string;
+    payload: Record<string, unknown>;
+    expectedKeys: string[];
+  }> = [
+    {
+      operation: "agent.job.start",
+      payload: { pdfPath: "/tmp/example.pdf" },
+      expectedKeys: ["pdfPath"],
+    },
+    {
+      operation: "agent.batch.start",
+      payload: { paths: ["/tmp/a.pdf", "/tmp/b.pdf"] },
+      expectedKeys: ["paths"],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const transport = new RecordingTransport();
+    const sdk = new HostSdk(transport);
+
+    assert.deepEqual(await sdk.call(testCase.operation, testCase.payload), { accepted: true });
+
+    const request = transport.request;
+    assert.ok(request, "Host SDK emitted a request");
+    assert.equal(request.operation, testCase.operation);
+    assert.match(request.operation, operationNames);
+    assert.equal(request.payload.kind, "inline");
+    if (request.payload.kind !== "inline") {
+      assert.fail(`${testCase.operation} must use an inline payload`);
+      return;
+    }
+    const value = request.payload.value as Record<string, unknown>;
+    assert.deepEqual(Object.keys(value).sort(), testCase.expectedKeys);
+    assert.equal("capability" in value, false, "the legacy capability field must not be forwarded");
+    assert.deepEqual(request.payload.value, testCase.payload);
+  }
+});
 test("plugin settings write and reset operations emit valid names and exact payload keys", async () => {
   const operationNames = /^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)*$/;
   const cases: Array<{

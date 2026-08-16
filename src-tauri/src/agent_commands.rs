@@ -635,6 +635,27 @@ pub async fn start_pdf_job(
     state: State<'_, AgentHostState>,
     request: StartPdfJobRequest,
 ) -> Result<PdfJobStatus, String> {
+    queue_pdf_job(app, &state, request)
+}
+
+/// Queue a document batch and return before validation, extraction, or model work begins.
+#[tauri::command]
+pub async fn start_document_batch(
+    app: AppHandle,
+    state: State<'_, AgentHostState>,
+    request: StartDocumentBatchRequest,
+) -> Result<ImportBatchStatus, String> {
+    queue_document_batch(app, &state, request)
+}
+
+/// Shared queue path for a single PDF job: convert the request into a one-file
+/// batch, create the batch, snapshot the first job, and spawn the background
+/// pipeline. Used by both the legacy Tauri command and the Host SDK handler.
+pub(crate) fn queue_pdf_job(
+    app: AppHandle,
+    agent: &AgentHostState,
+    request: StartPdfJobRequest,
+) -> Result<PdfJobStatus, String> {
     let batch_request = StartDocumentBatchRequest {
         paths: vec![request.pdf_path],
         settings: request.settings,
@@ -650,14 +671,14 @@ pub async fn start_pdf_job(
         extra: request.extra,
     };
     let batch = {
-        let mut host = state
+        let mut host = agent
             .0
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?;
         host.create_batch(&batch_request.paths)?
     };
     let queued = {
-        let host = state
+        let host = agent
             .0
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?;
@@ -674,22 +695,23 @@ pub async fn start_pdf_job(
     Ok(queued)
 }
 
-/// Queue a document batch and return before validation, extraction, or model work begins.
-#[tauri::command]
-pub async fn start_document_batch(
+/// Shared queue path for a document batch: create the batch, snapshot the
+/// import status, and spawn the background pipeline. Used by both the legacy
+/// Tauri command and the Host SDK handler.
+pub(crate) fn queue_document_batch(
     app: AppHandle,
-    state: State<'_, AgentHostState>,
+    agent: &AgentHostState,
     request: StartDocumentBatchRequest,
 ) -> Result<ImportBatchStatus, String> {
     let batch = {
-        let mut host = state
+        let mut host = agent
             .0
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?;
         host.create_batch(&request.paths)?
     };
     let snapshot = {
-        let host = state
+        let host = agent
             .0
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?;
@@ -699,7 +721,7 @@ pub async fn start_document_batch(
     Ok(snapshot)
 }
 
-async fn run_document_batch(
+pub(crate) async fn run_document_batch(
     app: AppHandle,
     batch: ImportBatch,
     request: StartDocumentBatchRequest,

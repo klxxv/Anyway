@@ -1,7 +1,6 @@
 import type {
   AgentJobStatus,
   ImportBatchStatus,
-  StartPdfJobRequest,
 } from "../plugins/agent-contracts";
 import type { ProjectState } from "../lib/research-types";
 import { HostSdk } from "./host-sdk";
@@ -66,15 +65,14 @@ function getDesktopHostSdk(): HostSdk {
 
 /** 启动 PDF 处理 Job：调用 Rust 端完整管线（校验→提取→OCR→DocumentMap→语义→补丁→审阅）。 */
 export async function startPdfJob(pdfPath: string): Promise<AgentJobStatus> {
-  const { invoke } = await desktopModules();
-  const request: StartPdfJobRequest = { pdfPath };
-  return invoke<AgentJobStatus>("start_pdf_job", { request });
+  await desktopModules();
+  return getDesktopHostSdk().call<AgentJobStatus>("agent.job.start", { pdfPath });
 }
 
 /** Queue a document batch. The command returns before validation or parsing starts. */
 export async function startDocumentBatch(paths: string[]): Promise<ImportBatchStatus> {
-  const { invoke } = await desktopModules();
-  return invoke<ImportBatchStatus>("start_document_batch", { request: { paths } });
+  await desktopModules();
+  return getDesktopHostSdk().call<ImportBatchStatus>("agent.batch.start", { paths });
 }
 
 export async function getImportBatchStatus(batchId: string): Promise<ImportBatchStatus> {

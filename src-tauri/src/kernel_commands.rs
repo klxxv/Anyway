@@ -67,6 +67,8 @@ const AGENT_JOB_LIST_MAX_INFLIGHT: usize = 8;
 const AGENT_BATCH_STATUS_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_REVIEW_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_CANCEL_MAX_INFLIGHT: usize = 8;
+const AGENT_JOB_START_MAX_INFLIGHT: usize = 8;
+const AGENT_BATCH_START_MAX_INFLIGHT: usize = 8;
 const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_UPLOAD_TTL_MS: u64 = 60_000;
@@ -742,6 +744,20 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "agent.job.cancel",
         AGENT_JOB_CANCEL_MAX_INFLIGHT,
     )?;
+    register_operation(
+        &mut bus,
+        "agent.job.start",
+        RpcTarget::new("agent", "job.start"),
+        "agent.job.start",
+        AGENT_JOB_START_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "agent.batch.start",
+        RpcTarget::new("agent", "batch.start"),
+        "agent.batch.start",
+        AGENT_BATCH_START_MAX_INFLIGHT,
+    )?;
     let kernel = KernelState::with_bus(bus, 64);
     register_agent_worker(&kernel)?;
     register_example_service(&kernel)?;
@@ -1069,6 +1085,14 @@ async fn dispatch(
         "agent.batch.status" => dispatch_agent_batch_status(request, agent),
         "agent.job.review" => dispatch_agent_job_review(request, agent),
         "agent.job.cancel" => dispatch_agent_job_cancel(request, agent),
+        "agent.job.start" => {
+            let app = app.ok_or("agent.job.start requires an application handle")?;
+            dispatch_agent_job_start(request, app, agent).await
+        }
+        "agent.batch.start" => {
+            let app = app.ok_or("agent.batch.start requires an application handle")?;
+            dispatch_agent_batch_start(request, app, agent).await
+        }
         "blob.write" => dispatch_blob_write(request, blobs),
         "blob.read" => dispatch_blob_read(request, blobs),
         "service.register" => dispatch_service_register(request, services),
@@ -1265,6 +1289,28 @@ fn dispatch_agent_job_cancel(
         .ok_or_else(|| "Job vanished".to_string())?;
     serde_json::to_value(crate::agent_commands::PdfJobStatus::from(job))
         .map_err(|error| error.to_string())
+}
+
+async fn dispatch_agent_job_start(
+    request: &HostCallRequest,
+    app: AppHandle,
+    agent: &crate::agent_commands::AgentHostState,
+) -> Result<Value, String> {
+    let start_request = inline_request::<crate::agent_commands::StartPdfJobRequest>(request)
+        .or_else(|error| Err(format!("invalid agent.job.start request: {error}")))?;
+    let queued = crate::agent_commands::queue_pdf_job(app, agent, start_request)?;
+    serde_json::to_value(queued).map_err(|error| error.to_string())
+}
+
+async fn dispatch_agent_batch_start(
+    request: &HostCallRequest,
+    app: AppHandle,
+    agent: &crate::agent_commands::AgentHostState,
+) -> Result<Value, String> {
+    let start_request = inline_request::<crate::agent_commands::StartDocumentBatchRequest>(request)
+        .or_else(|error| Err(format!("invalid agent.batch.start request: {error}")))?;
+    let queued = crate::agent_commands::queue_document_batch(app, agent, start_request)?;
+    serde_json::to_value(queued).map_err(|error| error.to_string())
 }
 
 fn dispatch_workspace_folder_list(
@@ -2794,6 +2840,60 @@ mod tests {
             assert_eq!(descriptor.route().method(), method);
             assert_eq!(descriptor.required_capability().name(), operation);
         }
+    }
+
+    #[test]
+    fn default_kernel_state_registers_agent_start_routes() {
+        let state = create_kernel_state().expect("kernel state");
+        let bus = state.read().expect("bus read lock");
+        let expectations = [
+            ("agent.job.start", "agent", "job.start"),
+            ("agent.batch.start", "agent", "batch.start"),
+        ];
+        for (operation, service, method) in expectations {
+            let id = crate::kernel::bus::OperationId::new(operation).unwrap();
+            let descriptor = bus.operation(&id).expect("registered operation");
+            assert_eq!(descriptor.route().service(), service);
+            assert_eq!(descriptor.route().method(), method);
+            assert_eq!(descriptor.required_capability().name(), operation);
+        }
+    }
+
+    #[test]
+    fn agent_start_dtos_parse_minimal_payloads() {
+        let job_start_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "job-start-1",
+            "operation": "agent.job.start",
+            "payload": {
+                "kind": "inline",
+                "value": { "pdfPath": "/tmp/example.pdf" }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(job_start_request.validate(), Ok(()));
+        let job_start: crate::agent_commands::StartPdfJobRequest =
+            inline_request(&job_start_request).expect("agent job start DTO deserializes");
+        assert_eq!(job_start.pdf_path, "/tmp/example.pdf");
+        assert_eq!(job_start.settings, None);
+
+        let batch_start_request: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "batch-start-1",
+            "operation": "agent.batch.start",
+            "payload": {
+                "kind": "inline",
+                "value": { "paths": ["/tmp/a.pdf", "/tmp/b.pdf"] }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        assert_eq!(batch_start_request.validate(), Ok(()));
+        let batch_start: crate::agent_commands::StartDocumentBatchRequest =
+            inline_request(&batch_start_request).expect("agent batch start DTO deserializes");
+        assert_eq!(batch_start.paths, vec!["/tmp/a.pdf", "/tmp/b.pdf"]);
+        assert_eq!(batch_start.model, None);
     }
 
     #[test]
