@@ -80,6 +80,15 @@ This slice proves the common path without combining a new security boundary with
 | Unsigned packages can install | Provenance policy is implicit | Phase 7 |
 | Plugin UI is limited to existing host dialogs | No general safe UI contribution model | Phase 5 |
 
+### Resolved ledger entries
+
+| Entry | Resolution |
+| --- | --- |
+| Agent jobs use one global async mutex | ✅ Phase 4 — `kernel/scheduler.rs` per-principal quota + `AgentJobGate` (tokio semaphore backed by the kernel scheduler); two independent batches run concurrently within quota. |
+| Plugin UI is limited to existing host dialogs | ✅ Phase 5 slice — `PluginSlot` + host slot registry + `UiIrActionRequest` → Host SDK dispatch (`app/platform/ui-ir-dispatch.ts`); the renderer is wired but not yet mounted in the workspace shell. |
+
+Remaining entries (package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, manifest-grant separation) stay open for the AnMarket/install wiring and Blob data-path follow-ups.
+
 ## 🧪 Verification gates
 
 Every phase must pass:
