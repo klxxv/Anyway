@@ -99,8 +99,9 @@ This slice proves the common path without combining a new security boundary with
 | Async gateway + login/ssh-upload | ✅ Phase 8 — `kernel_host_call`/`dispatch` are now async (Tauri async contract via `Result`), and `login_github_account`/`upload_github_ssh_key` route through `workspace.github.login` / `workspace.github.ssh.upload`. |
 | Agent start | ✅ Phase 8 — `start_pdf_job` and `start_document_batch` now route through `agent.job.start` / `agent.batch.start` via shared `queue_pdf_job`/`queue_document_batch` helpers. |
 | Graph compile/diff + analysis run | ✅ Phase 8 — `compile_project`, `compute_diff`, and `execute_myc_plugin` now route through `graph.compile` / `graph.diff` / `plugin.analysis.run` (correcting an earlier under-count). |
+| Plugin connection test | ✅ Phase 8 — `test_plugin_connection` now routes through `plugin.connection.test` (async, secrets-bearing DTO). |
 
-Remaining entries are `test_plugin_connection` (async, secrets-bearing) and `save_plugin_artifact` (binary `Vec<u8>`, needs the Blob data path) — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
+Remaining entry is `save_plugin_artifact` (binary `Vec<u8>`, needs the Blob data path) — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
 
 ## 🧪 Verification gates
 
