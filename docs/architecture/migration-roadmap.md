@@ -91,8 +91,9 @@ This slice proves the common path without combining a new security boundary with
 | Workspace reads | ✅ Phase 8 — `list_folder_entries`, `read_git_workspace`, and `read_github_account` now route through `workspace.folder.list` / `workspace.git.read` / `workspace.github.read`; the DTOs drop the never-read `capability` field while the host re-checks each plugin's declared capability internally. |
 | Icon-theme + agent reads | ✅ Phase 8 — `read_icon_theme_asset`, `get_job_status`, `list_import_jobs`, and `get_import_batch_status` now route through `plugin.icon-theme.read` / `agent.job.status` / `agent.job.list` / `agent.batch.status`. The gateway now injects the managed `AgentHostState`, so State-backed handlers run behind Host Bus admission. |
 | Kernel audit ledger | ✅ Phase 8 — `kernel/audit.rs` adds a bounded (1024-event) ledger with a monotonic sequence; the gateway records `Denied` on authorization failure and `Completed`/`Failed` on dispatch outcome, persisting the validated `traceParent`. This satisfies the audit prerequisite for migrating state-changing routes. |
+| Settings write/reset | ✅ Phase 8 — `set_plugin_settings` / `reset_plugin_settings` now route through `plugin.settings.write` / `plugin.settings.reset`; first write commands migrated after the audit ledger landed. |
 
-Remaining entries are now the WRITE/state-changing command migrations (settings write/reset, install/uninstall, VSIX import, project save/import, workspace scan/init/login/ssh/autosave, agent start/review/cancel) — now unblocked by the audit ledger — plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
+Remaining entries are the remaining WRITE/state-changing command migrations (install/uninstall, VSIX import, project save/import, workspace scan/init/login/ssh/autosave, agent start/review/cancel) plus the package-discovery transaction, scoped `BlobRef` paths, unsigned-package provenance, streaming WASM, and manifest-grant separation.
 
 ## 🧪 Verification gates
 
