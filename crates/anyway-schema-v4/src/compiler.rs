@@ -15,11 +15,15 @@ use serde_json::json;
 
 use crate::bundle::{group_bundles, FiberTarget};
 use crate::canonicalize::ConceptCanonicalizer;
+use crate::consistency::{classify_conflict, conflict_check, ConflictClass};
 use crate::extract::ExtractionV3;
 use crate::fiber::{group_fibers, ChainProjection};
 use crate::hash::{hash_json, instance_hash, value_semantic_hash};
 use crate::intervention::compile_intervention;
-use crate::ir::{Block, BlockType, Bundle, CanvasIRV3, Chain, ConditioningEntry, Fiber, Operator};
+use crate::ir::{
+    Block, BlockType, Bundle, CanvasIRV3, Chain, ConditioningEntry, ConsistencyCheck, Fiber,
+    Operator,
+};
 use crate::state::{canonical_variable_value, resolve_state, StateValue};
 use crate::state_diff::diff_states;
 use crate::validator::ValidationReport;
@@ -112,6 +116,8 @@ impl Compiler {
 
         let fibers = self.compile_fibers(extraction, &chains, &operators);
         let bundles = self.compile_bundles(extraction, &chains, &operators, &fibers);
+        let consistency_checks =
+            self.compile_consistency_checks(extraction, &chains, &operators);
 
         if !report.ok() {
             return Err(report);
@@ -124,6 +130,7 @@ impl Compiler {
             chains,
             fibers,
             bundles,
+            consistency_checks,
             ..CanvasIRV3::default()
         })
     }
@@ -281,6 +288,58 @@ impl Compiler {
         targets.sort();
         targets.dedup();
         targets
+    }
+
+    /// Emit consistency checks (handoff-spec.md §54–§61).
+    ///
+    /// Chains targeting the same outcome concept but carrying different
+    /// conditioning are classified as contextual / axiomatic divergence. Path,
+    /// representation, branch, and abstraction metrics are available in
+    /// [`crate::consistency`] and are wired as their required values/operators
+    /// become available.
+    pub fn compile_consistency_checks(
+        &self,
+        extraction: &ExtractionV3,
+        chains: &[Chain],
+        operators: &[Operator],
+    ) -> Vec<ConsistencyCheck> {
+        let operator_by_id: HashMap<&str, &Operator> = operators
+            .iter()
+            .map(|operator| (operator.id.as_str(), operator))
+            .collect();
+
+        let mut target_to_chains: HashMap<String, Vec<&Chain>> = HashMap::new();
+        for chain in chains {
+            for target in self.chain_target_concepts(chain, &operator_by_id, extraction) {
+                target_to_chains.entry(target).or_default().push(chain);
+            }
+        }
+
+        let mut checks = Vec::new();
+        let mut index = 0usize;
+        for group in target_to_chains.values() {
+            for i in 0..group.len() {
+                for j in (i + 1)..group.len() {
+                    let a = group[i];
+                    let b = group[j];
+                    let classification = classify_conflict(
+                        a.context_ref.as_deref(),
+                        a.axiom_set_ref.as_deref(),
+                        b.context_ref.as_deref(),
+                        b.axiom_set_ref.as_deref(),
+                    );
+                    if classification != ConflictClass::InternalConflict {
+                        index += 1;
+                        checks.push(conflict_check(
+                            &format!("check_conflict_{index:03}"),
+                            &[a.id.clone(), b.id.clone()],
+                            classification,
+                        ));
+                    }
+                }
+            }
+        }
+        checks
     }
 
     /// Build every Block (handoff-spec.md §37, §38) with semantic and instance
@@ -962,6 +1021,69 @@ mod tests {
         let compiler = Compiler::new();
         let report = compiler.compile(&extraction).unwrap_err();
         assert!(report.errors.iter().any(|e| e.code == "OP-004"));
+    }
+
+    #[test]
+    fn diverging_contexts_on_a_shared_target_flag_conflict() {
+        let extraction: ExtractionV3 = serde_json::from_value(json!({
+            "schema_version": "myc.llm.v4",
+            "document": { "document_id": "doc", "source_type": "paper" },
+            "evidence": [{ "id": "ev_001", "document_id": "doc", "text_span": "t",
+                          "verification": { "status": "supported", "confidence": 0.9 } }],
+            "variables": [
+                { "id": "v_b1", "concept_id": "representation.fourier.enabled",
+                  "value_type": "bool", "observed": true, "value": false,
+                  "unit_raw": null, "expression_raw": null, "evidence_refs": ["ev_001"] },
+                { "id": "v_p1", "concept_id": "representation.fourier.enabled",
+                  "value_type": "bool", "observed": true, "value": true,
+                  "unit_raw": null, "expression_raw": null, "evidence_refs": ["ev_001"] },
+                { "id": "v_r1", "concept_id": "result.relative_l2_error",
+                  "value_type": "number", "observed": true, "value": 0.11,
+                  "unit_raw": null, "expression_raw": null, "evidence_refs": ["ev_001"] },
+                { "id": "v_b2", "concept_id": "representation.fourier.enabled",
+                  "value_type": "bool", "observed": true, "value": false,
+                  "unit_raw": null, "expression_raw": null, "evidence_refs": ["ev_001"] },
+                { "id": "v_p2", "concept_id": "representation.fourier.enabled",
+                  "value_type": "bool", "observed": true, "value": true,
+                  "unit_raw": null, "expression_raw": null, "evidence_refs": ["ev_001"] },
+                { "id": "v_r2", "concept_id": "result.relative_l2_error",
+                  "value_type": "number", "observed": true, "value": 0.02,
+                  "unit_raw": null, "expression_raw": null, "evidence_refs": ["ev_001"] }
+            ],
+            "contexts": [
+                { "id": "ctx_1", "variable_refs": [], "evidence_refs": [] },
+                { "id": "ctx_2", "variable_refs": [], "evidence_refs": [] }
+            ],
+            "axiom_sets": [],
+            "experiments": [
+                { "id": "exp_1", "context_ref": "ctx_1", "states": [
+                    { "id": "base_1", "role": "baseline", "variable_refs": ["v_b1"],
+                      "result_refs": ["v_r1"], "evidence_refs": ["ev_001"] },
+                    { "id": "prop_1", "role": "proposed", "variable_refs": ["v_p1"],
+                      "result_refs": ["v_r1"], "evidence_refs": ["ev_001"] }
+                ], "comparisons": [{ "from_state": "base_1", "to_state": "prop_1",
+                                     "evidence_refs": ["ev_001"] }], "evidence_refs": [] },
+                { "id": "exp_2", "context_ref": "ctx_2", "states": [
+                    { "id": "base_2", "role": "baseline", "variable_refs": ["v_b2"],
+                      "result_refs": ["v_r2"], "evidence_refs": ["ev_001"] },
+                    { "id": "prop_2", "role": "proposed", "variable_refs": ["v_p2"],
+                      "result_refs": ["v_r2"], "evidence_refs": ["ev_001"] }
+                ], "comparisons": [{ "from_state": "base_2", "to_state": "prop_2",
+                                     "evidence_refs": ["ev_001"] }], "evidence_refs": [] }
+            ],
+            "operator_candidates": [],
+            "abstraction_candidates": []
+        })).unwrap();
+
+        let compiler = Compiler::new();
+        let ir = compiler.compile(&extraction).unwrap();
+        assert!(!ir.consistency_checks.is_empty());
+        let conflict = ir
+            .consistency_checks
+            .iter()
+            .find(|check| check.check_type == crate::ir::CheckType::Conflict)
+            .expect("a conflict check");
+        assert_eq!(conflict.details["classification"], "contextual_divergence");
     }
 
     #[test]

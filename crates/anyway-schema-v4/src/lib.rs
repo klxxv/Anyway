@@ -13,6 +13,7 @@ pub mod bundle;
 pub mod canonicalize;
 pub mod chain;
 pub mod compiler;
+pub mod consistency;
 pub mod extract;
 pub mod fiber;
 pub mod hash;
