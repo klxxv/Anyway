@@ -14,6 +14,7 @@ pub mod extract;
 pub mod ir;
 pub mod reference;
 pub mod state;
+pub mod state_diff;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};

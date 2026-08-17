@@ -24,3 +24,4 @@ export * from "./canonicalize";
 export * from "./extract";
 export * from "./ir";
 export * from "./state";
+export * from "./state_diff";
