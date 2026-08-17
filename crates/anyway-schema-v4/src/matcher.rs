@@ -169,6 +169,31 @@ pub struct FactorialControl {
     pub assignments: BTreeMap<String, bool>,
 }
 
+/// Enumerate every Boolean configuration over the changed dimensions, in
+/// mask order (`0` = all baseline, `2^n - 1` = all proposed).
+pub fn enumerate_configurations(
+    changed_concepts: &[String],
+    baseline: &BTreeMap<String, bool>,
+    proposed: &BTreeMap<String, bool>,
+) -> Vec<BTreeMap<String, bool>> {
+    let n = changed_concepts.len();
+    let mut configurations = Vec::with_capacity(1usize << n);
+    for mask in 0usize..(1usize << n) {
+        let mut configuration = BTreeMap::new();
+        for (index, concept) in changed_concepts.iter().enumerate() {
+            let take_proposed = (mask >> index) & 1 == 1;
+            let value = if take_proposed {
+                proposed.get(concept).copied().unwrap_or(false)
+            } else {
+                baseline.get(concept).copied().unwrap_or(false)
+            };
+            configuration.insert(concept.clone(), value);
+        }
+        configurations.push(configuration);
+    }
+    configurations
+}
+
 /// Generate the missing factorial controls for a joint intervention
 /// (handoff-spec.md §53). Returns every `2^n - 2` intermediate Boolean
 /// configuration over the changed Boolean dimensions (excluding the pure
@@ -184,28 +209,23 @@ pub fn missing_factorial_controls(
         .filter(|bool_diff| bool_diff.delta != 0)
         .collect();
 
-    let n = changed.len();
-    let mut controls = Vec::new();
-    for mask in 0usize..(1usize << n) {
-        // Skip the all-baseline (0) and all-proposed (2^n - 1) corners.
-        if mask == 0 || mask == (1usize << n) - 1 {
-            continue;
-        }
-        let mut assignments = BTreeMap::new();
-        for (index, bool_diff) in changed.iter().enumerate() {
-            let take_proposed = (mask >> index) & 1 == 1;
-            assignments.insert(
-                bool_diff.concept_id.clone(),
-                if take_proposed {
-                    bool_diff.to
-                } else {
-                    bool_diff.from
-                },
-            );
-        }
-        controls.push(FactorialControl { assignments });
-    }
-    controls
+    let concepts: Vec<String> = changed.iter().map(|d| d.concept_id.clone()).collect();
+    let baseline: BTreeMap<String, bool> = changed
+        .iter()
+        .map(|d| (d.concept_id.clone(), d.from))
+        .collect();
+    let proposed: BTreeMap<String, bool> = changed
+        .iter()
+        .map(|d| (d.concept_id.clone(), d.to))
+        .collect();
+
+    let n = concepts.len();
+    enumerate_configurations(&concepts, &baseline, &proposed)
+        .into_iter()
+        .enumerate()
+        .filter(|(mask, _)| *mask != 0 && *mask != (1usize << n) - 1)
+        .map(|(_, assignments)| FactorialControl { assignments })
+        .collect()
 }
 
 fn structural_tokens(expression: &str) -> BTreeMap<String, usize> {
