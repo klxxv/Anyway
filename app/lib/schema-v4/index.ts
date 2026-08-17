@@ -33,3 +33,4 @@ export * from "./matcher";
 export * from "./q_validation";
 export * from "./state";
 export * from "./state_diff";
+export * from "./storage";

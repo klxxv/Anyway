@@ -25,6 +25,7 @@ pub mod q_validation;
 pub mod reference;
 pub mod state;
 pub mod state_diff;
+pub mod storage;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};
