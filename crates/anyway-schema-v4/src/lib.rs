@@ -13,6 +13,7 @@ pub mod canonicalize;
 pub mod chain;
 pub mod compiler;
 pub mod extract;
+pub mod fiber;
 pub mod hash;
 pub mod identifiability;
 pub mod intervention;

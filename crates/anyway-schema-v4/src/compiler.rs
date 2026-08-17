@@ -15,9 +15,10 @@ use serde_json::json;
 
 use crate::canonicalize::ConceptCanonicalizer;
 use crate::extract::ExtractionV3;
-use crate::hash::{hash_json, instance_hash};
+use crate::fiber::{group_fibers, ChainProjection};
+use crate::hash::{hash_json, instance_hash, value_semantic_hash};
 use crate::intervention::compile_intervention;
-use crate::ir::{Block, BlockType, CanvasIRV3, Operator};
+use crate::ir::{Block, BlockType, CanvasIRV3, ConditioningEntry, Fiber, Operator};
 use crate::state::{canonical_variable_value, resolve_state, StateValue};
 use crate::state_diff::diff_states;
 use crate::validator::ValidationReport;
@@ -108,6 +109,8 @@ impl Compiler {
         report.errors.extend(chain_report.errors);
         report.warnings.extend(chain_report.warnings);
 
+        let fibers = self.compile_fibers(extraction, &chains, &operators);
+
         if !report.ok() {
             return Err(report);
         }
@@ -117,8 +120,83 @@ impl Compiler {
             blocks,
             operators,
             chains,
+            fibers,
             ..CanvasIRV3::default()
         })
+    }
+
+    /// Group intervention chains into fibers (handoff-spec.md §46–§48).
+    pub fn compile_fibers(
+        &self,
+        extraction: &ExtractionV3,
+        chains: &[crate::ir::Chain],
+        operators: &[Operator],
+    ) -> Vec<Fiber> {
+        let operator_by_id: HashMap<&str, &Operator> = operators
+            .iter()
+            .map(|operator| (operator.id.as_str(), operator))
+            .collect();
+
+        let mut projections = Vec::new();
+        for chain in chains {
+            // A fiber groups chains around their joint intervention.
+            let Some(intervention) = chain
+                .operator_path
+                .iter()
+                .filter_map(|id| operator_by_id.get(id.as_str()))
+                .find(|operator| operator.operator == OperatorKind::I)
+            else {
+                continue;
+            };
+
+            let mut varying: Vec<String> = intervention
+                .payload
+                .get("changes")
+                .and_then(|changes| changes.as_array())
+                .map(|changes| {
+                    changes
+                        .iter()
+                        .filter_map(|change| change.get("concept_id").and_then(|c| c.as_str()))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            varying.sort();
+            varying.dedup();
+
+            // Conditioning = baseline state's held-constant dimensions.
+            let Some(baseline_state_id) = intervention
+                .input_refs
+                .first()
+                .and_then(|reference| reference.strip_prefix("block_state_"))
+            else {
+                continue;
+            };
+            let Some(raw_state) = find_raw_state(extraction, baseline_state_id) else {
+                continue;
+            };
+            let Ok(resolved) = resolve_state(raw_state, extraction, &self.canonicalizer) else {
+                continue;
+            };
+
+            let mut conditioning = Vec::new();
+            for (concept_id, entry) in &resolved.entries {
+                if !varying.contains(concept_id) {
+                    conditioning.push(ConditioningEntry {
+                        concept_id: concept_id.clone(),
+                        semantic_value_hash: value_semantic_hash(&entry.value),
+                    });
+                }
+            }
+
+            projections.push(ChainProjection {
+                chain_id: chain.id.clone(),
+                conditioning,
+                varying_concepts: varying,
+            });
+        }
+
+        group_fibers(&projections)
     }
 
     /// Build every Block (handoff-spec.md §37, §38) with semantic and instance
@@ -559,6 +637,17 @@ fn document_id(extraction: &ExtractionV3) -> &str {
         .unwrap_or("")
 }
 
+fn find_raw_state<'a>(
+    extraction: &'a ExtractionV3,
+    state_id: &str,
+) -> Option<&'a crate::extract::State> {
+    extraction
+        .experiments
+        .iter()
+        .flat_map(|experiment| experiment.states.iter())
+        .find(|state| state.id == state_id)
+}
+
 /// Sort and deduplicate the semantic hashes of member variables.
 fn sorted_semantic_members(
     variable_refs: &[String],
@@ -750,13 +839,19 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["concept_id"], "representation.fourier.enabled");
 
-        // The intervention compiles into a single chain.
+        // The intervention compiles into a single chain and a single fiber.
         assert_eq!(ir.chains.len(), 1);
         assert_eq!(
             ir.chains[0].block_path,
             vec!["block_state_state_base", "block_state_state_prop"]
         );
         assert_eq!(ir.chains[0].operator_path, vec!["op_I_state_base->state_prop"]);
+        assert_eq!(ir.fibers.len(), 1);
+        assert_eq!(
+            ir.fibers[0].varying_concepts,
+            vec!["representation.fourier.enabled"]
+        );
+        assert_eq!(ir.fibers[0].chain_refs, vec!["chain_001"]);
     }
 
     #[test]
