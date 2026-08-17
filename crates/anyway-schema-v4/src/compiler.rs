@@ -104,6 +104,10 @@ impl Compiler {
         report.errors.extend(operator_report.errors);
         report.warnings.extend(operator_report.warnings);
 
+        let (chains, chain_report) = crate::chain::build_chains(&blocks, &operators);
+        report.errors.extend(chain_report.errors);
+        report.warnings.extend(chain_report.warnings);
+
         if !report.ok() {
             return Err(report);
         }
@@ -112,6 +116,7 @@ impl Compiler {
             schema_version: crate::GRAPH_IR_SCHEMA_VERSION.to_string(),
             blocks,
             operators,
+            chains,
             ..CanvasIRV3::default()
         })
     }
@@ -744,6 +749,14 @@ mod tests {
         let changes = operator.payload["changes"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["concept_id"], "representation.fourier.enabled");
+
+        // The intervention compiles into a single chain.
+        assert_eq!(ir.chains.len(), 1);
+        assert_eq!(
+            ir.chains[0].block_path,
+            vec!["block_state_state_base", "block_state_state_prop"]
+        );
+        assert_eq!(ir.chains[0].operator_path, vec!["op_I_state_base->state_prop"]);
     }
 
     #[test]
