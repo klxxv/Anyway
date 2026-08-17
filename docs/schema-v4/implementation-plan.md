@@ -138,6 +138,30 @@ trait Storage {
 - **10 个测试夹具**（handoff §91–§100：explicit Bool / unknown / Number / Expression / joint intervention / missing control / branch refinement / context conflict / axiom conflict / Q candidate）。
 - 每步 commit 时：`cargo test` + 相关 TS 测试 + `vue-tsc` 保持绿。
 
+### 5.1 实施完成状态（16/16 + Storage）
+
+| # | 步骤 | commit | 落点 |
+|---|---|---|---|
+| 1 | 数据模型 | `e6e9f2c` | `extract.rs` / `ir.rs` |
+| 2 | JSON Schema 校验器 | `03028b9` | `validator.rs` |
+| 3 | evidence/reference 校验 | `cda2374` | `reference.rs` |
+| 4 | concept/unit/expression 规范化 | `30b3c20` | `canonicalize.rs` |
+| 5 | State 模型 | `fc533ef` | `state.rs` |
+| 6 | StateDiff | `0eb7b12` | `state_diff.rs` |
+| 7 | joint Intervention 编译器 | `614cce7` | `intervention.rs` |
+| 8 | Block/Operator IR | `23fdfbd` | `compiler.rs` + edge 收敛 |
+| 9 | semantic/instance 哈希 | `4b50ad9` | `hash.rs` |
+| 10 | historical matcher | `9780a4a` | `matcher.rs` |
+| 11 | identifiability 引擎（**里程碑**） | `e03697f` | `identifiability.rs` |
+| 12 | Chain builder | `24b0ef0` | `chain.rs` |
+| 13 | Fiber grouping | `db6d921` | `fiber.rs` |
+| 14 | Bundle grouping | `3d19ac6` | `bundle.rs` |
+| 15 | consistency checks | `6b81f53` | `consistency.rs` |
+| 16 | Q candidate 校验 | `50e85d7` | `q_validation.rs` |
+| — | 存储抽象 + data host bus | `1383829` | `storage.rs` |
+
+当前验收：`cargo test`（85 用例）绿；`tests/schema-v4.test.ts`（6 用例）绿；`vue-tsc` 干净。
+
 ---
 
 ## 6. 首个里程碑与后续
