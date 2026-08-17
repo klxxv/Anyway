@@ -1,0 +1,11 @@
+[package]
+name = "anyway-schema-v4"
+version = "0.1.0"
+edition = "2021"
+description = "Anyway Schema v4 scientific computation data models: myc.llm.v4 LLM extraction and myc.graph-ir.v4 canvas IR"
+license = "AGPL-3.0"
+authors = ["Research Canvas Contributors"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
