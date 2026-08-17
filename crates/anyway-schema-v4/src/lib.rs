@@ -13,6 +13,7 @@ pub mod canonicalize;
 pub mod extract;
 pub mod ir;
 pub mod reference;
+pub mod state;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};
