@@ -54,7 +54,8 @@ impl ValidationReport {
         }));
     }
 
-    fn error(&mut self, code: &str, path: &str, message: impl Into<String>) {
+    /// Append a structural/validation error with a stable code and JSON path.
+    pub fn error(&mut self, code: &str, path: &str, message: impl Into<String>) {
         self.errors.push(ValidationError {
             code: code.to_string(),
             path: path.to_string(),
