@@ -92,6 +92,16 @@ pub fn validate_extraction(extraction: &ExtractionV3) -> ValidationReport {
     for (index, variable) in extraction.variables.iter().enumerate() {
         validate_variable(variable, index, &mut report);
     }
+    for (index, candidate) in extraction.abstraction_candidates.iter().enumerate() {
+        // Q-001: an LLM abstraction is always a candidate (handoff-spec.md §33).
+        if candidate.status != "candidate" {
+            report.error(
+                "Q-001",
+                &format!("$.abstraction_candidates[{index}].status"),
+                "an LLM abstraction must be a candidate, never validated or accepted",
+            );
+        }
+    }
 
     report
 }

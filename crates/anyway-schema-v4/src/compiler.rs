@@ -24,6 +24,7 @@ use crate::ir::{
     Block, BlockType, Bundle, CanvasIRV3, Chain, ConditioningEntry, ConsistencyCheck, Fiber,
     Operator,
 };
+use crate::q_validation::{compression_metric, validate_q, QCandidateMetrics, QThresholds};
 use crate::state::{canonical_variable_value, resolve_state, StateValue};
 use crate::state_diff::diff_states;
 use crate::validator::ValidationReport;
@@ -116,8 +117,12 @@ impl Compiler {
 
         let fibers = self.compile_fibers(extraction, &chains, &operators);
         let bundles = self.compile_bundles(extraction, &chains, &operators, &fibers);
-        let consistency_checks =
+        let mut consistency_checks =
             self.compile_consistency_checks(extraction, &chains, &operators);
+        let (q_checks, q_report) = self.compile_q_validation(extraction);
+        report.errors.extend(q_report.errors);
+        report.warnings.extend(q_report.warnings);
+        consistency_checks.extend(q_checks);
 
         if !report.ok() {
             return Err(report);
@@ -340,6 +345,45 @@ impl Compiler {
             }
         }
         checks
+    }
+
+    /// Evaluate and store Q candidate metrics as `abstraction` checks
+    /// (handoff-spec.md §34). Measurements are stored, never auto-promoted.
+    pub fn compile_q_validation(
+        &self,
+        extraction: &ExtractionV3,
+    ) -> (Vec<ConsistencyCheck>, ValidationReport) {
+        let mut report = ValidationReport::default();
+        let mut checks = Vec::new();
+        let thresholds = QThresholds::default();
+
+        for candidate in &extraction.abstraction_candidates {
+            let metrics = QCandidateMetrics {
+                compression: compression_metric(candidate.input_concept_ids.len()),
+                ..QCandidateMetrics::default()
+            };
+            match validate_q(candidate, metrics, &thresholds) {
+                Ok(result) => {
+                    let details = serde_json::to_value(&result).unwrap_or_default();
+                    checks.push(ConsistencyCheck {
+                        id: format!("check_abstraction_{}", candidate.id),
+                        check_type: crate::ir::CheckType::Abstraction,
+                        input_refs: vec![concept_block_id(&candidate.id)],
+                        metric: Some("q_candidate_metrics".to_string()),
+                        value: Some(result.metrics.compression),
+                        threshold: Some(thresholds.compression),
+                        status: result.status,
+                        details,
+                    });
+                }
+                Err(mut candidate_report) => {
+                    report.errors.append(&mut candidate_report.errors);
+                    report.warnings.append(&mut candidate_report.warnings);
+                }
+            }
+        }
+
+        (checks, report)
     }
 
     /// Build every Block (handoff-spec.md §37, §38) with semantic and instance

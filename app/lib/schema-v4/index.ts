@@ -30,5 +30,6 @@ export * from "./identifiability";
 export * from "./intervention";
 export * from "./ir";
 export * from "./matcher";
+export * from "./q_validation";
 export * from "./state";
 export * from "./state_diff";

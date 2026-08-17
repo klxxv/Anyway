@@ -21,6 +21,7 @@ pub mod identifiability;
 pub mod intervention;
 pub mod ir;
 pub mod matcher;
+pub mod q_validation;
 pub mod reference;
 pub mod state;
 pub mod state_diff;
