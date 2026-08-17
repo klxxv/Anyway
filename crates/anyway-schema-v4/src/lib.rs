@@ -10,6 +10,7 @@
 //! storage, model providers, and graph engines may change behind them.
 
 pub mod canonicalize;
+pub mod compiler;
 pub mod extract;
 pub mod intervention;
 pub mod ir;

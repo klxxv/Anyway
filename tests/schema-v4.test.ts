@@ -4,6 +4,7 @@ import {
   GRAPH_IR_SCHEMA_VERSION,
   LLM_SCHEMA_VERSION,
   OPERATOR_KINDS,
+  convergeEdge,
   type ExtractionV3,
   type CanvasIRV3,
   type OperatorKind,
@@ -84,4 +85,25 @@ test("ir root accepts a minimal compiled graph", () => {
 test("primitive type union is exactly three members", () => {
   const primitives: PrimitiveType[] = ["bool", "number", "expression"];
   assert.equal(primitives.length, 3);
+});
+
+test("legacy 12-edge set converges onto the five-operator basis", () => {
+  const expected: Record<string, ReturnType<typeof convergeEdge>> = {
+    causes: { kind: "kernel", requires_intervention: true },
+    correlates: { kind: "kernel", requires_intervention: false },
+    supports: { kind: "evidence" },
+    contradicts: { kind: "evidence" },
+    depends_on: { kind: "transform" },
+    derived_from: { kind: "transform" },
+    part_of: { kind: "marginalize" },
+    controls: { kind: "kernel", requires_intervention: true },
+    mediates: { kind: "kernel", requires_intervention: false },
+    moderates: { kind: "kernel", requires_intervention: false },
+    uses: { kind: "transform" },
+    measures: { kind: "transform" },
+  };
+  for (const [edge, convergence] of Object.entries(expected)) {
+    assert.deepEqual(convergeEdge(edge), convergence, `edge: ${edge}`);
+  }
+  assert.equal(convergeEdge("unknown_edge"), null);
 });
