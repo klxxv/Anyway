@@ -124,7 +124,7 @@ pub fn resolve_state(
             continue;
         };
 
-        let Some(value) = resolve_value(variable, raw, &mut report) else {
+        let Some(value) = resolve_value(variable, &format!("$.states[{:?}]", raw.id), &mut report) else {
             continue;
         };
 
@@ -173,11 +173,21 @@ pub fn resolve_state(
     }
 }
 
+/// Convert one variable into its canonical [`StateValue`], independent of any
+/// state, for use by the compiler and the hashing layer.
+pub fn canonical_variable_value(variable: &Variable) -> Result<StateValue, ValidationReport> {
+    let mut report = ValidationReport::default();
+    match resolve_value(variable, &format!("$.variables[{}]", variable.id), &mut report) {
+        Some(value) => Ok(value),
+        None => Err(report),
+    }
+}
+
 /// Convert one variable into its canonical [`StateValue`], pushing any
 /// type-violation error (STATE-001) onto `report`.
 fn resolve_value(
     variable: &Variable,
-    raw: &extract::State,
+    path: &str,
     report: &mut ValidationReport,
 ) -> Option<StateValue> {
     match variable.value_type {
@@ -186,7 +196,7 @@ fn resolve_value(
             None => {
                 report.error(
                     "STATE-001",
-                    &format!("$.states[{:?}].variable_refs", raw.id),
+                    path,
                     format!(
                         "variable {} declares bool but carries non-bool value",
                         variable.id
@@ -203,7 +213,7 @@ fn resolve_value(
             None => {
                 report.error(
                     "STATE-001",
-                    &format!("$.states[{:?}].variable_refs", raw.id),
+                    path,
                     format!(
                         "variable {} declares number but carries non-number value",
                         variable.id
@@ -220,7 +230,7 @@ fn resolve_value(
             None => {
                 report.error(
                     "STATE-001",
-                    &format!("$.states[{:?}].variable_refs", raw.id),
+                    path,
                     format!(
                         "variable {} declares expression but carries no expression_raw",
                         variable.id

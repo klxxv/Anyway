@@ -1,9 +1,9 @@
-//! Deterministic compiler: ExtractionV3 → CanvasIRV3 (Step 8 of 16).
+//! Deterministic compiler: ExtractionV3 → CanvasIRV3 (Steps 8–9 of 16).
 //!
-//! This step builds the Block and Operator IR and pins the legacy-edge →
-//! operator convergence (implementation-plan.md §2.3). The LLM extracts
-//! semantics; this compiler decides computation. Blocks carry empty hash
-//! strings until Step 9 (hashing) fills them.
+//! This module builds the Block and Operator IR, pins the legacy-edge →
+//! operator convergence (implementation-plan.md §2.3), and fills semantic /
+//! instance hashes (handoff-spec.md §39, §40). The LLM extracts semantics;
+//! this compiler decides computation.
 //!
 //! Hard invariants enforced here: OP-001..OP-006 (handoff-spec.md §42) and
 //! V3-04..V3-07.
@@ -15,9 +15,10 @@ use serde_json::json;
 
 use crate::canonicalize::ConceptCanonicalizer;
 use crate::extract::ExtractionV3;
+use crate::hash::{hash_json, instance_hash};
 use crate::intervention::compile_intervention;
 use crate::ir::{Block, BlockType, CanvasIRV3, Operator};
-use crate::state::resolve_state;
+use crate::state::{canonical_variable_value, resolve_state, StateValue};
 use crate::state_diff::diff_states;
 use crate::validator::ValidationReport;
 use crate::OperatorKind;
@@ -115,10 +116,12 @@ impl Compiler {
         })
     }
 
-    /// Build every Block (handoff-spec.md §37, §38).
+    /// Build every Block (handoff-spec.md §37, §38) with semantic and instance
+    /// hashes filled (handoff-spec.md §39, §40).
     pub fn compile_blocks(&self, extraction: &ExtractionV3) -> (Vec<Block>, ValidationReport) {
-        let report = ValidationReport::default();
+        let mut report = ValidationReport::default();
         let mut blocks = Vec::new();
+        let document_id = document_id(extraction);
 
         // Result variables become `result` blocks; every other variable is a
         // `variable` block. Classification is driven by state `result_refs`.
@@ -130,13 +133,39 @@ impl Compiler {
             .map(String::as_str)
             .collect();
 
+        let mut variable_semantic: HashMap<String, String> = HashMap::new();
+
         for variable in &extraction.variables {
+            let Ok(value) = canonical_variable_value(variable) else {
+                // The value violates its declared primitive type; report and
+                // skip (compile() will reject the whole document).
+                let mut value_report = ValidationReport::default();
+                value_report.error(
+                    "STATE-001",
+                    &format!("$.variables[{}]", variable.id),
+                    format!("variable {} has an invalid value", variable.id),
+                );
+                report.errors.extend(value_report.errors);
+                continue;
+            };
+
             let canonical = self.canonicalizer.canonicalize(&variable.concept_id);
             let (id, block_type) = if result_ids.contains(variable.id.as_str()) {
                 (result_block_id(&variable.id), BlockType::Outcome)
             } else {
                 (variable_block_id(&variable.id), BlockType::Variable)
             };
+            let (semantic_hash, instance_hash) = block_hashes(
+                &block_type,
+                Some(&canonical.canonical_concept_id),
+                Some(&value),
+                None,
+                None,
+                &[],
+                document_id,
+                &variable.evidence_refs,
+            );
+            variable_semantic.insert(variable.id.clone(), semantic_hash.clone());
             blocks.push(Block {
                 id,
                 block_type,
@@ -145,13 +174,24 @@ impl Compiler {
                 member_refs: Vec::new(),
                 context_ref: None,
                 axiom_set_ref: None,
-                semantic_hash: String::new(),
-                instance_hash: String::new(),
+                semantic_hash,
+                instance_hash,
             });
         }
 
         for experiment in &extraction.experiments {
             for state in &experiment.states {
+                let member_hashes = sorted_semantic_members(&state.variable_refs, &variable_semantic);
+                let (semantic_hash, instance_hash) = block_hashes(
+                    &BlockType::State,
+                    None,
+                    None,
+                    experiment.context_ref.as_deref(),
+                    experiment.axiom_set_ref.as_deref(),
+                    &member_hashes,
+                    document_id,
+                    &state.evidence_refs,
+                );
                 blocks.push(Block {
                     id: state_block_id(&state.id),
                     block_type: BlockType::State,
@@ -164,13 +204,25 @@ impl Compiler {
                         .collect(),
                     context_ref: experiment.context_ref.clone(),
                     axiom_set_ref: experiment.axiom_set_ref.clone(),
-                    semantic_hash: String::new(),
-                    instance_hash: String::new(),
+                    semantic_hash,
+                    instance_hash,
                 });
             }
         }
 
         for axiom_set in &extraction.axiom_sets {
+            let member_hashes =
+                sorted_semantic_members(&axiom_set.constraint_refs, &variable_semantic);
+            let (semantic_hash, instance_hash) = block_hashes(
+                &BlockType::Axiom,
+                None,
+                None,
+                None,
+                None,
+                &member_hashes,
+                document_id,
+                &axiom_set.evidence_refs,
+            );
             blocks.push(Block {
                 id: axiom_block_id(&axiom_set.id),
                 block_type: BlockType::Axiom,
@@ -183,13 +235,26 @@ impl Compiler {
                     .collect(),
                 context_ref: None,
                 axiom_set_ref: None,
-                semantic_hash: String::new(),
-                instance_hash: String::new(),
+                semantic_hash,
+                instance_hash,
             });
         }
 
         for candidate in &extraction.abstraction_candidates {
             let canonical = self.canonicalizer.canonicalize(&candidate.proposed_concept_id);
+            let mut member_concepts: Vec<String> = candidate.input_concept_ids.clone();
+            member_concepts.sort();
+            member_concepts.dedup();
+            let (semantic_hash, instance_hash) = block_hashes(
+                &BlockType::Concept,
+                Some(&canonical.canonical_concept_id),
+                None,
+                None,
+                None,
+                &member_concepts,
+                document_id,
+                &candidate.rationale_evidence_refs,
+            );
             blocks.push(Block {
                 id: concept_block_id(&candidate.id),
                 block_type: BlockType::Concept,
@@ -198,8 +263,8 @@ impl Compiler {
                 member_refs: candidate.input_concept_ids.clone(),
                 context_ref: None,
                 axiom_set_ref: None,
-                semantic_hash: String::new(),
-                instance_hash: String::new(),
+                semantic_hash,
+                instance_hash,
             });
         }
 
@@ -220,6 +285,10 @@ impl Compiler {
         let mut operators = Vec::new();
 
         let block_ids: HashSet<&str> = blocks.iter().map(|block| block.id.as_str()).collect();
+        let block_semantic: HashMap<&str, &str> = blocks
+            .iter()
+            .map(|block| (block.id.as_str(), block.semantic_hash.as_str()))
+            .collect();
         let variable_to_block: HashMap<&str, String> = extraction
             .variables
             .iter()
@@ -227,14 +296,17 @@ impl Compiler {
             .collect();
         let context_ids: HashSet<&str> = extraction.contexts.iter().map(|c| c.id.as_str()).collect();
         let axiom_ids: HashSet<&str> = extraction.axiom_sets.iter().map(|a| a.id.as_str()).collect();
+        let document_id = document_id(extraction);
 
         for candidate in &extraction.operator_candidates {
             if let Some(operator) = self.build_candidate_operator(
                 candidate,
                 &variable_to_block,
                 &block_ids,
+                &block_semantic,
                 &context_ids,
                 &axiom_ids,
+                document_id,
                 &mut report,
             ) {
                 operators.push(operator);
@@ -245,8 +317,10 @@ impl Compiler {
             self.build_intervention_operators(
                 experiment,
                 extraction,
+                &block_semantic,
                 &context_ids,
                 &axiom_ids,
+                document_id,
                 &mut operators,
                 &mut report,
             );
@@ -261,8 +335,10 @@ impl Compiler {
         candidate: &crate::extract::OperatorCandidate,
         variable_to_block: &HashMap<&str, String>,
         block_ids: &HashSet<&str>,
+        block_semantic: &HashMap<&str, &str>,
         context_ids: &HashSet<&str>,
         axiom_ids: &HashSet<&str>,
+        document_id: &str,
         report: &mut ValidationReport,
     ) -> Option<Operator> {
         let path = format!("$.operator_candidates[{}]", candidate.id);
@@ -319,6 +395,18 @@ impl Compiler {
             }
         }
 
+        let (semantic_hash, instance_hash) = operator_hashes(
+            candidate.operator,
+            &input_refs,
+            &output_refs,
+            &candidate.payload,
+            candidate.context_ref.as_deref(),
+            candidate.axiom_set_ref.as_deref(),
+            block_semantic,
+            document_id,
+            &candidate.evidence_refs,
+        );
+
         Some(Operator {
             id: candidate.id.clone(),
             operator: candidate.operator,
@@ -328,8 +416,8 @@ impl Compiler {
             context_ref: candidate.context_ref.clone(),
             axiom_set_ref: candidate.axiom_set_ref.clone(),
             evidence_refs: candidate.evidence_refs.clone(),
-            semantic_hash: String::new(),
-            instance_hash: String::new(),
+            semantic_hash,
+            instance_hash,
         })
     }
 
@@ -337,8 +425,10 @@ impl Compiler {
         &self,
         experiment: &crate::extract::Experiment,
         extraction: &ExtractionV3,
+        block_semantic: &HashMap<&str, &str>,
         context_ids: &HashSet<&str>,
         axiom_ids: &HashSet<&str>,
+        document_id: &str,
         operators: &mut Vec<Operator>,
         report: &mut ValidationReport,
     ) {
@@ -408,17 +498,32 @@ impl Compiler {
                 continue;
             };
 
+            let input_refs = vec![state_block_id(&comparison.from_state)];
+            let output_refs = vec![state_block_id(&comparison.to_state)];
+            let payload = json!({ "changes": intervention.changes });
+            let (semantic_hash, instance_hash) = operator_hashes(
+                OperatorKind::I,
+                &input_refs,
+                &output_refs,
+                &payload,
+                experiment.context_ref.as_deref(),
+                experiment.axiom_set_ref.as_deref(),
+                block_semantic,
+                document_id,
+                &comparison.evidence_refs,
+            );
+
             operators.push(Operator {
                 id: intervention.id,
                 operator: OperatorKind::I,
-                input_refs: vec![state_block_id(&comparison.from_state)],
-                output_refs: vec![state_block_id(&comparison.to_state)],
-                payload: json!({ "changes": intervention.changes }),
+                input_refs,
+                output_refs,
+                payload,
                 context_ref: experiment.context_ref.clone(),
                 axiom_set_ref: experiment.axiom_set_ref.clone(),
                 evidence_refs: comparison.evidence_refs.clone(),
-                semantic_hash: String::new(),
-                instance_hash: String::new(),
+                semantic_hash,
+                instance_hash,
             });
         }
     }
@@ -439,6 +544,97 @@ fn resolve_ref(
         return Some(reference.to_string());
     }
     None
+}
+
+fn document_id(extraction: &ExtractionV3) -> &str {
+    extraction
+        .document
+        .as_ref()
+        .map(|document| document.document_id.as_str())
+        .unwrap_or("")
+}
+
+/// Sort and deduplicate the semantic hashes of member variables.
+fn sorted_semantic_members(
+    variable_refs: &[String],
+    variable_semantic: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut members: Vec<String> = variable_refs
+        .iter()
+        .map(|variable_ref| {
+            variable_semantic
+                .get(variable_ref)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect();
+    members.sort();
+    members.dedup();
+    members
+}
+
+/// Compute `(semantic_hash, instance_hash)` for a block.
+#[allow(clippy::too_many_arguments)]
+fn block_hashes(
+    block_type: &BlockType,
+    concept_id: Option<&str>,
+    value: Option<&StateValue>,
+    context_ref: Option<&str>,
+    axiom_set_ref: Option<&str>,
+    members: &[String],
+    document_id: &str,
+    evidence_refs: &[String],
+) -> (String, String) {
+    let semantic = hash_json(&json!({
+        "block_type": block_type,
+        "concept_id": concept_id,
+        "value": value,
+        "context_ref": context_ref,
+        "axiom_set_ref": axiom_set_ref,
+        "members": members,
+    }));
+    let instance = instance_hash(&semantic, document_id, evidence_refs);
+    (semantic, instance)
+}
+
+/// Compute `(semantic_hash, instance_hash)` for an operator. Input/output
+/// references are folded through their block semantic hashes so the operator
+/// hash is provenance-independent.
+#[allow(clippy::too_many_arguments)]
+fn operator_hashes(
+    operator: OperatorKind,
+    input_refs: &[String],
+    output_refs: &[String],
+    payload: &serde_json::Value,
+    context_ref: Option<&str>,
+    axiom_set_ref: Option<&str>,
+    block_semantic: &HashMap<&str, &str>,
+    document_id: &str,
+    evidence_refs: &[String],
+) -> (String, String) {
+    let mut input_hashes: Vec<&str> = input_refs
+        .iter()
+        .map(|reference| block_semantic.get(reference.as_str()).copied().unwrap_or(""))
+        .collect();
+    input_hashes.sort_unstable();
+    input_hashes.dedup();
+    let mut output_hashes: Vec<&str> = output_refs
+        .iter()
+        .map(|reference| block_semantic.get(reference.as_str()).copied().unwrap_or(""))
+        .collect();
+    output_hashes.sort_unstable();
+    output_hashes.dedup();
+
+    let semantic = hash_json(&json!({
+        "operator": operator,
+        "input_hashes": input_hashes,
+        "output_hashes": output_hashes,
+        "payload": payload,
+        "context_ref": context_ref,
+        "axiom_set_ref": axiom_set_ref,
+    }));
+    let instance = instance_hash(&semantic, document_id, evidence_refs);
+    (semantic, instance)
 }
 
 #[cfg(test)]
@@ -572,5 +768,46 @@ mod tests {
         let compiler = Compiler::new();
         let report = compiler.compile(&extraction).unwrap_err();
         assert!(report.errors.iter().any(|e| e.code == "OP-004"));
+    }
+
+    #[test]
+    fn hashes_are_filled_deterministic_and_provenance_aware() {
+        let doc_a: ExtractionV3 = serde_json::from_value(json!({
+            "schema_version": "myc.llm.v4",
+            "document": { "document_id": "doc_a", "source_type": "paper" },
+            "evidence": [{ "id": "ev_001", "document_id": "doc_a", "text_span": "t",
+                          "verification": { "status": "supported", "confidence": 0.9 } }],
+            "variables": [{ "id": "v", "concept_id": "representation.fourier.enabled",
+                            "value_type": "bool", "observed": true, "value": true,
+                            "unit_raw": null, "expression_raw": null,
+                            "evidence_refs": ["ev_001"] }],
+            "contexts": [], "axiom_sets": [], "experiments": [],
+            "operator_candidates": [], "abstraction_candidates": []
+        })).unwrap();
+        let mut doc_b = doc_a.clone();
+        doc_b.document.as_mut().unwrap().document_id = "doc_b".to_string();
+
+        let compiler = Compiler::new();
+        let ir_a = compiler.compile(&doc_a).unwrap();
+        let ir_a_again = compiler.compile(&doc_a).unwrap();
+
+        assert!(!ir_a.blocks[0].semantic_hash.is_empty());
+        assert!(!ir_a.blocks[0].instance_hash.is_empty());
+        assert!(ir_a.blocks[0].semantic_hash.starts_with("sha256:"));
+
+        // Determinism (V3-20): identical extraction → identical IR hashes.
+        assert_eq!(
+            ir_a.blocks[0].semantic_hash,
+            ir_a_again.blocks[0].semantic_hash
+        );
+        assert_eq!(
+            ir_a.blocks[0].instance_hash,
+            ir_a_again.blocks[0].instance_hash
+        );
+
+        // Semantic hash ignores provenance; instance hash includes document id.
+        let ir_b = compiler.compile(&doc_b).unwrap();
+        assert_eq!(ir_a.blocks[0].semantic_hash, ir_b.blocks[0].semantic_hash);
+        assert_ne!(ir_a.blocks[0].instance_hash, ir_b.blocks[0].instance_hash);
     }
 }

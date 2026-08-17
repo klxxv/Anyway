@@ -12,6 +12,7 @@
 pub mod canonicalize;
 pub mod compiler;
 pub mod extract;
+pub mod hash;
 pub mod intervention;
 pub mod ir;
 pub mod reference;
