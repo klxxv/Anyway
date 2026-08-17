@@ -13,12 +13,13 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::bundle::{group_bundles, FiberTarget};
 use crate::canonicalize::ConceptCanonicalizer;
 use crate::extract::ExtractionV3;
 use crate::fiber::{group_fibers, ChainProjection};
 use crate::hash::{hash_json, instance_hash, value_semantic_hash};
 use crate::intervention::compile_intervention;
-use crate::ir::{Block, BlockType, CanvasIRV3, ConditioningEntry, Fiber, Operator};
+use crate::ir::{Block, BlockType, Bundle, CanvasIRV3, Chain, ConditioningEntry, Fiber, Operator};
 use crate::state::{canonical_variable_value, resolve_state, StateValue};
 use crate::state_diff::diff_states;
 use crate::validator::ValidationReport;
@@ -110,6 +111,7 @@ impl Compiler {
         report.warnings.extend(chain_report.warnings);
 
         let fibers = self.compile_fibers(extraction, &chains, &operators);
+        let bundles = self.compile_bundles(extraction, &chains, &operators, &fibers);
 
         if !report.ok() {
             return Err(report);
@@ -121,6 +123,7 @@ impl Compiler {
             operators,
             chains,
             fibers,
+            bundles,
             ..CanvasIRV3::default()
         })
     }
@@ -197,6 +200,87 @@ impl Compiler {
         }
 
         group_fibers(&projections)
+    }
+
+    /// Group fibers into bundles by target outcome (handoff-spec.md §49).
+    pub fn compile_bundles(
+        &self,
+        extraction: &ExtractionV3,
+        chains: &[Chain],
+        operators: &[Operator],
+        fibers: &[Fiber],
+    ) -> Vec<Bundle> {
+        let operator_by_id: HashMap<&str, &Operator> = operators
+            .iter()
+            .map(|operator| (operator.id.as_str(), operator))
+            .collect();
+        let chain_by_id: HashMap<&str, &Chain> = chains
+            .iter()
+            .map(|chain| (chain.id.as_str(), chain))
+            .collect();
+
+        let mut fiber_targets = Vec::new();
+        for fiber in fibers {
+            let mut targets = Vec::new();
+            if let Some(first_chain) = fiber
+                .chain_refs
+                .first()
+                .and_then(|id| chain_by_id.get(id.as_str()))
+            {
+                targets = self.chain_target_concepts(first_chain, &operator_by_id, extraction);
+            }
+            fiber_targets.push(FiberTarget {
+                fiber_id: fiber.id.clone(),
+                target_concepts: targets,
+            });
+        }
+
+        group_bundles(&fiber_targets, fibers)
+    }
+
+    fn chain_target_concepts(
+        &self,
+        chain: &Chain,
+        operator_by_id: &HashMap<&str, &Operator>,
+        extraction: &ExtractionV3,
+    ) -> Vec<String> {
+        let Some(intervention) = chain
+            .operator_path
+            .iter()
+            .filter_map(|id| operator_by_id.get(id.as_str()))
+            .find(|operator| operator.operator == OperatorKind::I)
+        else {
+            return Vec::new();
+        };
+        let Some(baseline_state_id) = intervention
+            .input_refs
+            .first()
+            .and_then(|reference| reference.strip_prefix("block_state_"))
+        else {
+            return Vec::new();
+        };
+        let Some(raw_state) = find_raw_state(extraction, baseline_state_id) else {
+            return Vec::new();
+        };
+
+        let mut targets: Vec<String> = raw_state
+            .result_refs
+            .iter()
+            .filter_map(|result_ref| {
+                extraction
+                    .variables
+                    .iter()
+                    .find(|variable| variable.id == *result_ref)
+            })
+            .map(|variable| {
+                self.canonicalizer
+                    .canonicalize(&variable.concept_id)
+                    .canonical_concept_id
+            })
+            .collect();
+        targets.sort();
+        targets.dedup();
+        targets
     }
 
     /// Build every Block (handoff-spec.md §37, §38) with semantic and instance
@@ -852,6 +936,8 @@ mod tests {
             vec!["representation.fourier.enabled"]
         );
         assert_eq!(ir.fibers[0].chain_refs, vec!["chain_001"]);
+        assert_eq!(ir.bundles.len(), 1);
+        assert_eq!(ir.bundles[0].fiber_refs, vec!["fiber_001"]);
     }
 
     #[test]

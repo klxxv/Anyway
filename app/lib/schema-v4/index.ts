@@ -20,6 +20,7 @@ export const OPERATOR_KINDS: readonly OperatorKind[] = ["T", "K", "I", "M", "Q"]
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
+export * from "./bundle";
 export * from "./canonicalize";
 export * from "./compiler";
 export * from "./extract";

@@ -9,6 +9,7 @@
 //! constructs computation.** These types are the stable cross-module contract;
 //! storage, model providers, and graph engines may change behind them.
 
+pub mod bundle;
 pub mod canonicalize;
 pub mod chain;
 pub mod compiler;
