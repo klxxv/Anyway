@@ -25,5 +25,6 @@ export * from "./compiler";
 export * from "./extract";
 export * from "./intervention";
 export * from "./ir";
+export * from "./matcher";
 export * from "./state";
 export * from "./state_diff";

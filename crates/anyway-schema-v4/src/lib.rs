@@ -15,6 +15,7 @@ pub mod extract;
 pub mod hash;
 pub mod intervention;
 pub mod ir;
+pub mod matcher;
 pub mod reference;
 pub mod state;
 pub mod state_diff;
