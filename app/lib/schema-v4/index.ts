@@ -22,6 +22,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 
 export * from "./canonicalize";
 export * from "./extract";
+export * from "./intervention";
 export * from "./ir";
 export * from "./state";
 export * from "./state_diff";

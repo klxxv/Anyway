@@ -11,6 +11,7 @@
 
 pub mod canonicalize;
 pub mod extract;
+pub mod intervention;
 pub mod ir;
 pub mod reference;
 pub mod state;
