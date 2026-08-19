@@ -1116,6 +1116,7 @@ pub async fn kernel_host_call(
         kernel.audit(),
         &policy,
         kernel.events(),
+        kernel.supervisor(),
     )
     .await;
     let outcome = if handler_result.is_ok() {
@@ -1158,6 +1159,7 @@ async fn dispatch(
     audit: &RwLock<AuditLedger>,
     policy: &CapabilityPolicyState,
     events: &RwLock<crate::kernel::events::EventBus>,
+    supervisor: &RwLock<crate::kernel::supervisor::Supervisor>,
 ) -> Result<Value, String> {
     match request.operation.as_str() {
         PLUGIN_LIST_OPERATION => {
@@ -1280,6 +1282,8 @@ async fn dispatch(
         "event.subscribe" => crate::host_bus::events::dispatch_event_subscribe(request, events),
         "event.publish" => crate::host_bus::events::dispatch_event_publish(request, events),
         "event.poll" => crate::host_bus::events::dispatch_event_poll(request, events),
+        "worker.spawn" => crate::host_bus::workers::dispatch_worker_spawn(request, supervisor),
+        "worker.stop" => crate::host_bus::workers::dispatch_worker_stop(request, supervisor),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }

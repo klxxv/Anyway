@@ -25,6 +25,7 @@ pub mod blob;
 pub mod events;
 pub mod lease;
 pub mod services;
+pub mod workers;
 
 /// A named middleware step in the fixed chain above.
 pub struct MiddlewareStep {
