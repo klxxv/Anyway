@@ -23,6 +23,7 @@
 pub mod audit;
 pub mod blob;
 pub mod events;
+pub mod ir;
 pub mod lease;
 pub mod services;
 pub mod storage;

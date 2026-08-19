@@ -14,7 +14,7 @@ use crate::extract::{
 use crate::ir::{self, CanvasIRV3};
 
 /// A structural violation with a stable code and a JSON path.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ValidationError {
     pub code: String,
     pub path: String,
@@ -22,7 +22,7 @@ pub struct ValidationError {
 }
 
 /// A non-fatal advisory (handoff-spec.md §87).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Warning {
     pub code: String,
     pub path: String,

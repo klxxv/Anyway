@@ -1292,6 +1292,8 @@ async fn dispatch(
         "graph.storage.query" => {
             crate::host_bus::storage::dispatch_graph_storage_query(request, graph_storage)
         }
+        "graph.ir.compile" => crate::host_bus::ir::dispatch_graph_ir_compile(request),
+        "graph.ir.query" => crate::host_bus::ir::dispatch_graph_ir_query(request),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }
