@@ -20,8 +20,7 @@
     "src/**/*.ts",
     "tests/**/*.ts",
     "scripts/**/*.ts",
-    "vite.config.ts",
-    "drizzle.config.ts"
+    "vite.config.ts"
   ],
   "exclude": ["node_modules", "dist", "src-tauri/target"]
 }
