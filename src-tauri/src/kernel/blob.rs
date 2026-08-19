@@ -327,6 +327,29 @@ struct StoredBlob {
     last_access_ms: u64,
 }
 
+/// One stored blob metadata row returned by [`BlobStore::list_stored`].
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredBlobEntry {
+    pub digest: String,
+    pub size: u64,
+    pub media_type: String,
+    pub last_access_ms: u64,
+}
+
+fn decode_hex_digest(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for (index, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let high = (*chunk.first()? as char).to_digit(16)?;
+        let low = (*chunk.get(1)? as char).to_digit(16)?;
+        bytes[index] = ((high << 4) | low) as u8;
+    }
+    Some(bytes)
+}
+
 struct ReadLease {
     digest: BlobDigest,
     owner: String,
@@ -699,6 +722,37 @@ impl BlobStore {
 
     pub fn active_read_count(&self) -> usize {
         self.reads.len()
+    }
+
+    /// `blob.list` — snapshot stored blob metadata in digest order.
+    pub fn list_stored(&self) -> Vec<StoredBlobEntry> {
+        self.blobs
+            .iter()
+            .map(|(digest, stored)| StoredBlobEntry {
+                digest: digest.to_hex(),
+                size: stored.bytes.len() as u64,
+                media_type: stored.media_type.clone(),
+                last_access_ms: stored.last_access_ms,
+            })
+            .collect()
+    }
+
+    /// `blob.release` — remove one stored blob by hex digest; returns freed
+    /// bytes. Pinned blobs (open read leases) are not released.
+    pub fn release_stored(&mut self, digest_hex: &str) -> Result<u64, BlobError> {
+        let bytes = decode_hex_digest(digest_hex)
+            .ok_or(BlobError::InvalidArgument("digest must be 64 lowercase hex chars"))?;
+        let digest = BlobDigest::new(bytes);
+        let pinned: BTreeSet<_> = self.reads.values().map(|lease| lease.digest).collect();
+        if pinned.contains(&digest) {
+            return Err(BlobError::InvalidArgument(
+                "blob is pinned by an open read lease",
+            ));
+        }
+        match self.blobs.remove(&digest) {
+            Some(blob) => Ok(blob.bytes.len() as u64),
+            None => Err(BlobError::BlobNotFound),
+        }
     }
 
     fn allocate_lease_id(&mut self) -> u128 {

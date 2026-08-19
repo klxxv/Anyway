@@ -1261,6 +1261,8 @@ async fn dispatch(
             crate::host_bus::services::dispatch_service_unregister(request, services)
         }
         "audit.read" => crate::host_bus::audit::dispatch_audit_read(request, audit),
+        "blob.list" => crate::host_bus::blob::dispatch_blob_list(blobs),
+        "blob.release" => crate::host_bus::blob::dispatch_blob_release(request, blobs),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }
