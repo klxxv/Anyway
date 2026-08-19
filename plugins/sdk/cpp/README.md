@@ -11,5 +11,5 @@ clang++ --target=wasm32 -std=c++20 -O2 -nostdlib \
   example.cpp -o plugin.wasm
 ```
 
-Package `plugin.wasm` beside a runtime `plugin.yml` whose engine is `wasm32-myc`,
+Package `plugin.wasm` beside a runtime `plugin.json` whose engine is `wasm32-myc`,
 language is `cpp`, capability is `analysis.run`, and permissions are empty.

@@ -95,7 +95,7 @@ pub enum PluginSettingDefault<'a> {
     Text(&'a str),
 }
 
-/// A lightweight declaration shape matching the `plugin.yml` JSON/YAML keys.
+/// A lightweight declaration shape matching the `plugin.json` keys.
 /// The host owns validation, persistence, and UI rendering.
 #[derive(Clone, Copy, Debug)]
 pub struct PluginSettingDefinition<'a> {

@@ -17,15 +17,16 @@
   "license": "MIT",
   "homepage": "...",
   "categories": ["Workspace"],              // 原 kind（WorkspacePlugin/ThemePlugin/AgentPlugin/...）
-  "engines": { "anyway": ">=0.3.0" },
+  "engines": { "engine": "host-mediated" }, // 原 spec.engine
   "main": "workspace-plugin.json",          // 原 spec.entry
+  "language": "rust",                       // 可选：AnalysisPlugin 载荷语言（原 spec.language）
   "activationEvents": ["onCommand:open-folder-workspace"],
 
   // ── VSCode contributes ──
   "contributes": {
     "commands": [ { "id", "label", "description", "category", "capability", "formats" } ],
     "menus":     [ { "id", "scope": "node|edge|canvas", "label", "icon", "command" } ],
-    "configuration": { "title", "properties": { ... } },   // 原 spec.settings（扁平化）
+    "configuration": { "title", "settings": [ ... ], "connections": [ ... ] },   // 原 spec.settings/connections
     "viewsContainers": { "activitybar": [ { "id", "title", "icon" } ] },
     "views": { "activity-sidebar": [ { "id", "name", "when" } ] },
     "uiIr":      [ { "slotId", "ir" } ],
@@ -48,10 +49,12 @@
 ### 兼容性
 
 - 保留 `developer`/`developerId` 语义，归一为 `publisher` + `developerId`。
-- 旧 `spec.settings` 迁移到 `contributes.configuration.properties`（`PluginSettingDefinition` 结构不变）。
+- 旧 `spec.settings` 迁移到 `contributes.configuration.settings`（`PluginSettingDefinition` 结构不变）。
 - 旧 `spec.connections` 迁移到 `contributes.configuration.connections`（`PluginConnectionDefinition` 结构不变）。
-- 旧 `spec.contributes.*` 迁移到 `contributes.*`。
+- 旧 `spec.language` 迁移到顶层 `language`（仅 `AnalysisPlugin` 使用，供 SDK 声明与校验参考）。
+- 旧 `spec.contributes.*` 迁移到 `contributes.*`（`contextMenus` → `menus`，`locales`/`commands` 同名）。
 - `kind` 从字符串枚举变成 `categories`（可多值），但内核仍按「是否声明某类 capability/entry」判定可执行类型。
+- 迁移后内部 `api_version` 归一为 `researchcanvas.dev/v2`；`validate_manifest` 同时接受 v1alpha1 与 v2。
 
 ### Rust 解析重写
 
@@ -68,7 +71,7 @@ signed_bytes = canonical_json(manifest_without_signature + payloads)
 signature    = Ed25519_sign(publisher_key, SHA256(signed_bytes))
 ```
 
-- 信任链：`plugins/packages/*.myc` 由 `scripts/pack-plugin.mjs` 用离线 `id_ed25519` 生成；`src-tauri/src/signing.rs` 只验证。
+- 信任链：`plugins/packages/*.myc` 由 `scripts/pack-plugin.mjs` 生成（`--key <pkcs8 pem>` 时用离线 `id_ed25519` 签发）；`src-tauri/src/signing.rs` 只验证。当前仓库内跟踪包尚未签名（离线私钥不在仓库，`.gitignore` 排除 `id_ed25519*`）；拿到密钥后带 `--key` 重新打包即完成签发。
 - 清单文件名统一 `plugin.json`；`payloads` 不含 `plugin.json` 自身。
 
 ## 3. 8 个 Host Bus API（文件解耦 + 中间件）
@@ -121,3 +124,7 @@ HostCallResponse
 8. `audit.read` + `blob.list/release`
 9. `graph.ir.compile/query`
 10. 全量测试 + 迁移 `.myc` 包
+
+> 状态：全部完成。`plugins/packages/*.myc` 已用 `pack-plugin.mjs` 重建为 v2 JSON 清单
+> （三个历史 `myc.pdf-canvas-agent` 版本由 v1 YAML 原位转换为 v2 平面 JSON，载荷字节不变）；
+> `plugins::tests::tracked_packages_pass_the_full_v2_install_pipeline` 对每个跟踪包走完整安装管线回归。

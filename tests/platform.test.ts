@@ -643,10 +643,9 @@ test("AgentPlugin and ProviderPlugin are activatable install kinds", () => {
   ) as { mode?: string; reviewGated?: boolean };
   assert.equal(descriptor.mode, "agent");
   assert.equal(descriptor.reviewGated, true);
-  const manifest = readFileSync(
-    "plugins/sources/myc.pdf-canvas-agent/plugin.yml",
-    "utf8",
-  );
-  assert.match(manifest, /kind: AgentPlugin/);
-  assert.match(manifest, /engine: host-mediated/);
+  const manifest = JSON.parse(
+    readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.json", "utf8"),
+  ) as { categories?: string[]; engines?: { engine?: string } };
+  assert.ok((manifest.categories ?? []).includes("AgentPlugin"));
+  assert.equal(manifest.engines?.engine, "host-mediated");
 });

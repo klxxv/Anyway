@@ -39,7 +39,7 @@ Open `http://127.0.0.1:5173`.
 
 ## `.myc` plugin format
 
-`.myc` is a ZIP archive with a `plugin.yml` manifest at its root. Plugins are verified at install time:
+`.myc` is a ZIP archive with a `plugin.json` manifest at its root. Plugins are verified at install time:
 
 - **Manifest validation** — API version, plugin kind, capability declarations
 - **Signature verification** — Ed25519 signatures over the manifest content, verified against trusted publisher keys
@@ -49,7 +49,7 @@ Open `http://127.0.0.1:5173`.
 Build a plugin:
 
 ```bash
-python scripts/build_myc_plugin.py \
+node scripts/pack-plugin.mjs \
   plugins/sources/myc.onedarkpro \
   plugins/packages/myc.onedarkpro@1.3.0.myc
 ```

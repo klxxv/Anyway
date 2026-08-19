@@ -196,7 +196,7 @@ def convert_theme(package: dict[str, Any], contribution: dict[str, Any], theme: 
         "pluginId": plugin_id,
         "kind": "ThemePlugin",
         "version": version,
-        "pluginYml": plugin_yml(plugin_id, label, version, publisher, "theme.json", "theme.register", "ThemePlugin"),
+        "pluginJson": plugin_json(plugin_id, label, version, publisher, "theme.json", "theme.register", "ThemePlugin"),
         "theme": {
             "id": plugin_id,
             "name": str(contribution.get("label") or label),
@@ -289,7 +289,7 @@ def convert_icon_theme(package: dict[str, Any], contribution: dict[str, Any], ic
         "pluginId": plugin_id,
         "kind": "IconThemePlugin",
         "version": version,
-        "pluginYml": plugin_yml(plugin_id, icon_label, version, publisher, "icon-theme.json", "icon-theme.register", "IconThemePlugin"),
+        "pluginJson": plugin_json(plugin_id, icon_label, version, publisher, "icon-theme.json", "icon-theme.register", "IconThemePlugin"),
         "iconTheme": {
             "schemaVersion": 1,
             "id": plugin_id,
@@ -310,33 +310,26 @@ def convert_icon_theme(package: dict[str, Any], contribution: dict[str, Any], ic
     return resource
 
 
-def plugin_yml(plugin_id: str, name: str, version: str, publisher: str, entry: str, capability: str, kind: str) -> str:
-    def quote(value: str) -> str:
-        return json.dumps(value, ensure_ascii=False)
-
-    return "\n".join([
-        "apiVersion: researchcanvas.dev/v1alpha1",
-        f"kind: {kind}",
-        "metadata:",
-        f"  id: {quote(plugin_id)}",
-        f"  name: {quote(name)}",
-        f"  version: {quote(version)}",
-        f"  publisher: {quote(publisher)}",
-        f"  developer: {quote(publisher)}",
-        f"  description: {quote('Imported declarative VS Code contribution')}",
-        "spec:",
-        "  engine: declarative",
-        f"  entry: {entry}",
-        "  capabilities:",
-        f"    - {capability}",
-        "  permissions: []",
-        "",
-    ])
+def plugin_json(plugin_id: str, name: str, version: str, publisher: str, entry: str, capability: str, kind: str) -> str:
+    manifest = {
+        "name": plugin_id,
+        "displayName": name,
+        "version": version,
+        "publisher": publisher,
+        "developer": publisher,
+        "description": "Imported declarative VS Code contribution",
+        "categories": [kind],
+        "main": entry,
+        "engines": {"engine": "declarative"},
+        "capabilities": [capability],
+        "permissions": [],
+    }
+    return json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
 
 
 def write_resource(resource: dict[str, Any], output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
-    (output / "plugin.yml").write_text(resource["pluginYml"], encoding="utf-8")
+    (output / "plugin.json").write_text(resource["pluginJson"], encoding="utf-8")
     entry = "theme.json" if resource["kind"] == "ThemePlugin" else "icon-theme.json"
     payload = resource["theme"] if resource["kind"] == "ThemePlugin" else resource["iconTheme"]
     (output / entry).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

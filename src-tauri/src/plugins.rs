@@ -23,6 +23,9 @@ use zip::ZipArchive;
 use crate::llm_plugin::{self, ProviderDescriptor};
 
 const MYC_API_VERSION: &str = "researchcanvas.dev/v1alpha1";
+/// v2 flat manifests (plugin_manifest_v2) migrate into the internal v1 shape
+/// with this synthesized api version; validation accepts both.
+const MYC_API_VERSION_V2: &str = "researchcanvas.dev/v2";
 const PLUGIN_CALL_API_VERSION: &str = "researchcanvas.dev/plugin-call/v1alpha1";
 const MAX_ARCHIVE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 32 * 1024 * 1024;
@@ -254,9 +257,9 @@ pub struct MycPluginManifest {
     pub kind: String,
     pub metadata: MycPluginMetadata,
     pub spec: MycPluginSpec,
-    /// 包内每个载荷文件(plugin.yml 除外)的 sha256:相对路径 → 64 位小写十六进制。
+    /// 包内每个载荷文件(plugin.json 除外)的 sha256:相对路径 → 64 位小写十六进制。
     /// 签名覆盖清单 JSON,清单携带 payloads 后签名即覆盖全部载荷。
-    /// sha256 of every payload file in the package (except plugin.yml itself):
+    /// sha256 of every payload file in the package (except plugin.json itself):
     /// relative path → 64 lowercase hex chars. Since the signature covers the
     /// manifest JSON, a manifest carrying payloads extends the signature to
     /// every payload byte.
@@ -592,7 +595,7 @@ fn validate_connection_test_actions(connection: &PluginConnectionDefinition) -> 
 }
 
 fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
-    if manifest.api_version != MYC_API_VERSION {
+    if manifest.api_version != MYC_API_VERSION && manifest.api_version != MYC_API_VERSION_V2 {
         return Err(format!(
             "Unsupported plugin API version: {}",
             manifest.api_version
@@ -1430,8 +1433,8 @@ fn read_archive_manifest_from_archive(
     Ok(manifest)
 }
 
-/// 仅读取归档中的 plugin.yml(含签名校验)。
-/// Reads only plugin.yml from an archive (with signature verification).
+/// 仅读取归档中的 plugin.json(含签名校验)。
+/// Reads only plugin.json from an archive (with signature verification).
 fn read_archive_manifest(base: &Path, archive_path: &Path) -> Result<MycPluginManifest, String> {
     let file = File::open(archive_path).map_err(|error| error.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
@@ -2235,32 +2238,16 @@ mod tests {
 
     fn runtime_manifest(language: &str) -> String {
         format!(
-            r#"apiVersion: researchcanvas.dev/v1alpha1
-kind: AnalysisPlugin
-metadata:
-  id: myc.runtime-smoke
-  name: Runtime Smoke
-  version: 1.0.0
-  publisher: Research Canvas
-  developer: Runtime Team
-  description: End-to-end VM smoke plugin.
-spec:
-  engine: wasm32-myc
-  entry: plugin.wasm
-  language: {language}
-  capabilities:
-    - analysis.run
-  permissions: []
-"#,
+            r#"{{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AnalysisPlugin","metadata":{{"id":"myc.runtime-smoke","name":"Runtime Smoke","version":"1.0.0","publisher":"Research Canvas","developer":"Runtime Team","description":"End-to-end VM smoke plugin."}},"spec":{{"engine":"wasm32-myc","entry":"plugin.wasm","language":"{language}","capabilities":["analysis.run"],"permissions":[]}}}}"#,
         )
     }
 
     #[test]
     fn parses_sdk_environment_api_key_source() {
         for source in ["environment", "Environment"] {
-            let yaml = format!("source: {source}\nname: DEEPSEEK_API_KEY\n");
+            let json = format!("{{\"source\":\"{source}\",\"name\":\"DEEPSEEK_API_KEY\"}}");
             let parsed: PluginApiKeySource =
-                serde_yaml::from_str(&yaml).expect("parse environment API key source");
+                serde_json::from_str(&json).expect("parse environment API key source");
             assert!(matches!(parsed, PluginApiKeySource::Environment { .. }));
         }
     }
@@ -2285,7 +2272,7 @@ spec:
 
     fn runtime_plugin_with_context_menu() -> InstalledMycPlugin {
         let mut manifest: MycPluginManifest =
-            serde_yaml::from_str(&runtime_manifest("rust")).expect("parse runtime manifest");
+            serde_json::from_str(&runtime_manifest("rust")).expect("parse runtime manifest");
         manifest.metadata.version = "1.1.0".to_string();
         manifest
             .spec
@@ -2410,7 +2397,7 @@ spec:
     #[test]
     fn validates_optional_developer_uuid_without_breaking_legacy_metadata() {
         let mut manifest: MycPluginManifest =
-            serde_yaml::from_str(&runtime_manifest("rust")).expect("parse runtime manifest");
+            serde_json::from_str(&runtime_manifest("rust")).expect("parse runtime manifest");
         validate_manifest(&manifest).expect("legacy developer field remains valid");
         manifest.metadata.developer_uuid = Some("550e8400-e29b-41d4-a716-446655440000".to_string());
         validate_manifest(&manifest).expect("canonical developer UUID is valid");
@@ -2428,7 +2415,7 @@ spec:
         let mut archive = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(runtime_manifest("rust").as_bytes())
@@ -2475,7 +2462,7 @@ spec:
         let mut archive = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(runtime_manifest("rust").as_bytes())
@@ -2504,11 +2491,11 @@ spec:
     #[test]
     fn rejects_runtime_manifest_with_unknown_language() {
         let cpp: MycPluginManifest =
-            serde_yaml::from_str(&runtime_manifest("cpp")).expect("parse cpp manifest");
+            serde_json::from_str(&runtime_manifest("cpp")).expect("parse cpp manifest");
         validate_manifest(&cpp).expect("C++ wasm plugins use the same verified ABI");
 
         let manifest: MycPluginManifest =
-            serde_yaml::from_str(&runtime_manifest("javascript")).expect("parse manifest");
+            serde_json::from_str(&runtime_manifest("javascript")).expect("parse manifest");
         assert!(validate_manifest(&manifest)
             .expect_err("unknown language rejected")
             .contains("language"));
@@ -2517,7 +2504,7 @@ spec:
     #[test]
     fn context_menu_contributions_require_runtime_capability() {
         let mut manifest: MycPluginManifest =
-            serde_yaml::from_str(&runtime_manifest("rust")).expect("parse manifest");
+            serde_json::from_str(&runtime_manifest("rust")).expect("parse manifest");
         manifest.spec.contributes = Some(MycPluginContributions {
             context_menus: Some(vec![PluginContextMenuContribution {
                 id: "inspect-context".to_string(),
@@ -2546,32 +2533,10 @@ spec:
         let workspace_package = root.path().join("workspace.myc");
         let file = File::create(&workspace_package).expect("workspace archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.yml", options).expect("manifest");
+        archive.start_file("plugin.json", options).expect("manifest");
         archive
             .write_all(
-                br#"apiVersion: researchcanvas.dev/v1alpha1
-kind: WorkspacePlugin
-metadata:
-  id: myc.test-export
-  name: Test Export
-  version: 1.0.0
-  publisher: Research Canvas
-  developer: Workspace Tests
-  description: Test host mediated export capability.
-spec:
-  engine: host-mediated
-  entry: workspace-plugin.json
-  capabilities: [project.export]
-  permissions: []
-  contributes:
-    commands:
-      - id: export
-        label: Export SVG
-        description: Export the reviewed project.
-        category: export
-        capability: project.export
-        formats: [svg]
-"#,
+                br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"WorkspacePlugin","metadata":{"id":"myc.test-export","name":"Test Export","version":"1.0.0","publisher":"Research Canvas","developer":"Workspace Tests","description":"Test host mediated export capability."},"spec":{"engine":"host-mediated","entry":"workspace-plugin.json","capabilities":["project.export"],"permissions":[],"contributes":{"commands":[{"id":"export","label":"Export SVG","description":"Export the reviewed project.","category":"export","capability":"project.export","formats":["svg"]}]}}}"#,
             )
             .expect("manifest bytes");
         archive
@@ -2594,10 +2559,10 @@ spec:
         let locale_package = root.path().join("locale.myc");
         let file = File::create(&locale_package).expect("locale archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.yml", options).expect("manifest");
+        archive.start_file("plugin.json", options).expect("manifest");
         archive
             .write_all(
-                "apiVersion: researchcanvas.dev/v1alpha1\nkind: LocalePlugin\nmetadata:\n  id: myc.test-ja\n  name: Test Japanese\n  version: 1.0.0\n  publisher: Research Canvas\n  developer: Locale Tests\n  description: Test declarative community language.\nspec:\n  engine: declarative\n  entry: locales/ja-JP.json\n  capabilities: [i18n.register]\n  permissions: []\n  contributes:\n    locales:\n      - locale: ja-JP\n        name: 日本語\n        path: locales/ja-JP.json\n"
+                "{\"apiVersion\":\"researchcanvas.dev/v1alpha1\",\"kind\":\"LocalePlugin\",\"metadata\":{\"id\":\"myc.test-ja\",\"name\":\"Test Japanese\",\"version\":\"1.0.0\",\"publisher\":\"Research Canvas\",\"developer\":\"Locale Tests\",\"description\":\"Test declarative community language.\"},\"spec\":{\"engine\":\"declarative\",\"entry\":\"locales/ja-JP.json\",\"capabilities\":[\"i18n.register\"],\"permissions\":[],\"contributes\":{\"locales\":[{\"locale\":\"ja-JP\",\"name\":\"日本語\",\"path\":\"locales/ja-JP.json\"}]}}}"
                     .as_bytes(),
             )
             .expect("locale manifest bytes");
@@ -2624,24 +2589,10 @@ spec:
         let agent_package = root.path().join("agent.myc");
         let file = File::create(&agent_package).expect("agent archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.yml", options).expect("manifest");
+        archive.start_file("plugin.json", options).expect("manifest");
         archive
             .write_all(
-                br#"apiVersion: researchcanvas.dev/v1alpha1
-kind: AgentPlugin
-metadata:
-  id: myc.test-agent
-  name: Test Agent
-  version: 0.1.0
-  publisher: Research Canvas
-  developer: Agent Tests
-  description: Test host-mediated review-gated agent.
-spec:
-  engine: host-mediated
-  entry: agent-manifest.json
-  capabilities: [agent.pdf.read, agent.graph.patch.propose, agent.review.request]
-  permissions: []
-"#,
+                br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.test-agent","name":"Test Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Test host-mediated review-gated agent."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.pdf.read","agent.graph.patch.propose","agent.review.request"],"permissions":[]}}"#,
             )
             .expect("manifest bytes");
         archive
@@ -2664,24 +2615,10 @@ spec:
         let rogue_package = root.path().join("rogue-agent.myc");
         let file = File::create(&rogue_package).expect("rogue archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.yml", options).expect("manifest");
+        archive.start_file("plugin.json", options).expect("manifest");
         archive
             .write_all(
-                br#"apiVersion: researchcanvas.dev/v1alpha1
-kind: AgentPlugin
-metadata:
-  id: myc.rogue-agent
-  name: Rogue Agent
-  version: 0.1.0
-  publisher: Research Canvas
-  developer: Agent Tests
-  description: Agent descriptor that is not review-gated.
-spec:
-  engine: host-mediated
-  entry: agent-manifest.json
-  capabilities: [agent.graph.patch.propose]
-  permissions: []
-"#,
+                br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.rogue-agent","name":"Rogue Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Agent descriptor that is not review-gated."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.graph.patch.propose"],"permissions":[]}}"#,
             )
             .expect("manifest bytes");
         archive
@@ -2700,24 +2637,10 @@ spec:
         let unknown_package = root.path().join("unknown-agent.myc");
         let file = File::create(&unknown_package).expect("unknown archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.yml", options).expect("manifest");
+        archive.start_file("plugin.json", options).expect("manifest");
         archive
             .write_all(
-                br#"apiVersion: researchcanvas.dev/v1alpha1
-kind: AgentPlugin
-metadata:
-  id: myc.unknown-agent
-  name: Unknown Capability Agent
-  version: 0.1.0
-  publisher: Research Canvas
-  developer: Agent Tests
-  description: Agent declaring an unknown capability.
-spec:
-  engine: host-mediated
-  entry: agent-manifest.json
-  capabilities: [agent.filesystem.write]
-  permissions: []
-"#,
+                br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.unknown-agent","name":"Unknown Capability Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Agent declaring an unknown capability."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.filesystem.write"],"permissions":[]}}"#,
             )
             .expect("manifest bytes");
         archive
@@ -2751,24 +2674,10 @@ spec:
         let valid_package = packages.join("zzz.renamed-file@9.9.9.myc");
         let file = File::create(&valid_package).expect("valid archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.yml", options).expect("manifest");
+        archive.start_file("plugin.json", options).expect("manifest");
         archive
             .write_all(
-                br#"apiVersion: researchcanvas.dev/v1alpha1
-kind: ThemePlugin
-metadata:
-  id: myc.valid-theme
-  name: Valid Theme
-  version: 1.0.0
-  publisher: Research Canvas
-  developer: Tests
-  description: A valid theme package.
-spec:
-  engine: declarative
-  entry: theme.json
-  capabilities: [theme.register]
-  permissions: []
-"#,
+                br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"ThemePlugin","metadata":{"id":"myc.valid-theme","name":"Valid Theme","version":"1.0.0","publisher":"Research Canvas","developer":"Tests","description":"A valid theme package."},"spec":{"engine":"declarative","entry":"theme.json","capabilities":["theme.register"],"permissions":[]}}"#,
             )
             .expect("manifest bytes");
         archive
@@ -2849,61 +2758,37 @@ spec:
     }
 
     fn signed_theme_manifest(publisher: &str, sign_fn: Option<&dyn Fn(&str) -> String>) -> String {
-        let mut yaml = format!(
-            r#"apiVersion: researchcanvas.dev/v1alpha1
-kind: ThemePlugin
-metadata:
-  id: {publisher}.test-theme
-  name: Signed Theme
-  version: 1.0.0
-  publisher: {publisher}
-  developer: Test
-  description: A signed theme plugin.
-spec:
-  engine: declarative
-  entry: theme.json
-  capabilities:
-    - theme.register
-  permissions: []
-"#
-        );
+        let mut manifest_value = serde_json::json!({
+            "apiVersion": "researchcanvas.dev/v1alpha1",
+            "kind": "ThemePlugin",
+            "metadata": {
+                "id": format!("{publisher}.test-theme"),
+                "name": "Signed Theme",
+                "version": "1.0.0",
+                "publisher": publisher,
+                "developer": "Test",
+                "description": "A signed theme plugin.",
+            },
+            "spec": {
+                "engine": "declarative",
+                "entry": "theme.json",
+                "capabilities": ["theme.register"],
+                "permissions": [],
+            },
+        });
         if let Some(sign) = sign_fn {
             // Signed manifests must declare payloads; the hash matches valid_theme_json().
-            let theme_hash = theme_payload_hash();
-            yaml.push_str(&format!("payloads:\n  theme.json: {theme_hash}\n"));
-            // Must match the exact JSON shape produced by serde_json::to_value(MycPluginManifest),
-            // including Option fields that serialize as null.
-            let manifest_value = serde_json::json!({
-                "apiVersion": "researchcanvas.dev/v1alpha1",
-                "kind": "ThemePlugin",
-                "metadata": {
-                    "id": format!("{publisher}.test-theme"),
-                    "name": "Signed Theme",
-                    "version": "1.0.0",
-                    "publisher": publisher,
-                    "developer": "Test",
-                    "description": "A signed theme plugin.",
-                    "homepage": null,
-                    "license": null
-                },
-                "spec": {
-                    "engine": "declarative",
-                    "entry": "theme.json",
-                    "language": null,
-                    "capabilities": ["theme.register"],
-                    "permissions": [],
-                    "contributes": null
-                },
-                "payloads": {
-                    "theme.json": theme_hash
-                }
-            });
+            manifest_value["payloads"] =
+                serde_json::json!({ "theme.json": theme_payload_hash() });
+            // Signature covers the canonical (sorted-key, compact) JSON without
+            // `signature` — the same bytes the verifier recomputes from the raw
+            // archived manifest text.
             let payload =
                 crate::signing::manifest_payload(&manifest_value).expect("manifest payload");
             let signature_b64 = sign(&BASE64.encode(&payload));
-            yaml.push_str(&format!("signature: {signature_b64}\n"));
+            manifest_value["signature"] = serde_json::Value::String(signature_b64);
         }
-        yaml
+        serde_json::to_string(&manifest_value).expect("manifest json")
     }
 
     #[test]
@@ -2931,7 +2816,7 @@ spec:
 
         let manifest_yaml = signed_theme_manifest(publisher, Some(&sign_closure));
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(manifest_yaml.as_bytes())
@@ -2978,7 +2863,7 @@ spec:
         let manifest_yaml = signed_theme_manifest(publisher, Some(&sign_closure_a));
         let theme_json = valid_theme_json().to_string();
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(manifest_yaml.as_bytes())
@@ -3022,7 +2907,7 @@ spec:
         let manifest_yaml = signed_theme_manifest(publisher, Some(&sign_closure));
         let theme_json = valid_theme_json().to_string();
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(manifest_yaml.as_bytes())
@@ -3056,7 +2941,7 @@ spec:
         let mut archive = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(manifest_yaml.as_bytes())
@@ -3115,25 +3000,7 @@ spec:
         let theme_hash = theme_payload_hash();
 
         let tampered_yaml = format!(
-            r#"apiVersion: researchcanvas.dev/v1alpha1
-kind: ThemePlugin
-metadata:
-  id: {publisher}.evil-theme
-  name: Evil Theme
-  version: 9.9.9
-  publisher: {publisher}
-  developer: Evil Dev
-  description: Tampered malicious plugin.
-spec:
-  engine: declarative
-  entry: theme.json
-  capabilities:
-    - theme.register
-  permissions: []
-payloads:
-  theme.json: {theme_hash}
-signature: {signature_b64}
-"#
+            r#"{{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"ThemePlugin","metadata":{{"id":"{publisher}.evil-theme","name":"Evil Theme","version":"9.9.9","publisher":"{publisher}","developer":"Evil Dev","description":"Tampered malicious plugin."}},"spec":{{"engine":"declarative","entry":"theme.json","capabilities":["theme.register"],"permissions":[]}},"payloads":{{"theme.json":"{theme_hash}"}},"signature":"{signature_b64}"}}"#
         );
 
         let package = root.path().join("tampered.myc");
@@ -3141,7 +3008,7 @@ signature: {signature_b64}
         let mut archive = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(tampered_yaml.as_bytes())
@@ -3180,24 +3047,10 @@ signature: {signature_b64}
         let mut archive = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         let manifest = format!(
-            r#"apiVersion: researchcanvas.dev/v1alpha1
-kind: ThemePlugin
-metadata:
-  id: myc.payload-theme
-  name: Payload Theme
-  version: 1.0.0
-  publisher: Research Canvas
-  developer: Tests
-  description: Theme with declared payloads.
-spec:
-  engine: declarative
-  entry: theme.json
-  capabilities: [theme.register]
-  permissions: []
-{payloads_yaml}"#
+            r#"{{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"ThemePlugin","metadata":{{"id":"myc.payload-theme","name":"Payload Theme","version":"1.0.0","publisher":"Research Canvas","developer":"Tests","description":"Theme with declared payloads."}},"spec":{{"engine":"declarative","entry":"theme.json","capabilities":["theme.register"],"permissions":[]}},"payloads":{payloads_yaml}}}"#
         );
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive
             .write_all(manifest.as_bytes())
@@ -3218,7 +3071,7 @@ spec:
     fn declared_payloads_are_hash_verified_at_install() {
         let root = tempdir().expect("temp root");
         let theme_json = valid_theme_json().to_string();
-        let good = format!("payloads:\n  theme.json: {}\n", theme_payload_hash());
+        let good = format!("{{\"theme.json\":\"{}\"}}", theme_payload_hash());
         let package = theme_package_with_payloads(
             root.path(),
             "good.myc",
@@ -3260,7 +3113,7 @@ spec:
         // 清单列出但包内缺失 → 拒绝 / Listed but missing → reject.
         let root4 = tempdir().expect("fourth root");
         let missing = format!(
-            "payloads:\n  theme.json: {}\n  missing.txt: {}\n",
+            "{{\"theme.json\":\"{}\",\"missing.txt\":\"{}\"}}",
             theme_payload_hash(),
             "0".repeat(64)
         );
@@ -3317,22 +3170,7 @@ spec:
         let payload = crate::signing::manifest_payload(&manifest_value).expect("manifest payload");
         let signature: Signature = signing_key.sign(&payload);
         let yaml = format!(
-            r#"apiVersion: researchcanvas.dev/v1alpha1
-kind: ThemePlugin
-metadata:
-  id: {publisher}.test-theme
-  name: Payloadless Theme
-  version: 1.0.0
-  publisher: {publisher}
-  developer: Test
-  description: Signed but payloadless.
-spec:
-  engine: declarative
-  entry: theme.json
-  capabilities: [theme.register]
-  permissions: []
-signature: {}
-"#,
+            r#"{{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"ThemePlugin","metadata":{{"id":"{publisher}.test-theme","name":"Payloadless Theme","version":"1.0.0","publisher":"{publisher}","developer":"Test","description":"Signed but payloadless."}},"spec":{{"engine":"declarative","entry":"theme.json","capabilities":["theme.register"],"permissions":[]}},"signature":"{}"}}"#,
             BASE64.encode(signature.to_bytes())
         );
 
@@ -3341,7 +3179,7 @@ signature: {}
         let mut archive = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         archive
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .expect("manifest entry");
         archive.write_all(yaml.as_bytes()).expect("manifest bytes");
         archive
@@ -3365,7 +3203,7 @@ signature: {}
         let package = theme_package_with_payloads(
             external.path(),
             "external.myc",
-            &format!("payloads:\n  theme.json: {}\n", theme_payload_hash()),
+            &format!("{{\"theme.json\":\"{}\"}}", theme_payload_hash()),
             theme_json.as_bytes(),
             None,
         );
@@ -3429,5 +3267,57 @@ signature: {}
             fs::read(&staged).expect("staged bytes"),
             b"external package"
         );
+    }
+
+    /// 仓库内每一个跟踪的 .myc 包都必须走完整的 v2 安装管线:
+    /// JSON 清单解析 → 校验 → 解压 → payloads 哈希核验 → 身份比对。
+    /// Every tracked .myc package in the repository must pass the full v2
+    /// install pipeline: JSON manifest parse → validation → extraction →
+    /// payload hash verification → identity comparison.
+    #[test]
+    fn tracked_packages_pass_the_full_v2_install_pipeline() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repository root")
+            .join("plugins/packages");
+        let mut packages: Vec<PathBuf> = fs::read_dir(&repository)
+            .expect("packages directory")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("myc"))
+            .collect();
+        packages.sort();
+        assert!(
+            packages.len() >= 10,
+            "expected the tracked packages, found {}",
+            packages.len()
+        );
+
+        for package in packages {
+            let base = tempdir().expect("temp base");
+            let installed = install_archive_into(base.path(), &package)
+                .unwrap_or_else(|error| panic!("{} failed to install: {error}", package.display()));
+            assert_eq!(
+                installed.manifest.metadata.id,
+                package
+                    .file_stem()
+                    .expect("package stem")
+                    .to_string_lossy()
+                    .rsplit_once('@')
+                    .map(|(id, _)| id)
+                    .expect("id before @"),
+                "installed id must match the package filename"
+            );
+            assert!(
+                base.path()
+                    .join(format!(
+                        "installed/{}@{}",
+                        installed.manifest.metadata.id, installed.manifest.metadata.version
+                    ))
+                    .is_dir(),
+                "{} must be installed atomically",
+                package.display()
+            );
+        }
     }
 }

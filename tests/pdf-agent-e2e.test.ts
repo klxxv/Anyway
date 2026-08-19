@@ -426,20 +426,19 @@ test("审阅 UI 契约接口结构正确", () => {
   assert.equal(mockReviewUI.loading, false);
 });
 
-test("plugin.yml 清单文件存在且结构正确", () => {
-  const ymlPath = "plugins/sources/myc.pdf-canvas-agent/plugin.yml";
-  const yml = readFileSync(ymlPath, "utf8");
+test("plugin.json 清单文件存在且结构正确", () => {
+  const jsonPath = "plugins/sources/myc.pdf-canvas-agent/plugin.json";
+  const manifest = JSON.parse(readFileSync(jsonPath, "utf8"));
 
-  // 验证 Manifest 结构
-  assert.match(yml, /apiVersion:\s+researchcanvas\.dev\/v1alpha1/);
-  assert.match(yml, /kind:\s+AgentPlugin/);
-  assert.match(yml, /id:\s+myc\.pdf-canvas-agent/);
-  assert.match(yml, /engine:\s+host-mediated/);
-  assert.match(yml, /entry:\s+agent-manifest\.json/);
-  assert.match(yml, /agent\.pdf\.read/);
-  assert.match(yml, /agent\.graph\.patch\.propose/);
-  assert.match(yml, /agent\.review\.request/);
-  assert.match(yml, /permissions:\s*\[\s*\]/);
+  // 验证 Manifest 结构 / Verify the manifest structure
+  assert.equal(manifest.name, "myc.pdf-canvas-agent");
+  assert.ok((manifest.categories ?? []).includes("AgentPlugin"));
+  assert.equal(manifest.engines?.engine, "host-mediated");
+  assert.equal(manifest.main, "agent-manifest.json");
+  assert.ok((manifest.capabilities ?? []).includes("agent.pdf.read"));
+  assert.ok((manifest.capabilities ?? []).includes("agent.graph.patch.propose"));
+  assert.ok((manifest.capabilities ?? []).includes("agent.review.request"));
+  assert.deepEqual(manifest.permissions, []);
 });
 
 test("agent-manifest.json 安全边界声明完整", () => {

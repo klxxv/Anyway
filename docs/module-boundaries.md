@@ -80,7 +80,7 @@ provenance, undo, and activity state.
 
 ## Plugin source tree
 
-`plugins/sources/<id>` is one module. `plugin.yml` is its public contract.
+`plugins/sources/<id>` is one module. `plugin.json` is its public contract.
 `plugins/packages/<id>@<version>.myc` is its distributable artifact.
 `plugins/installed/<id>@<version>` is generated state and is ignored except for
 the directory placeholder.

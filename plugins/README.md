@@ -12,10 +12,10 @@ plugins/
   sources/<plugin-id>/            source tree for one module
 ```
 
-A `.myc` file is a ZIP archive with `plugin.yml` and one kind-specific entry:
+A `.myc` file is a ZIP archive with `plugin.json` and one kind-specific entry:
 
 ```text
-plugin.yml             identity, contributions, capabilities, no ambient permissions
+plugin.json            identity, contributions, capabilities, no ambient permissions
 theme.json             ThemePlugin entry
 icon-theme.json        IconThemePlugin entry (declarative VSIX adapter)
 edge-style.json        EdgeStylePlugin entry
@@ -27,6 +27,12 @@ locales/<tag>.json     declarative LocalePlugin entries
 Build a package:
 
 ```bash
+# Canonical packager (deterministic STORE zip, optional Ed25519 signing):
+node scripts/pack-plugin.mjs \
+  plugins/sources/myc.onedarkpro \
+  plugins/packages/myc.onedarkpro@1.3.0.myc
+
+# Python equivalent (deflated zip, same manifest contract):
 python scripts/build_myc_plugin.py \
   plugins/sources/myc.onedarkpro \
   plugins/packages/myc.onedarkpro@1.3.0.myc
@@ -111,18 +117,24 @@ An executable plugin may add scoped node, edge, or canvas actions. It must
 declare both `analysis.run` and `context-menu.contribute`; the desktop
 installer rejects menu contributions on declarative plugins or unknown icons.
 
-```yaml
-spec:
-  capabilities:
-    - analysis.run
-    - context-menu.contribute
-  permissions: []
-  contributes:
-    contextMenus:
-      - id: inspect-context
-        scope: node
-        label: Analyze node context
-        icon: sparkles
+```json
+{
+  "capabilities": [
+    "analysis.run",
+    "context-menu.contribute"
+  ],
+  "permissions": [],
+  "contributes": {
+    "menus": [
+      {
+        "id": "inspect-context",
+        "scope": "node",
+        "label": "Analyze node context",
+        "icon": "sparkles"
+      }
+    ]
+  }
+}
 ```
 
 When selected, the app invokes that same plugin with `operation:

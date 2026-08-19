@@ -19,7 +19,7 @@ Branch: `codex/responsive-i18n-myc`
 ## Plugin platform
 
 - [x] Define a renderer-independent plugin manifest and runtime contract.
-- [x] Define the `.myc` ZIP package layout with `plugin.yml` metadata.
+- [x] Define the `.myc` ZIP package layout with `plugin.json` metadata.
 - [x] Implement secure Tauri extraction into the application plugin directory.
 - [x] Load installed theme plugins and expose their semantic color tokens.
 - [x] Support native `.myc` drag-and-drop in the plugin store.

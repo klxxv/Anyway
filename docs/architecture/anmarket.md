@@ -361,7 +361,7 @@ AnMarket 的设置、仓库列表、权限 diff、扫描报告和更新历史通
 
 | 文件 | 内容 |
 | --- | --- |
-| [`plugin.yml`](../../plugins/system/anmarket/plugin.yml) | `SystemPlugin` manifest 示例、官方信任类别、Provider 和 Vue IR contributions |
+| [`plugin.json`](../../plugins/system/anmarket/plugin.json) | `SystemPlugin` manifest 示例、官方信任类别、Provider 和 Vue IR contributions |
 | [`types.ts`](../../plugins/system/anmarket/types.ts) | Provider、BlobRef、RPC、finding/report、权限差异、blocklist、Vue IR 类型 |
 | [`index.ts`](../../plugins/system/anmarket/index.ts) | 无依赖的类型导出入口 |
 

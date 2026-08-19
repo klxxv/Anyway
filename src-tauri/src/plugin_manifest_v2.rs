@@ -42,6 +42,10 @@ pub struct ManifestV2 {
     /// Entry payload (former `spec.entry`).
     #[serde(default)]
     pub main: Option<String>,
+    /// Guest language for `AnalysisPlugin` payloads (former `spec.language`;
+    /// informational — the VM validates the wasm bytes, not the source language).
+    #[serde(default)]
+    pub language: Option<String>,
     #[serde(default)]
     pub activation_events: Vec<String>,
     #[serde(default)]
@@ -189,7 +193,7 @@ impl From<ManifestV2> for MycPluginManifest {
                     })
                     .unwrap_or_else(|| "declarative".to_string()),
                 entry: value.main.unwrap_or_default(),
-                language: None,
+                language: value.language,
                 capabilities: value.capabilities,
                 permissions: value.permissions,
                 contributes,
@@ -260,6 +264,24 @@ mod tests {
                 .map(|commands| commands.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn v2_manifest_carries_guest_language() {
+        let text = json!({
+            "name": "myc.runtime-smoke",
+            "version": "1.1.0",
+            "publisher": "Research Canvas",
+            "categories": ["AnalysisPlugin"],
+            "main": "plugin.wasm",
+            "engines": {"engine": "wasm32-myc"},
+            "language": "rust",
+            "capabilities": ["analysis.run"]
+        })
+        .to_string();
+
+        let manifest = parse_plugin_manifest(&text).expect("parses v2");
+        assert_eq!(manifest.spec.language.as_deref(), Some("rust"));
     }
 
     #[test]

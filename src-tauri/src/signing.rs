@@ -1,9 +1,9 @@
 //! Ed25519 签名验证与公钥信任根管理 / Ed25519 signature verification and public-key trust-root management.
 //!
-//! `.myc` 插件的 plugin.yml 可携带一个 `signature` 字段，存储发布者对清单内容的 Ed25519 签名。
+//! `.myc` 插件的 plugin.json 可携带一个 `signature` 字段，存储发布者对清单内容的 Ed25519 签名。
 //! 安装器在校验阶段提取该字段，使用发布者公钥验证，验签失败则拒绝安装。
 //!
-//! A `.myc` plugin's plugin.yml may carry a `signature` field holding the publisher's
+//! A `.myc` plugin's plugin.json may carry a `signature` field holding the publisher's
 //! Ed25519 signature over the manifest content. The installer extracts the field,
 //! verifies it against the publisher's public key, and rejects invalid signatures.
 

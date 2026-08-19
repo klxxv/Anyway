@@ -149,17 +149,67 @@ test("host reads the native effectiveValues/secretConfigured snapshot without ex
 });
 
 test("PDF Agent declares host-managed connection, credential, model, and thinking settings", () => {
-  const manifest = readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.yml", "utf8");
-  assert.match(manifest, /id:\s+api-key[\s\S]*?type:\s+text[\s\S]*?secret:\s+true/);
-  assert.match(manifest, /id:\s+api-url[\s\S]*?required:\s+true[\s\S]*?placeholder:\s+https:\/\/api\.moonshot\.cn\/v1/);
-  assert.match(manifest, /id:\s+api-format[\s\S]*?default:\s+openai/);
-  assert.match(manifest, /id:\s+credential-source[\s\S]*?default:\s+host-secret/);
-  assert.match(manifest, /id:\s+credential-env-var[\s\S]*?default:\s+MOONSHOT_API_KEY/);
-  assert.match(manifest, /id:\s+pdf-transport[\s\S]*?default:\s+local-text[\s\S]*?value:\s+local-text[\s\S]*?value:\s+kimi-file-extract/);
-  assert.match(manifest, /id:\s+model[\s\S]*?default:\s+kimi-k2\.6/);
-  assert.match(manifest, /id:\s+thinking[\s\S]*?default:\s+enabled[\s\S]*?value:\s+disabled/);
-  assert.match(manifest, /connections:[\s\S]*?credentialSourceSettingId:\s+credential-source[\s\S]*?testActions:[\s\S]*?id:\s+test-connection[\s\S]*?id:\s+test-pdf-extraction/);
-  assert.match(manifest, /source:\s+environment[\s\S]*?name:\s+MOONSHOT_API_KEY[\s\S]*?fallbackSettingId:\s+api-key/);
+  const manifest = JSON.parse(
+    readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.json", "utf8"),
+  ) as {
+    contributes?: {
+      configuration?: {
+        settings?: Array<{
+          id: string;
+          type: string;
+          secret?: boolean;
+          required?: boolean;
+          placeholder?: string;
+          default?: string;
+          options?: Array<{ value: string }>;
+        }>;
+        connections?: Array<{
+          id: string;
+          credentialSourceSettingId: string;
+          testActions: Array<{ id: string }>;
+          apiKey: { source: string; name: string; fallbackSettingId: string };
+        }>;
+      };
+    };
+  };
+  const settings = manifest.contributes?.configuration?.settings ?? [];
+  const byId = (id: string) => {
+    const setting = settings.find((entry) => entry.id === id);
+    assert.ok(setting, `manifest must declare setting ${id}`);
+    return setting;
+  };
+  assert.equal(byId("api-key").type, "text");
+  assert.equal(byId("api-key").secret, true);
+  assert.equal(byId("api-url").required, true);
+  assert.equal(byId("api-url").placeholder, "https://api.moonshot.cn/v1");
+  assert.equal(byId("api-format").default, "openai");
+  assert.equal(byId("credential-source").default, "host-secret");
+  assert.equal(byId("credential-env-var").default, "MOONSHOT_API_KEY");
+  assert.deepEqual(
+    (byId("pdf-transport").options ?? []).map((option) => option.value),
+    ["local-text", "kimi-file-extract"],
+  );
+  assert.equal(byId("model").default, "kimi-k2.6");
+  assert.equal(byId("thinking").default, "enabled");
+  assert.deepEqual(
+    (byId("thinking").options ?? []).map((option) => option.value),
+    ["enabled", "disabled"],
+  );
+
+  const provider = (manifest.contributes?.configuration?.connections ?? []).find(
+    (connection) => connection.id === "provider",
+  );
+  assert.ok(provider, "manifest must declare the provider connection");
+  assert.equal(provider.credentialSourceSettingId, "credential-source");
+  assert.deepEqual(
+    provider.testActions.map((action) => action.id),
+    ["test-connection", "test-pdf-extraction"],
+  );
+  assert.deepEqual(provider.apiKey, {
+    source: "environment",
+    name: "MOONSHOT_API_KEY",
+    fallbackSettingId: "api-key",
+  });
 
   const descriptor = JSON.parse(
     readFileSync("plugins/sources/myc.pdf-canvas-agent/agent-manifest.json", "utf8"),
@@ -169,15 +219,29 @@ test("PDF Agent declares host-managed connection, credential, model, and thinkin
 });
 
 test("public progress is an advanced host setting and is recognized by runtime contracts", () => {
-  const manifest = readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.yml", "utf8");
+  const manifest = JSON.parse(
+    readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.json", "utf8"),
+  ) as {
+    contributes?: {
+      configuration?: {
+        settings?: Array<{ id: string; default?: string; group?: string }>;
+      };
+    };
+  };
   const dialog = readFileSync("src/vue/components/PluginSettingsDialog.vue", "utf8");
   const runtime = readFileSync("src-tauri/src/agent_commands.rs", "utf8");
   const pipeline = readFileSync("plugins/sources/myc.pdf-canvas-agent/agent.yml", "utf8");
 
+  const publicProgress = (manifest.contributes?.configuration?.settings ?? []).find(
+    (setting) => setting.id === PUBLIC_PROGRESS_SETTING_ID,
+  );
+  assert.ok(publicProgress, "manifest must declare the public-progress setting");
+  assert.equal(publicProgress.default, "disabled");
+  assert.equal(publicProgress.group, "advanced");
+
   assert.equal(PUBLIC_PROGRESS_SETTING_ID, "public-progress");
   assert.equal(isPublicProgressEnabled("enabled"), true);
   assert.equal(isPublicProgressEnabled("disabled"), false);
-  assert.match(manifest, /id:\s+public-progress[\s\S]*?default:\s+disabled[\s\S]*?group:\s+advanced/);
   assert.match(dialog, /definition\.group === "advanced"/);
   assert.match(runtime, /\["public-progress", "publicProgress", "public_progress"\]/);
   assert.match(pipeline, /publicProgress:[\s\S]*?settingId:\s+public-progress[\s\S]*?source:\s+assistant-content/);

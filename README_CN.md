@@ -39,7 +39,7 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 
 ## `.myc` 插件格式
 
-`.myc` 是一个以 `plugin.yml` 为根清单的 ZIP 归档文件。插件在安装时经过多层验证：
+`.myc` 是一个以 `plugin.json` 为根清单的 ZIP 归档文件。插件在安装时经过多层验证：
 
 - **清单校验** — API 版本、插件类型、能力声明
 - **签名验证** — 对清单内容的 Ed25519 签名进行验证，与受信任的发布者公钥比对
@@ -49,7 +49,7 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 构建插件：
 
 ```bash
-python scripts/build_myc_plugin.py \
+node scripts/pack-plugin.mjs \
   plugins/sources/myc.onedarkpro \
   plugins/packages/myc.onedarkpro@1.3.0.myc
 ```

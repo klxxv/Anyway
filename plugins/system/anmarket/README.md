@@ -31,7 +31,7 @@ directly.
 
 | File | Purpose |
 | --- | --- |
-| `plugin.yml` | Proposed official system-plugin manifest |
+| `plugin.json` | Proposed official system-plugin manifest (flat VSCode + Cordis style) |
 | `types.ts` | Dependency-free provider, report, RPC, BlobRef, and Vue IR types |
 | `index.ts` | Type-only public entry point |
 

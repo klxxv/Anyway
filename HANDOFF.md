@@ -63,7 +63,7 @@ Completed:
 - `execute_myc_plugin` replaces any frontend-provided `host` value with a host allow-list. Guests receive only non-secret `effectiveValues` and `secretConfigured`; plaintext credentials are neither serialized nor exposed through an SDK getter.
 - The Pinia runtime Plugin Host loads, saves, resets, and caches snapshots. `PluginSettingsDialog.vue` uses SFC `<script setup>`, `<template>`, and scoped `<style>` and renders boolean, number, text, select, and password controls from declarative settings.
 - Plugin Store cards expose settings only when the manifest has definitions. Reset, update state, enable/disable, and uninstall remain Host-owned actions; update is intentionally disabled until a trusted update flow is implemented.
-- The final package is [myc.pdf-canvas-agent@0.2.0.myc](C:/Users/admin/Documents/Anyway/plugins/packages/myc.pdf-canvas-agent@0.2.0.myc), SHA-256 `6a46ec0140016076d2a1ca2cd6dc6965ddc4435e5728a47cf12dda86b9dc5b0d`.
+- The final package is [myc.pdf-canvas-agent@0.2.0.myc](C:/Users/admin/Documents/Anyway/plugins/packages/myc.pdf-canvas-agent@0.2.0.myc), SHA-256 `ac70003743141705062e5ced8f1d85c0b3d5424a841d9a2d05232b56ef636fdc` (v2 flat `plugin.json`, repacked by `scripts/pack-plugin.mjs`).
 
 ## Known limitations / next handoff
 

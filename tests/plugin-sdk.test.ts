@@ -72,11 +72,21 @@ test("SDK setting declarations keep credentials host-owned and write-only", () =
 });
 
 test("plugin-private i18n is namespaced and independent from LocalePlugin", () => {
-  const manifest = read("plugins/sources/myc.pdf-canvas-agent/plugin.yml");
+  const manifest = JSON.parse(read("plugins/sources/myc.pdf-canvas-agent/plugin.json")) as {
+    capabilities: string[];
+    privateI18n: { defaultLocale: string; locales: Record<string, string> };
+  };
   const english = JSON.parse(read("plugins/sources/myc.pdf-canvas-agent/locales/en.json")) as Record<string, string>;
   const chinese = JSON.parse(read("plugins/sources/myc.pdf-canvas-agent/locales/zh-CN.json")) as Record<string, string>;
-  assert.match(manifest, /privateI18n:[\s\S]*defaultLocale:\s+en[\s\S]*locales:\s*[\s\S]*en:\s+locales\/en\.json[\s\S]*zh-CN:\s+locales\/zh-CN\.json/);
-  assert.doesNotMatch(manifest, /i18n\.register/);
+  assert.equal(manifest.privateI18n.defaultLocale, "en");
+  assert.deepEqual(manifest.privateI18n.locales, {
+    en: "locales/en.json",
+    "zh-CN": "locales/zh-CN.json",
+  });
+  assert.ok(
+    !manifest.capabilities.includes("i18n.register"),
+    "plugin-private i18n must not declare the LocalePlugin capability",
+  );
   assert.equal(pluginPrivateMessageNamespace("myc.pdf-canvas-agent"), "plugin:myc.pdf-canvas-agent");
   const installed = {
     namespace: "myc.pdf-canvas-agent",
@@ -113,11 +123,47 @@ test("settings and options retain raw fallbacks with private message keys", () =
   assert.equal(normalized[0].options?.[0].label, "Fast");
   assert.equal(normalized[0].options?.[0].labelKey, "settings.thinking.options.low");
 
-  const manifest = read("plugins/sources/myc.pdf-canvas-agent/plugin.yml");
-  assert.match(manifest, /testActions:[\s\S]*id:\s+test-connection[\s\S]*type:\s+text[\s\S]*fileUpload:\s+never/);
-  assert.match(manifest, /testActions:[\s\S]*id:\s+test-pdf-extraction[\s\S]*type:\s+bundled-pdf[\s\S]*fixture:\s+host-minimal-pdf-v1[\s\S]*fileUpload:\s+may-upload/);
-  assert.doesNotMatch(manifest, /^\s+testAction:/m);
-  assert.match(manifest, /source:\s+environment[\s\S]*name:\s+MOONSHOT_API_KEY[\s\S]*fallbackSettingId:\s+api-key/);
+  const manifest = JSON.parse(read("plugins/sources/myc.pdf-canvas-agent/plugin.json")) as {
+    contributes?: {
+      configuration?: {
+        connections?: Array<{
+          id: string;
+          testActions?: Array<{
+            id: string;
+            kind: string;
+            input: { type: string; fileUpload?: string; fixture?: string };
+          }>;
+          apiKey?: { source: string; name: string; fallbackSettingId: string };
+        }>;
+      };
+    };
+  };
+  const provider = manifest.contributes?.configuration?.connections?.find(
+    (connection) => connection.id === "provider",
+  );
+  assert.ok(provider, "manifest must declare the provider connection");
+  const connectionTest = provider.testActions?.find(
+    (action) => action.id === "test-connection",
+  );
+  assert.ok(connectionTest, "manifest must declare the test-connection action");
+  assert.equal(connectionTest.input.type, "text");
+  assert.equal(connectionTest.input.fileUpload, "never");
+  const pdfTest = provider.testActions?.find(
+    (action) => action.id === "test-pdf-extraction",
+  );
+  assert.ok(pdfTest, "manifest must declare the test-pdf-extraction action");
+  assert.equal(pdfTest.input.type, "bundled-pdf");
+  assert.equal(pdfTest.input.fixture, "host-minimal-pdf-v1");
+  assert.equal(pdfTest.input.fileUpload, "may-upload");
+  assert.ok(
+    !("testAction" in provider),
+    "the legacy singular action must not duplicate the two canonical tests",
+  );
+  assert.deepEqual(provider.apiKey, {
+    source: "environment",
+    name: "MOONSHOT_API_KEY",
+    fallbackSettingId: "api-key",
+  });
 });
 
 test("SDKs expose private i18n and the canonical testActions list", () => {
