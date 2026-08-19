@@ -29,7 +29,7 @@ const MAX_METHODS_PER_SERVICE: usize = 32;
 const MAX_REQUIRED_CAPABILITIES: usize = 16;
 
 /// One callable method exposed by a service.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ServiceMethodDescriptor {
     pub name: String,
     pub description: Option<String>,
@@ -58,7 +58,7 @@ impl ServiceMethodDescriptor {
 }
 
 /// A bounded declaration of one in-memory service.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ServiceDescriptor {
     pub service_id: String,
     pub version: String,
@@ -332,6 +332,27 @@ impl ServiceRegistry {
             "method": method,
             "args": args,
         }))
+    }
+
+    /// Snapshot every non-expired registration for `service.list`.
+    pub fn list(&self, now_ms: u64) -> Vec<ServiceDescriptor> {
+        self.services
+            .values()
+            .filter(|record| now_ms < record.expires_at_ms)
+            .map(|record| record.descriptor.clone())
+            .collect()
+    }
+
+    /// Remove one registration for `service.unregister`; missing entries are
+    /// an error so callers can tell "already gone" from "removed now".
+    pub fn unregister(
+        &mut self,
+        service_id: &str,
+    ) -> Result<(), ServiceRegistryError> {
+        self.services
+            .remove(service_id)
+            .map(|_| ())
+            .ok_or_else(|| ServiceRegistryError::UnknownService(service_id.to_string()))
     }
 }
 

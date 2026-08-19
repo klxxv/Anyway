@@ -1254,6 +1254,10 @@ async fn dispatch(
         }
         "service.register" => dispatch_service_register(request, services),
         "service.call" => dispatch_service_call(request, services),
+        "service.list" => crate::host_bus::services::dispatch_service_list(services),
+        "service.unregister" => {
+            crate::host_bus::services::dispatch_service_unregister(request, services)
+        }
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }
@@ -1954,7 +1958,7 @@ fn dispatch_service_call(
         .map_err(|error| format!("service.call failed: {error}"))
 }
 
-fn inline_request<T: for<'de> serde::Deserialize<'de>>(
+pub fn inline_request<T: for<'de> serde::Deserialize<'de>>(
     request: &HostCallRequest,
 ) -> Result<T, String> {
     match &request.payload {

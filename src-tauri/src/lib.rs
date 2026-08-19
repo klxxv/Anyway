@@ -3,6 +3,7 @@ pub mod agent_host;
 pub mod deepseek_client;
 mod graph_cmds;
 pub mod graph_compiler;
+pub mod host_bus;
 pub mod kernel;
 mod kernel_commands;
 pub mod llm_client;
