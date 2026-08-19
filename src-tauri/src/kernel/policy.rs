@@ -681,6 +681,32 @@ impl CapabilityPolicy {
         Ok(lease)
     }
 
+    /// Renew a lease's expiry. Kernel-only; the lease must be active and the
+    /// new expiry must lie strictly in the future. Plugin leases (any
+    /// non-native-UI principal) must keep an expiry.
+    pub fn renew_lease(
+        &mut self,
+        issuer: &PrincipalId,
+        lease_id: u64,
+        expires_at: Option<u64>,
+        epoch: u64,
+    ) -> Result<CapabilityLease, PolicyError> {
+        if issuer != &self.kernel_principal {
+            return Err(PolicyError::IssuerNotKernel);
+        }
+        let lease = self
+            .leases
+            .get_mut(&lease_id)
+            .ok_or(PolicyError::UnknownLease(lease_id))?;
+        if lease.principal() != &self.native_ui_principal && expires_at.is_none() {
+            return Err(PolicyError::PluginLeaseMustExpire);
+        }
+        if !lease.renew(expires_at, epoch) {
+            return Err(PolicyError::LeaseInactive);
+        }
+        Ok(lease.clone())
+    }
+
     /// Revoke a lease. Revocation is kernel-only and monotonic.
     pub fn revoke_lease(
         &mut self,

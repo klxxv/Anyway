@@ -321,6 +321,28 @@ impl CapabilityLease {
         self.revoked_at = Some(epoch);
         true
     }
+
+    /// Extend (or clear, when `expires_at` is `None`) the lease expiry.
+    /// Renewal requires the lease to be currently active and the new expiry
+    /// to lie strictly in the future. Revoked leases never renew.
+    pub fn renew(&mut self, expires_at: Option<u64>, epoch: u64) -> bool {
+        if self.revoked_at.is_some() || !self.is_active_at(epoch) {
+            return false;
+        }
+        if expires_at.is_some_and(|expiry| expiry <= epoch) {
+            return false;
+        }
+        self.expires_at = expires_at;
+        true
+    }
+
+    pub fn expires_at(&self) -> Option<u64> {
+        self.expires_at
+    }
+
+    pub fn revoked_at(&self) -> Option<u64> {
+        self.revoked_at
+    }
 }
 
 #[cfg(test)]

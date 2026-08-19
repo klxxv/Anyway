@@ -482,6 +482,11 @@ impl CapabilityPolicyState {
     fn now_ms(&self) -> u64 {
         u64::try_from(self.clock_origin.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
+
+    /// Accessor for the host-bus lease domain (`lease.renew`).
+    pub fn policy(&self) -> &RwLock<CapabilityPolicy> {
+        &self.policy
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1109,6 +1114,7 @@ pub async fn kernel_host_call(
         kernel.services(),
         kernel.packages(),
         kernel.audit(),
+        &policy,
     )
     .await;
     let outcome = if handler_result.is_ok() {
@@ -1149,6 +1155,7 @@ async fn dispatch(
     services: &RwLock<ServiceRegistry>,
     packages: &RwLock<PackageGate>,
     audit: &RwLock<AuditLedger>,
+    policy: &CapabilityPolicyState,
 ) -> Result<Value, String> {
     match request.operation.as_str() {
         PLUGIN_LIST_OPERATION => {
@@ -1263,6 +1270,11 @@ async fn dispatch(
         "audit.read" => crate::host_bus::audit::dispatch_audit_read(request, audit),
         "blob.list" => crate::host_bus::blob::dispatch_blob_list(blobs),
         "blob.release" => crate::host_bus::blob::dispatch_blob_release(request, blobs),
+        "lease.renew" => crate::host_bus::lease::dispatch_lease_renew(
+            request,
+            policy.policy(),
+            policy.now_ms(),
+        ),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }

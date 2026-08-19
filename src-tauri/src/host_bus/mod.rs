@@ -22,6 +22,7 @@
 
 pub mod audit;
 pub mod blob;
+pub mod lease;
 pub mod services;
 
 /// A named middleware step in the fixed chain above.
