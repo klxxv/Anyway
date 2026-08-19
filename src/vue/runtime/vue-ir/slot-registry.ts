@@ -101,4 +101,40 @@ export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotD
     },
     render: nativeSlotRenderer("settings-panel"),
   }],
+  ["activity-sidebar", {
+    slotId: "activity-sidebar",
+    policy: {
+      allowedActions: ["sidebar.open", "sidebar.select"],
+      allowedCapabilities: ["project.folder", "git.repository.read"],
+      requireActionAllowlist: true,
+    },
+    render: nativeSlotRenderer("activity-sidebar"),
+  }],
+  ["results-panel", {
+    slotId: "results-panel",
+    policy: {
+      allowedActions: ["results.run", "results.inspect"],
+      allowedCapabilities: ["analysis.run", "graph.validate", "chain.score", "run.manifest", "run.result"],
+      requireActionAllowlist: true,
+    },
+    render: nativeSlotRenderer("results-panel"),
+  }],
+  ["agent-review-panel", {
+    slotId: "agent-review-panel",
+    policy: {
+      allowedActions: ["agent-review.accept", "agent-review.reject"],
+      allowedCapabilities: ["agent.review.request", "agent.graph.patch.propose"],
+      requireActionAllowlist: true,
+    },
+    render: nativeSlotRenderer("agent-review-panel"),
+  }],
+  ["status-bar", {
+    slotId: "status-bar",
+    policy: {
+      allowedActions: ["status.refresh"],
+      allowedCapabilities: ["git.autosave", "git.account.read"],
+      requireActionAllowlist: true,
+    },
+    render: nativeSlotRenderer("status-bar"),
+  }],
 ]);

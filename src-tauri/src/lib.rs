@@ -10,6 +10,7 @@ pub mod llm_plugin;
 pub mod llm_provider_registry;
 pub mod native_plugins;
 pub mod pdf_pipeline;
+pub mod plugin_manifest_v2;
 mod vsix_importer;
 mod plugin_settings;
 mod plugin_vm;

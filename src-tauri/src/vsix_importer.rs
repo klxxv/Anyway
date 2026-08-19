@@ -259,7 +259,7 @@ fn safe_version(value: &str) -> String {
     safe_slug(value, "0-0-0").chars().take(48).collect()
 }
 
-fn yaml_string(value: &str) -> String {
+fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"imported\"".to_string())
 }
 
@@ -274,13 +274,13 @@ fn plugin_manifest(
     description: &str,
 ) -> String {
     format!(
-        "apiVersion: researchcanvas.dev/v1alpha1\nkind: {kind}\nmetadata:\n  id: {}\n  name: {}\n  version: {}\n  publisher: {}\n  developer: {}\n  description: {}\nspec:\n  engine: declarative\n  entry: {entry}\n  capabilities:\n    - {capability}\n  permissions: []\n",
-        yaml_string(id),
-        yaml_string(name),
-        yaml_string(version),
-        yaml_string(publisher),
-        yaml_string(publisher),
-        yaml_string(description),
+        "{{\"apiVersion\":\"researchcanvas.dev/v1alpha1\",\"kind\":\"{kind}\",\"metadata\":{{\"id\":{},\"name\":{},\"version\":{},\"publisher\":{},\"developer\":{},\"description\":{}}},\"spec\":{{\"engine\":\"declarative\",\"entry\":\"{entry}\",\"capabilities\":[\"{capability}\"],\"permissions\":[]}}}}",
+        json_string(id),
+        json_string(name),
+        json_string(version),
+        json_string(publisher),
+        json_string(publisher),
+        json_string(description),
     )
 }
 
@@ -486,7 +486,7 @@ fn write_generated_package(path: &Path, package: &GeneratedPackage) -> Result<()
         let mut writer = ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         writer
-            .start_file("plugin.yml", options)
+            .start_file("plugin.json", options)
             .map_err(|error| error.to_string())?;
         writer
             .write_all(package.manifest.as_bytes())

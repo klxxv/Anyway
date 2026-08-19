@@ -1,0 +1,29 @@
+{
+  "name": "myc.i18n-ja",
+  "version": "1.0.1",
+  "publisher": "Research Canvas Community",
+  "developer": "Localization Example Team",
+  "description": "Demonstrates community-provided interface translations without adding languages to the host bundle.",
+  "license": "MIT",
+  "categories": [
+    "LocalePlugin"
+  ],
+  "main": "locales/ja-JP.json",
+  "engines": {
+    "engine": "declarative"
+  },
+  "capabilities": [
+    "i18n.register"
+  ],
+  "permissions": [],
+  "contributes": {
+    "locales": [
+      {
+        "locale": "ja-JP",
+        "name": "日本語",
+        "path": "locales/ja-JP.json"
+      }
+    ]
+  },
+  "displayName": "Japanese UI"
+}

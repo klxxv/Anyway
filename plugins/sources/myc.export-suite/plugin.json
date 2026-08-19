@@ -1,0 +1,36 @@
+{
+  "name": "myc.export-suite",
+  "version": "1.0.0",
+  "publisher": "Research Canvas",
+  "developer": "Workspace Platform Team",
+  "description": "Exports the current research graph as PDF, SVG, or PNG through a user-selected path.",
+  "license": "MIT",
+  "categories": [
+    "WorkspacePlugin"
+  ],
+  "main": "workspace-plugin.json",
+  "engines": {
+    "engine": "host-mediated"
+  },
+  "capabilities": [
+    "project.export"
+  ],
+  "permissions": [],
+  "contributes": {
+    "commands": [
+      {
+        "id": "export-artifacts",
+        "label": "Export PDF / SVG / PNG",
+        "description": "Render the current project through the bounded vector export host.",
+        "category": "export",
+        "capability": "project.export",
+        "formats": [
+          "pdf",
+          "svg",
+          "png"
+        ]
+      }
+    ]
+  },
+  "displayName": "Export Suite"
+}

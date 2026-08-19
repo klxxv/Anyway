@@ -1,0 +1,38 @@
+{
+  "name": "myc.git-workspace",
+  "version": "1.2.0",
+  "publisher": "Research Canvas",
+  "developer": "Provenance Platform Team",
+  "description": "Saves project snapshots to Git, displays the commit tree, and proposes graph patches from commit directives and tags.",
+  "license": "MIT",
+  "categories": [
+    "WorkspacePlugin"
+  ],
+  "main": "workspace-plugin.json",
+  "engines": {
+    "engine": "host-mediated"
+  },
+  "capabilities": [
+    "git.repository.read",
+    "git.repository.init",
+    "git.autosave",
+    "git.account.read",
+    "git.account.login",
+    "git.ssh.generate",
+    "git.ssh.upload",
+    "graph.patch.propose"
+  ],
+  "permissions": [],
+  "contributes": {
+    "commands": [
+      {
+        "id": "open-git-workspace",
+        "label": "Open Git workspace",
+        "description": "Inspect commits, refs, research directives, and review-gated graph proposals.",
+        "category": "git",
+        "capability": "git.repository.read"
+      }
+    ]
+  },
+  "displayName": "Git Workspace"
+}

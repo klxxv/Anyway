@@ -74,7 +74,7 @@ export interface VsixConvertedThemeResource {
   kind: "ThemePlugin";
   pluginId: string;
   version: string;
-  manifestPath: "plugin.yml";
+  manifestPath: "plugin.json";
   entryPath: "theme.json";
   theme: ThemeManifest;
   copiedAssets: string[];
@@ -84,7 +84,7 @@ export interface VsixConvertedIconThemeResource {
   kind: "IconTheme";
   pluginId: string;
   version: string;
-  manifestPath: "plugin.yml";
+  manifestPath: "plugin.json";
   entryPath: "icon-theme.json";
   iconTheme: IconThemeManifest;
   copiedAssets: string[];

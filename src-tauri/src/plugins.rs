@@ -921,7 +921,7 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
         }
         for (path, digest) in payloads {
             let relative = Path::new(path);
-            if path == "plugin.yml"
+            if path == "plugin.json"
                 || relative.is_absolute()
                 || relative
                     .components()
@@ -1025,15 +1025,15 @@ fn read_private_i18n_bundles(
 fn parse_private_i18n_manifest(
     manifest_text: &str,
 ) -> Result<Option<PluginPrivateI18nDefinition>, String> {
-    let document: serde_yaml::Value =
-        serde_yaml::from_str(manifest_text).map_err(|error| error.to_string())?;
+    let document: serde_json::Value =
+        serde_json::from_str(manifest_text).map_err(|error| error.to_string())?;
     let Some(spec) = document.get("spec") else {
         return Ok(None);
     };
     let Some(private_i18n) = spec.get("privateI18n") else {
         return Ok(None);
     };
-    serde_yaml::from_value(private_i18n.clone())
+    serde_json::from_value(private_i18n.clone())
         .map(Some)
         .map_err(|error| format!("Invalid privateI18n declaration: {error}"))
 }
@@ -1046,12 +1046,12 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
             }
         }
     }
-    let manifest_path = directory.join("plugin.yml");
+    let manifest_path = directory.join("plugin.json");
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("Could not read {}: {error}", manifest_path.display()))?;
     let private_i18n = parse_private_i18n_manifest(&manifest_text)?;
     let manifest: MycPluginManifest =
-        serde_yaml::from_str(&manifest_text).map_err(|error| error.to_string())?;
+        crate::plugin_manifest_v2::parse_plugin_manifest(&manifest_text)?;
     validate_manifest(&manifest)?;
     validate_private_i18n(private_i18n.as_ref())?;
 
@@ -1395,8 +1395,8 @@ fn walkdir_payloads(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-/// 从已打开的归档中读取 plugin.yml(含签名校验),供发现与安装共用。
-/// Reads plugin.yml from an already-opened archive (with signature verification),
+/// 从已打开的归档中读取 plugin.json(含签名校验),供发现与安装共用。
+/// Reads plugin.json from an already-opened archive (with signature verification),
 /// shared by discovery and install. This avoids a second `File::open` and the
 /// time-of-check/time-of-use race it introduces.
 fn read_archive_manifest_from_archive(
@@ -1407,14 +1407,14 @@ fn read_archive_manifest_from_archive(
         return Err("Plugin package contains too many files".to_string());
     }
     let mut entry = archive
-        .by_name("plugin.yml")
-        .map_err(|_| "plugin.yml is required at the package root".to_string())?;
+        .by_name("plugin.json")
+        .map_err(|_| "plugin.json is required at the package root".to_string())?;
     let mut text = String::new();
     entry
         .read_to_string(&mut text)
         .map_err(|error| error.to_string())?;
     let manifest: MycPluginManifest =
-        serde_yaml::from_str(&text).map_err(|error| error.to_string())?;
+        crate::plugin_manifest_v2::parse_plugin_manifest(&text)?;
     validate_manifest(&manifest)?;
 
     // --- Ed25519 签名验证 / Ed25519 signature verification ---
@@ -1526,7 +1526,7 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
                     .map(|part| part.to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("/");
-                if relative == "plugin.yml" {
+                if relative == "plugin.json" {
                     continue;
                 }
                 let Some(expected) = payloads.get(&relative) else {
