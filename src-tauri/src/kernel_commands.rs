@@ -1117,6 +1117,7 @@ pub async fn kernel_host_call(
         &policy,
         kernel.events(),
         kernel.supervisor(),
+        kernel.graph_storage(),
     )
     .await;
     let outcome = if handler_result.is_ok() {
@@ -1160,6 +1161,7 @@ async fn dispatch(
     policy: &CapabilityPolicyState,
     events: &RwLock<crate::kernel::events::EventBus>,
     supervisor: &RwLock<crate::kernel::supervisor::Supervisor>,
+    graph_storage: &RwLock<anyway_schema_v4::storage::InMemoryStorage>,
 ) -> Result<Value, String> {
     match request.operation.as_str() {
         PLUGIN_LIST_OPERATION => {
@@ -1284,6 +1286,12 @@ async fn dispatch(
         "event.poll" => crate::host_bus::events::dispatch_event_poll(request, events),
         "worker.spawn" => crate::host_bus::workers::dispatch_worker_spawn(request, supervisor),
         "worker.stop" => crate::host_bus::workers::dispatch_worker_stop(request, supervisor),
+        "graph.storage.put" => {
+            crate::host_bus::storage::dispatch_graph_storage_put(request, graph_storage)
+        }
+        "graph.storage.query" => {
+            crate::host_bus::storage::dispatch_graph_storage_query(request, graph_storage)
+        }
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }

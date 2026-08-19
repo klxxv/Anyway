@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 lopdf = "0.34"
 regex = "1"
 graphpatch-gen = { path = "../crates/graphpatch-gen" }
+anyway-schema-v4 = { path = "../crates/anyway-schema-v4" }
 research-graph-compiler = { path = "../crates/research-graph-compiler" }
 semantic-pipeline = { path = "../crates/semantic-pipeline" }
 serde = { version = "1", features = ["derive"] }

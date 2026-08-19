@@ -11,6 +11,7 @@ use super::rpc::RpcLedger;
 use super::scheduler::Scheduler;
 use super::service_registry::ServiceRegistry;
 use super::supervisor::Supervisor;
+use anyway_schema_v4::storage::InMemoryStorage;
 
 /// Application state that can be registered with Tauri's managed state.
 ///
@@ -29,6 +30,7 @@ pub struct KernelState {
     packages: Arc<RwLock<PackageGate>>,
     audit: Arc<RwLock<AuditLedger>>,
     events: Arc<RwLock<EventBus>>,
+    graph_storage: Arc<RwLock<InMemoryStorage>>,
 }
 
 impl KernelState {
@@ -43,6 +45,7 @@ impl KernelState {
             packages: Arc::new(RwLock::new(PackageGate::default())),
             audit: Arc::new(RwLock::new(AuditLedger::default())),
             events: Arc::new(RwLock::new(EventBus::default())),
+            graph_storage: Arc::new(RwLock::new(InMemoryStorage::default())),
         }
     }
 
@@ -137,6 +140,14 @@ impl KernelState {
 
     pub fn shared_events(&self) -> Arc<RwLock<EventBus>> {
         Arc::clone(&self.events)
+    }
+
+    pub fn graph_storage(&self) -> &RwLock<InMemoryStorage> {
+        self.graph_storage.as_ref()
+    }
+
+    pub fn shared_graph_storage(&self) -> Arc<RwLock<InMemoryStorage>> {
+        Arc::clone(&self.graph_storage)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {
