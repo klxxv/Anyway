@@ -5,6 +5,7 @@ use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use super::audit::AuditLedger;
 use super::blob::{BlobQuota, BlobStore};
 use super::bus::HostBus;
+use super::events::EventBus;
 use super::package_gate::PackageGate;
 use super::rpc::RpcLedger;
 use super::scheduler::Scheduler;
@@ -27,6 +28,7 @@ pub struct KernelState {
     services: Arc<RwLock<ServiceRegistry>>,
     packages: Arc<RwLock<PackageGate>>,
     audit: Arc<RwLock<AuditLedger>>,
+    events: Arc<RwLock<EventBus>>,
 }
 
 impl KernelState {
@@ -40,6 +42,7 @@ impl KernelState {
             services: Arc::new(RwLock::new(ServiceRegistry::default())),
             packages: Arc::new(RwLock::new(PackageGate::default())),
             audit: Arc::new(RwLock::new(AuditLedger::default())),
+            events: Arc::new(RwLock::new(EventBus::default())),
         }
     }
 
@@ -126,6 +129,14 @@ impl KernelState {
 
     pub fn shared_audit(&self) -> Arc<RwLock<AuditLedger>> {
         Arc::clone(&self.audit)
+    }
+
+    pub fn events(&self) -> &RwLock<EventBus> {
+        self.events.as_ref()
+    }
+
+    pub fn shared_events(&self) -> Arc<RwLock<EventBus>> {
+        Arc::clone(&self.events)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {

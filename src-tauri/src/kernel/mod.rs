@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod blob;
 pub mod bus;
+pub mod events;
 pub mod identity;
 pub mod lifecycle;
 pub mod package_gate;
