@@ -1362,19 +1362,6 @@ pub fn read_icon_theme_asset(
     ))
 }
 
-/// 将清单序列化为 JSON 并移除 signature 字段，用于签名验证。
-/// Serializes manifest to JSON with the signature field removed, for signature verification.
-fn manifest_to_json_without_signature(
-    manifest: &MycPluginManifest,
-) -> Result<serde_json::Value, String> {
-    let mut value = serde_json::to_value(manifest)
-        .map_err(|error| format!("Manifest serialization failed: {error}"))?;
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove("signature");
-    }
-    Ok(value)
-}
-
 /// 原子移动到 `installed` 前校验并暂存归档 / Validates and stages an archive before atomically renaming it into `installed`.
 /// 递归收集目录下全部文件路径(载荷校验用,不引外部 walkdir 依赖)。
 /// Recursively collects every file under a directory for payload verification.
@@ -1423,10 +1410,17 @@ fn read_archive_manifest_from_archive(
             return Err("Plugin manifest contains an empty signature field".to_string());
         }
         let trusted_keys = crate::signing::load_all_trusted_keys(base)?;
-        let manifest_without_sig = manifest_to_json_without_signature(&manifest)?;
+        // The signature covers the canonical raw manifest JSON (sorted keys,
+        // compact) with the `signature` field removed — the exact bytes the
+        // packager signed, independent of the internal v1 struct migration.
+        let mut raw_without_signature: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| error.to_string())?;
+        raw_without_signature
+            .as_object_mut()
+            .and_then(|object| object.remove("signature"));
         crate::signing::verify_manifest_signature(
             &manifest.metadata.publisher,
-            &manifest_without_sig,
+            &raw_without_signature,
             signature_b64,
             &trusted_keys,
         )?;

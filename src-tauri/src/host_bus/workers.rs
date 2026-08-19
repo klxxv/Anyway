@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::kernel::identity::{PrincipalId, WorkerId};
 use crate::kernel::lifecycle::LifecycleSpec;
-use crate::kernel::supervisor::{Supervisor, SupervisorAction, WorkerKind, WorkerSpec};
+use crate::kernel::supervisor::{Supervisor, SupervisorAction, WorkerSpec};
 use crate::kernel_commands::{inline_request, HostCallRequest};
 
 #[derive(Deserialize)]
