@@ -15,7 +15,7 @@ type ResearchEdgeProps = EdgeProps<WorkspaceEdgeData>;
 
 const props = defineProps<ResearchEdgeProps>();
 
-const relationType = computed(() => props.data?.record.type ?? "causes");
+const relationType = computed(() => props.data?.record.type ?? "T");
 const edgeStyle = computed(() => props.data?.edgeStyle);
 const routing = computed(() => edgeStyle.value?.routing ?? "orthogonal");
 const dragPreview = computed(() => props.data?.dragPreview === true);
@@ -44,15 +44,15 @@ const pathParts = computed(() => {
 const path = computed(() => pathParts.value[0]);
 const labelX = computed(() => pathParts.value[1] + (props.data?.labelOffsetX ?? 0));
 const labelY = computed(() => pathParts.value[2] + (props.data?.labelOffsetY ?? 0));
-const contradictory = computed(() => relationType.value === "contradicts");
+const contradictory = computed(() => props.data?.record.polarity === "negative");
 const relationStyle = computed(() => edgeStyle.value?.relations?.[relationType.value]);
 const diffState = computed(() => props.data?.diffState);
 
 const dash = computed(() => {
   if (diffState.value === "removed") return "6 5";
   if (relationStyle.value?.dash?.length) return relationStyle.value.dash.join(" ");
-  if (relationType.value === "controls") return "7 6";
-  if (relationType.value === "derived_from") return "2 4";
+  if (relationType.value === "I") return "7 6";
+  if (relationType.value === "M") return "2 4";
   if (contradictory.value) return "7 4";
   return undefined;
 });

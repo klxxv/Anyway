@@ -54,18 +54,8 @@ export type CanvasEdgeModel = {
 /** The adapter boundary keeps Vue Flow's runtime edge fields concrete. */
 export type ResearchVueFlowEdge = CanvasEdgeModel;
 
-const CONTROL_EDGE_TYPES = new Set<ResearchEdgeType>([
-  "controls",
-  "mediates",
-  "moderates",
-]);
-const DERIVED_EDGE_TYPES = new Set<ResearchEdgeType>(["derived_from"]);
-
 export function linkLegendFilterOf(edge: ResearchEdge): LinkLegendFilter {
-  if (edge.type === "contradicts") return "contradicts";
-  if (CONTROL_EDGE_TYPES.has(edge.type)) return "control";
-  if (DERIVED_EDGE_TYPES.has(edge.type)) return "derived";
-  return "causal";
+  return edge.type;
 }
 
 export function projectForLegendFilter(
@@ -314,7 +304,10 @@ export function applyNodeChangesCompat(
     const node = next[index];
     const updated: ResearchVueFlowNode = { ...node };
     if (change.type === "position") {
-      updated.position = change.position;
+      // Vue Flow emits position changes without a `position` on drag-end
+      // (`changed=false`); guard so we never clobber a node's position with
+      // `undefined` (vue-flow-core reads `node.position.x`).
+      if (change.position) updated.position = change.position;
       updated.dragging = change.dragging;
     } else if (change.type === "select") {
       updated.selected = change.selected;

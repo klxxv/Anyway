@@ -5,20 +5,13 @@ import {
   type ResearchEdgeType,
 } from "../../lib/research-types";
 
-/** 全量关系类型词条映射 / Complete i18n mapping for persisted relation semantics. */
+/** 全量关系类型词条映射 / Complete i18n mapping for the five operators. */
 export const edgeTypeMessageKeys: Record<ResearchEdgeType, MessageKey> = {
-  causes: "edgeType.causes",
-  correlates: "edgeType.correlates",
-  supports: "edgeType.supports",
-  contradicts: "edgeType.contradicts",
-  depends_on: "edgeType.dependsOn",
-  derived_from: "edgeType.derivedFrom",
-  part_of: "edgeType.partOf",
-  controls: "edgeType.controls",
-  mediates: "edgeType.mediates",
-  moderates: "edgeType.moderates",
-  uses: "edgeType.uses",
-  measures: "edgeType.measures",
+  T: "edgeType.transform",
+  K: "edgeType.kernel",
+  I: "edgeType.intervention",
+  M: "edgeType.marginalize",
+  Q: "edgeType.quotient",
 };
 
 export const editableEdgeTypes = [...EDGE_TYPES];

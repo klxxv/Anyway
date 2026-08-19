@@ -365,7 +365,7 @@ test("GraphPatch 从 PDF 提取结果中构建并验证契约", () => {
           id: "pdf-edge-para-p1",
           source: "pdf-p1",
           target: "pdf-sec-s1",
-          type: "part_of",
+          type: "M",
           note: "paragraph belongs to section",
         },
       },

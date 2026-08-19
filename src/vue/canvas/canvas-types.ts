@@ -14,7 +14,7 @@ import type {
   RadialMenuPreferences as WorkspaceRadialMenuPreferences,
 } from "../../../app/features/research-workspace/workspace-radial-menu";
 
-export type LinkLegendFilter = "causal" | "control" | "derived" | "contradicts";
+export type LinkLegendFilter = ResearchEdgeType;
 
 export type ContextMenuScope = "node" | "edge" | "canvas";
 

@@ -298,7 +298,7 @@ export function createEdgeInDraft(
     target,
     type,
     directed: true,
-    polarity: type === "contradicts" ? "negative" : "positive",
+    polarity: "positive",
     confidence: 1,
     conditions: [],
     evidenceIds: [],

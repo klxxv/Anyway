@@ -26,23 +26,43 @@ export const NODE_TYPES = [
 
 export type ResearchNodeType = (typeof NODE_TYPES)[number];
 
-/** 允许持久化的关系语义 / Persisted relation semantics. */
-export const EDGE_TYPES = [
-  "causes",
-  "correlates",
-  "supports",
-  "contradicts",
-  "depends_on",
-  "derived_from",
-  "part_of",
-  "controls",
-  "mediates",
-  "moderates",
-  "uses",
-  "measures",
-] as const;
+/**
+ * 允许持久化的关系语义，收敛为 5 个抽象算子（schema-v4 T/K/I/M/Q）。
+ * Persisted relation semantics, constrained to the five abstract operators
+ * (schema-v4 T/K/I/M/Q): Transform / Kernel / Intervention / Marginalization /
+ * Quotient. Evidence support/refutation is no longer an edge — it lives on
+ * `experiment.outcome` and `polarity`.
+ */
+export const EDGE_TYPES = ["T", "K", "I", "M", "Q"] as const;
 
 export type ResearchEdgeType = (typeof EDGE_TYPES)[number];
+
+/**
+ * Legacy 12-type → 5-operator convergence (implementation-plan.md §2.3).
+ * `supports`/`contradicts` fold into `K`; the refutation signal moves to
+ * `polarity`/`experiment.outcome`. Used to migrate persisted projects and
+ * incoming plugin patches.
+ */
+const LEGACY_EDGE_TO_OPERATOR: Record<string, ResearchEdgeType> = {
+  causes: "K",
+  correlates: "K",
+  supports: "K",
+  contradicts: "K",
+  depends_on: "T",
+  derived_from: "T",
+  uses: "T",
+  measures: "T",
+  part_of: "M",
+  controls: "K",
+  mediates: "K",
+  moderates: "K",
+};
+
+export function convergeLegacyEdgeType(type: string): ResearchEdgeType | null {
+  if ((EDGE_TYPES as readonly string[]).includes(type)) return type as ResearchEdgeType;
+  return LEGACY_EDGE_TO_OPERATOR[type] ?? null;
+}
+
 export type ReviewStatus = "draft" | "confirmed" | "disputed" | "deprecated";
 export type EvidenceStatus = "candidate" | "confirmed" | "verified" | "disputed";
 

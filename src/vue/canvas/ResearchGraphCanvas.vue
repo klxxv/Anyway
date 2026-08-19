@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   computed,
+  markRaw,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -91,8 +92,8 @@ const {
   interactionMode,
 } = storeToRefs(canvasStore);
 
-const nodeTypes = { researchNode: ResearchNodeCard };
-const edgeTypes = { researchEdge: ResearchEdgeLine };
+const nodeTypes = { researchNode: markRaw(ResearchNodeCard) };
+const edgeTypes = { researchEdge: markRaw(ResearchEdgeLine) };
 const fitViewOptions = { padding: 0.12, maxZoom: 1 };
 const minZoom = 0.45;
 const maxZoom = 1.7;
@@ -173,18 +174,11 @@ const defaultNodeLabels: Partial<Record<ResearchNodeType, string>> = {
 };
 
 const edgeLabelFallbacks: Record<ResearchEdgeType, string> = {
-  causes: "causes",
-  correlates: "correlates",
-  supports: "supports",
-  contradicts: "contradicts",
-  depends_on: "depends on",
-  derived_from: "derived from",
-  part_of: "part of",
-  controls: "controls",
-  mediates: "mediates",
-  moderates: "moderates",
-  uses: "uses",
-  measures: "measures",
+  T: "Transform",
+  K: "Kernel",
+  I: "Intervention",
+  M: "Marginalize",
+  Q: "Quotient",
 };
 
 function translate(key: string, fallback: string): string {
@@ -195,9 +189,16 @@ function nodeTypeLabel(type: ResearchNodeType): string {
   return translate(`node.${type === "concept" ? "group" : type === "dataset" ? "data" : type}`, defaultNodeLabels[type] ?? type);
 }
 
+const edgeTypeI18nKey: Record<ResearchEdgeType, string> = {
+  T: "transform",
+  K: "kernel",
+  I: "intervention",
+  M: "marginalize",
+  Q: "quotient",
+};
+
 function edgeTypeLabel(type: ResearchEdgeType): string {
-  const key = type === "depends_on" ? "dependsOn" : type === "derived_from" ? "derivedFrom" : type;
-  return translate(`edgeType.${key}`, edgeLabelFallbacks[type]);
+  return translate(`edgeType.${edgeTypeI18nKey[type]}`, edgeLabelFallbacks[type]);
 }
 
 function selectNode(nodeId: string) {
@@ -600,7 +601,7 @@ function handleEdgeContextMenu(payload: EdgeMouseEvent) {
   });
 }
 
-function handleSelectionDragStart(payload: NodeDragEvent) {
+function handleNodeDragStart(payload: NodeDragEvent) {
   const draggedNodes = researchNodesOf(payload.nodes);
   if (!draggedNodes.length) return;
   const draggedNodeIds = draggedNodes.map((node) => node.id);
@@ -609,7 +610,7 @@ function handleSelectionDragStart(payload: NodeDragEvent) {
   setIncidentEdgePreviewForNodes(draggedNodeIds, true);
 }
 
-function handleSelectionDragStop(payload: NodeDragEvent) {
+function handleNodeDragStop(payload: NodeDragEvent) {
   const draggedNodes = researchNodesOf(payload.nodes);
   if (!draggedNodes.length) return;
   const moves: CanvasNodeMove[] = draggedNodes.map((node) => ({
@@ -657,9 +658,10 @@ function handleSelectionContextMenu(payload: { event: MouseEvent; nodes: GraphNo
 }
 
 function handleNodesChange(changes: NodeChange[]) {
-  for (const change of changes) {
-    if (change.type === "remove") props.onDeleteNode?.(change.id), emit("delete-node", change.id);
-  }
+  // `remove` changes are prop-diff artifacts (e.g. the legend filter projecting
+  // out nodes). Actual deletion flows through the context menu → store commit →
+  // rebuild, never through Vue Flow's `remove` change, so we must not forward it
+  // as a delete (that would erase filtered-out nodes from the project).
   const nonRemove = changes.filter((change) => change.type !== "remove");
   if (nonRemove.length) nodes.value = applyNodeChangesCompat(nonRemove, nodes.value);
   if (changes.some((change) => change.type === "select")) {
@@ -668,9 +670,6 @@ function handleNodesChange(changes: NodeChange[]) {
 }
 
 function handleEdgesChange(changes: EdgeChange[]) {
-  for (const change of changes) {
-    if (change.type === "remove") props.onDeleteEdge?.(change.id), emit("delete-edge", change.id);
-  }
   const nonRemove = changes.filter((change) => change.type !== "remove");
   if (nonRemove.length) edges.value = applyEdgeChangesCompat(nonRemove, edges.value);
   if (changes.some((change) => change.type === "select")) {
@@ -1027,14 +1026,15 @@ const actionLabels: Record<ContextMenuActionId, string> = {
 };
 
 const legendItems = [
-  { key: "causal" as const, label: "Causal", lineClass: "border-ink/70" },
-  { key: "control" as const, label: "Control", lineClass: "border-dashed border-ink/70" },
-  { key: "derived" as const, label: "Derived", lineClass: "border-dotted border-ink/70" },
-  { key: "contradicts" as const, label: "Contradicts", lineClass: "border-dashed border-alert", textClass: "text-alert" },
+  { key: "T" as const, label: translate("edgeType.transform", "Transform"), lineClass: "border-ink/70" },
+  { key: "K" as const, label: translate("edgeType.kernel", "Kernel"), lineClass: "border-ink/70" },
+  { key: "I" as const, label: translate("edgeType.intervention", "Intervention"), lineClass: "border-dashed border-ink/70" },
+  { key: "M" as const, label: translate("edgeType.marginalize", "Marginalize"), lineClass: "border-dotted border-ink/70" },
+  { key: "Q" as const, label: translate("edgeType.quotient", "Quotient"), lineClass: "border-ink/40" },
 ];
 
 const legendCounts = computed(() => {
-  const counts = { causal: 0, control: 0, derived: 0, contradicts: 0 };
+  const counts: Record<ResearchEdgeType, number> = { T: 0, K: 0, I: 0, M: 0, Q: 0 };
   props.project.edges.forEach((edge) => {
     counts[linkLegendFilterOf(edge)] += 1;
   });
@@ -1226,8 +1226,8 @@ defineExpose({ fitView, openRadialMenu, closeRadialMenu, handleTrackpadFrame });
       @node-context-menu="handleNodeContextMenu"
       @edge-click="handleEdgeClick"
       @edge-context-menu="handleEdgeContextMenu"
-      @selection-drag-start="handleSelectionDragStart"
-      @selection-drag-stop="handleSelectionDragStop"
+      @node-drag-start="handleNodeDragStart"
+      @node-drag-stop="handleNodeDragStop"
       @selection-context-menu="handleSelectionContextMenu"
       @pane-click="handlePaneClick"
       @pane-context-menu="handlePaneContextMenu"
@@ -1285,7 +1285,7 @@ defineExpose({ fitView, openRadialMenu, closeRadialMenu, handleTrackpadFrame });
         v-for="item in legendItems"
         :key="item.key"
         class="flex w-full items-center gap-3 rounded-[3px] px-2 py-1.5 text-left transition hover:bg-ink/5"
-        :class="[props.linkFilter === item.key ? 'bg-blue-soft ring-1 ring-inset ring-blue/25' : '', item.textClass ?? '']"
+        :class="[props.linkFilter === item.key ? 'bg-blue-soft ring-1 ring-inset ring-blue/25' : '']"
         :aria-pressed="props.linkFilter === item.key"
         @click="props.onLegendFilter?.(props.linkFilter === item.key ? null : item.key); emit('legend-filter', props.linkFilter === item.key ? null : item.key)"
       >

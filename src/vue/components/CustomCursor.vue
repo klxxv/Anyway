@@ -85,7 +85,12 @@ function onSelectionMode(active: boolean) {
 onMounted(() => {
   if (enabled.value) {
     document.documentElement.classList.add("custom-cursor-active");
-    document.addEventListener("mousemove", onMouseMove, { passive: true });
+    // Capture phase on `window` so the cursor keeps tracking during Vue Flow
+    // node drags: d3-drag registers its own `mousemove` on `window` (capture,
+    // non-passive) and calls `stopImmediatePropagation()`, which would block a
+    // bubble-phase `document` listener. Registering here first (at mount) runs
+    // before d3's lazily-registered handler.
+    window.addEventListener("mousemove", onMouseMove, { capture: true, passive: true });
     document.addEventListener("mouseenter", onMouseEnter);
     document.addEventListener("mouseleave", onMouseLeave);
     document.addEventListener("mouseover", onMouseOver);
@@ -97,7 +102,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (enabled.value) {
     document.documentElement.classList.remove("custom-cursor-active");
-    document.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mousemove", onMouseMove, { capture: true });
     document.removeEventListener("mouseenter", onMouseEnter);
     document.removeEventListener("mouseleave", onMouseLeave);
     document.removeEventListener("mouseover", onMouseOver);

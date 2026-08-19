@@ -212,17 +212,17 @@ test("moveNodesInDraft repositions a group atomically", () => {
   );
 });
 
-test("createEdgeInDraft pushes a directed edge with polarity derived from type", () => {
+test("createEdgeInDraft pushes a directed edge with positive polarity", () => {
   const draft = cloneFixture();
-  createEdgeInDraft(draft, "edge-new", "variable-canopy", "paper-landsat", "contradicts");
+  createEdgeInDraft(draft, "edge-new", "variable-canopy", "paper-landsat", "K");
   const edge = draft.edges.find((item) => item.id === "edge-new");
   assert.ok(edge);
   assert.equal(edge.directed, true);
-  assert.equal(edge.polarity, "negative");
+  assert.equal(edge.polarity, "positive");
   assert.equal(edge.confidence, 1);
   assert.deepEqual(edge.provenance, { origin: "human", actorId: "local-researcher" });
 
-  createEdgeInDraft(draft, "edge-positive", "question-tree", "result-canopy", "supports");
+  createEdgeInDraft(draft, "edge-positive", "question-tree", "result-canopy", "T");
   assert.equal(
     draft.edges.find((item) => item.id === "edge-positive")?.polarity,
     "positive",
@@ -365,9 +365,9 @@ test("applyLayoutInDraft writes every projected placement position", () => {
 
 test("applyLayoutInDraft falls back to the first projected node when root is absent", () => {
   const draft = cloneFixture();
-  const projected = projectForLegendFilter(draft, "contradicts");
+  const projected = projectForLegendFilter(draft, "K");
   const expected = computeLayout(projected, "table", projected.nodes[0]?.id);
-  applyLayoutInDraft(draft, "table", "no-such-node", "contradicts");
+  applyLayoutInDraft(draft, "table", "no-such-node", "K");
   const filtered = draft.placements.filter((p) =>
     projected.nodes.some((node) => node.id === p.nodeId),
   );
@@ -394,7 +394,7 @@ function patch(operations: PluginGraphPatch["operations"]): PluginGraphPatch {
 
 test("patch operations sort into stable dependency phases", () => {
   const operations: PluginGraphPatch["operations"] = [
-    { op: "add-edge", edge: { id: "e", source: "a", target: "b", type: "causes" } },
+    { op: "add-edge", edge: { id: "e", source: "a", target: "b", type: "K" } },
     { op: "update-node", nodeId: "a", changes: { title: "t" } },
     { op: "add-node", node: { id: "a", type: "note", title: "A" } },
     { op: "update-edge", edgeId: "e", changes: { note: "n" } },
@@ -410,9 +410,9 @@ test("add-node and add-edge ops land on the draft with import provenance", () =>
   applyGraphPatchToDraft(
     draft,
     patch([
-      { op: "add-edge", edge: { id: "edge-new", source: "missing-a", target: "missing-b", type: "causes" } },
+      { op: "add-edge", edge: { id: "edge-new", source: "missing-a", target: "missing-b", type: "K" } },
       { op: "add-node", node: { id: "node-new", type: "note", title: "新节点", tags: ["t"] } },
-      { op: "add-edge", edge: { id: "edge-new-2", source: "node-new", target: "question-tree", type: "contradicts" } },
+      { op: "add-edge", edge: { id: "edge-new-2", source: "node-new", target: "question-tree", type: "K" } },
     ]),
     now,
   );
@@ -428,7 +428,7 @@ test("add-node and add-edge ops land on the draft with import provenance", () =>
   assert.equal(draft.edges.some((edge) => edge.id === "edge-new"), false);
   const addedEdge = draft.edges.find((edge) => edge.id === "edge-new-2")!;
   assert.ok(addedEdge);
-  assert.equal(addedEdge.polarity, "negative");
+  assert.equal(addedEdge.polarity, "positive");
   assert.equal(draft.placements.some((p) => p.nodeId === "node-new"), true);
 });
 
@@ -485,7 +485,7 @@ test("update-node and update-edge ops respect type and range guards", () => {
   assert.deepEqual(node.data.extra, 1);
   assert.equal(node.updatedAt, now);
   assert.equal(edge.note, "新备注");
-  assert.equal(edge.type, "causes"); // unsupported type ignored
+  assert.equal(edge.type, "K"); // unsupported type ignored
   assert.equal(edge.confidence, originalConfidence); // out-of-range confidence ignored
 });
 
@@ -512,7 +512,7 @@ test("patch apply reports skipped operations and records accurate activity", () 
     patch([
       { op: "add-node", node: { id: "n1", type: "note", title: "A" } },
       { op: "add-node", node: { id: "n1", type: "note", title: "Duplicate" } },
-      { op: "add-edge", edge: { id: "e1", source: "n1", target: "missing", type: "causes" } },
+      { op: "add-edge", edge: { id: "e1", source: "n1", target: "missing", type: "K" } },
     ]),
     now,
   );
@@ -531,7 +531,7 @@ test("patch apply with zero effective operations records skipped activity", () =
     draft,
     patch([
       { op: "add-node", node: { id: "question-tree", type: "note", title: "Duplicate" } },
-      { op: "add-edge", edge: { id: "e1", source: "missing", target: "missing", type: "causes" } },
+      { op: "add-edge", edge: { id: "e1", source: "missing", target: "missing", type: "K" } },
     ]),
     now,
   );

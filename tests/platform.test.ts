@@ -538,7 +538,7 @@ test("GraphPatch proposals are review-gated and structurally validated", () => {
             id: "long-note",
             source: "a",
             target: "b",
-            type: "causes",
+            type: "K",
             note: "x".repeat(2_001),
           },
         },

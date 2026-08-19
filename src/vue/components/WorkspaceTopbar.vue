@@ -2,7 +2,6 @@
 import { onBeforeUnmount, ref, type Component, type Ref } from "vue";
 import {
   IconAdjustmentsHorizontal,
-  IconAlertTriangle,
   IconArrowBackUp,
   IconArrowForwardUp,
   IconArrowUpRight,
@@ -77,10 +76,11 @@ const nodeOptions: Array<MenuOption<ResearchNodeType>> = [
 ];
 
 const connectionOptions: Array<MenuOption<ResearchEdgeType>> = [
-  { value: "causes", labelKey: "relation.causal", descriptionKey: "relation.causalDesc", icon: IconArrowUpRight },
-  { value: "controls", labelKey: "relation.control", descriptionKey: "relation.controlDesc", icon: IconAdjustmentsHorizontal },
-  { value: "derived_from", labelKey: "relation.derived", descriptionKey: "relation.derivedDesc", icon: IconGitBranch },
-  { value: "contradicts", labelKey: "relation.contradicts", descriptionKey: "relation.contradictsDesc", icon: IconAlertTriangle },
+  { value: "T", labelKey: "edgeType.transform", descriptionKey: "edgeType.transformDesc", icon: IconArrowUpRight },
+  { value: "K", labelKey: "edgeType.kernel", descriptionKey: "edgeType.kernelDesc", icon: IconGitBranch },
+  { value: "I", labelKey: "edgeType.intervention", descriptionKey: "edgeType.interventionDesc", icon: IconAdjustmentsHorizontal },
+  { value: "M", labelKey: "edgeType.marginalize", descriptionKey: "edgeType.marginalizeDesc", icon: IconHierarchy2 },
+  { value: "Q", labelKey: "edgeType.quotient", descriptionKey: "edgeType.quotientDesc", icon: IconNetwork },
 ];
 
 const layoutMessageKeys: Record<LayoutMode, [MessageKey, MessageKey]> = {

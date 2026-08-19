@@ -55,7 +55,7 @@ function edge(type: ResearchEdge["type"], override: Partial<ResearchEdge> = {}):
     target: "target",
     type,
     directed: true,
-    polarity: type === "contradicts" ? "negative" : "positive",
+    polarity: "positive",
     conditions: [],
     evidenceIds: [],
     provenance: { origin: "human" },
@@ -80,15 +80,14 @@ test("bundled workspace example is a complete Chinese research project", () => {
   assert.ok(zenWorkspaceFixture.edges.every((edge) => /[\u3400-\u9fff]/u.test(edge.note ?? "")));
 });
 
-test("legend families classify relation semantics deterministically", () => {
-  assert.equal(linkLegendFilterOf(edge("causes")), "causal");
-  assert.equal(linkLegendFilterOf(edge("supports")), "causal");
-  assert.equal(linkLegendFilterOf(edge("controls")), "control");
-  assert.equal(linkLegendFilterOf(edge("mediates")), "control");
-  assert.equal(linkLegendFilterOf(edge("derived_from")), "derived");
-  assert.equal(linkLegendFilterOf(edge("contradicts")), "contradicts");
-  assert.equal(edgeMatchesLegendFilter(edge("uses"), "causal"), true);
-  assert.equal(edgeMatchesLegendFilter(edge("uses"), "derived"), false);
+test("link legend filter is the operator itself", () => {
+  assert.equal(linkLegendFilterOf(edge("T")), "T");
+  assert.equal(linkLegendFilterOf(edge("K")), "K");
+  assert.equal(linkLegendFilterOf(edge("I")), "I");
+  assert.equal(linkLegendFilterOf(edge("M")), "M");
+  assert.equal(linkLegendFilterOf(edge("Q")), "Q");
+  assert.equal(edgeMatchesLegendFilter(edge("K"), "K"), true);
+  assert.equal(edgeMatchesLegendFilter(edge("K"), "T"), false);
 });
 
 test("every persisted relation type has English and Chinese UI copy", () => {
@@ -101,26 +100,40 @@ test("every persisted relation type has English and Chinese UI copy", () => {
   }
 });
 
-test("legacy raw relation notes fall back to localized labels", () => {
-  const legacy = edge("depends_on");
-  legacy.note = "depends on";
-  assert.equal(customEdgeNote(legacy), "");
-  legacy.note = "仅在高温日成立";
-  assert.equal(customEdgeNote(legacy), "仅在高温日成立");
+test("raw relation notes fall back when they equal the operator", () => {
+  const raw = edge("T");
+  raw.note = "T";
+  assert.equal(customEdgeNote(raw), "");
+  raw.note = "仅在高温日成立";
+  assert.equal(customEdgeNote(raw), "仅在高温日成立");
 });
 
 test("legend projection keeps connected nodes without mutating the project", () => {
   const before = JSON.stringify(zenWorkspaceFixture);
-  const projected = projectForLegendFilter(zenWorkspaceFixture, "contradicts");
+  const projected = projectForLegendFilter(zenWorkspaceFixture, "K");
 
-  assert.equal(projected.edges.length, 1);
+  assert.equal(projected.edges.length, 6);
   assert.deepEqual(
     projected.nodes.map((node) => node.id).sort(),
-    ["paper-nguyen", "paper-zhang"],
+    [
+      "paper-nguyen",
+      "paper-zhang",
+      "result-canopy",
+      "variable-canopy",
+      "variable-density",
+      "variable-temperature",
+    ],
   );
   assert.deepEqual(
     projected.placements.map((placement) => placement.nodeId).sort(),
-    ["paper-nguyen", "paper-zhang"],
+    [
+      "paper-nguyen",
+      "paper-zhang",
+      "result-canopy",
+      "variable-canopy",
+      "variable-density",
+      "variable-temperature",
+    ],
   );
   assert.equal(JSON.stringify(zenWorkspaceFixture), before);
 });
@@ -205,9 +218,9 @@ test("three downward sibling edges receive distinct border anchors", () => {
     { id: "p-right", viewId: "view-main", nodeId: "result-canopy", x: 240, y: 240, width: 164, height: 116 },
   ];
   project.edges = [
-    edge("causes", { id: "edge-left", source: "variable-canopy", target: "variable-temperature" }),
-    edge("causes", { id: "edge-center", source: "variable-canopy", target: "method-ndvi" }),
-    edge("causes", { id: "edge-right", source: "variable-canopy", target: "result-canopy" }),
+    edge("K", { id: "edge-left", source: "variable-canopy", target: "variable-temperature" }),
+    edge("K", { id: "edge-center", source: "variable-canopy", target: "method-ndvi" }),
+    edge("K", { id: "edge-right", source: "variable-canopy", target: "result-canopy" }),
   ];
   const routes = computeEdgeRoutes(project);
   assert.deepEqual(

@@ -70,7 +70,7 @@ const samplePatch: PluginGraphPatch = {
         id: "pdf-edge-para-p1",
         source: "pdf-p1",
         target: "pdf-sec-s1",
-        type: "part_of",
+        type: "M",
         note: "paragraph belongs to section",
       },
     },

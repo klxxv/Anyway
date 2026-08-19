@@ -58,7 +58,13 @@ const nodeKind = (type: ResearchNodeType) => {
   return keys[type] ? t(keys[type]!) : type;
 };
 const edgeKind = (type: ResearchEdge["type"]) => {
-  const keys: Partial<Record<ResearchEdge["type"], MessageKey>> = { causes: "relation.causal", controls: "relation.control", derived_from: "relation.derived", contradicts: "relation.contradicts" };
+  const keys: Partial<Record<ResearchEdge["type"], MessageKey>> = {
+    T: "edgeType.transform",
+    K: "edgeType.kernel",
+    I: "edgeType.intervention",
+    M: "edgeType.marginalize",
+    Q: "edgeType.quotient",
+  };
   return keys[type] ? t(keys[type]!) : type;
 };
 const versionRows = (version: DiffVersion, stateOf: (id: string) => DiffState | null) => {

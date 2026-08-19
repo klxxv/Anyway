@@ -1,4 +1,9 @@
-import { EDGE_TYPES, NODE_TYPES, type ProjectState } from "./research-types";
+import {
+  convergeLegacyEdgeType,
+  NODE_TYPES,
+  type ProjectState,
+  type ResearchEdgeType,
+} from "./research-types";
 
 export const projectFileExtensions = ["mycproj", "json"] as const;
 
@@ -56,7 +61,7 @@ export function isProjectState(value: unknown): value is ProjectState {
       !isRecord(edge) ||
       typeof edge.id !== "string" ||
       edgeIds.has(edge.id) ||
-      !EDGE_TYPES.includes(edge.type as (typeof EDGE_TYPES)[number]) ||
+      (typeof edge.type !== "string" || convergeLegacyEdgeType(edge.type) === null) ||
       typeof edge.source !== "string" ||
       typeof edge.target !== "string" ||
       !nodeIds.has(edge.source) ||
@@ -83,11 +88,35 @@ export function isProjectState(value: unknown): value is ProjectState {
   return true;
 }
 
+/** Migrate legacy 12-type edges onto the five-operator basis in place. */
+export function migrateLegacyEdgeTypes(project: ProjectState): ProjectState {
+  const migrate = (type: string | undefined): string | undefined => {
+    if (typeof type !== "string") return type;
+    return convergeLegacyEdgeType(type) ?? type;
+  };
+  return {
+    ...project,
+    edges: project.edges.map((edge) => ({
+      ...edge,
+      type: migrate(edge.type) as ResearchEdgeType,
+    })),
+    scenarios: project.scenarios.map((scenario) => ({
+      ...scenario,
+      edgeOverrides: Object.fromEntries(
+        Object.entries(scenario.edgeOverrides).map(([id, override]) => [
+          id,
+          override.type ? { ...override, type: migrate(override.type) as ResearchEdgeType } : override,
+        ]),
+      ),
+    })),
+  };
+}
+
 export function parseProjectText(text: string): ProjectState {
   if (text.length > 32 * 1024 * 1024) throw new Error("PROJECT_FILE_TOO_LARGE");
   const value: unknown = JSON.parse(text);
   if (!isProjectState(value)) throw new Error("PROJECT_FILE_INVALID");
-  return value;
+  return migrateLegacyEdgeTypes(value);
 }
 
 export function projectFileStem(project: Pick<ProjectState, "title" | "id">) {

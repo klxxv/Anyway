@@ -3,7 +3,6 @@ import type {
   LayoutResult,
   ProjectState,
   ResearchEdge,
-  ResearchEdgeType,
 } from "../research-types";
 import { traverseGraph } from "../graph";
 
@@ -53,16 +52,15 @@ function topologicalDepths(project: ProjectState, edgeIds?: Set<string>) {
   return depth;
 }
 
-/** 从关系语义选择证据或反驳链边 / Selects evidence or refutation-chain edges by relation semantics. */
+/** 从关系语义选择证据或反驳链边 / Selects evidence or refutation-chain edges. */
 function chainEdgeIds(project: ProjectState, mode: "evidence" | "refutation") {
-  const supportTypes = new Set<ResearchEdgeType>(["supports", "derived_from", "measures", "uses"]);
   return new Set(
     project.edges
       .filter((edge) => {
         if (mode === "refutation") {
-          return edge.type === "contradicts" || edge.experiment?.outcome === "refutes";
+          return edge.polarity === "negative" || edge.experiment?.outcome === "refutes";
         }
-        return supportTypes.has(edge.type) || edge.experiment?.outcome === "supports";
+        return edge.type === "T" || edge.experiment?.outcome === "supports";
       })
       .map((edge) => edge.id),
   );

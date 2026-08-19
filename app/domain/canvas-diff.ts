@@ -14,7 +14,7 @@ import type {
   ResearchEdge,
   ResearchNode,
 } from "../lib/research-types";
-import { EDGE_TYPES, NODE_TYPES } from "../lib/research-types";
+import { NODE_TYPES, convergeLegacyEdgeType } from "../lib/research-types";
 import { canonicalizeDiffValue } from "../lib/graph/canvas-diff";
 import type { PluginGraphPatch } from "../plugins/contracts";
 
@@ -366,16 +366,16 @@ function materializeReviewPatchForDiff(
       if (isRecord(operation.changes.data)) node.data = { ...node.data, ...operation.changes.data };
     } else if (operation.op === "add-edge") {
       if (project.edges.some((edge) => edge.id === operation.edge.id) ||
-          !EDGE_TYPES.includes(operation.edge.type as (typeof EDGE_TYPES)[number]) ||
+          convergeLegacyEdgeType(operation.edge.type) === null ||
           !project.nodes.some((node) => node.id === operation.edge.source) ||
           !project.nodes.some((node) => node.id === operation.edge.target)) continue;
       project.edges.push({
         id: operation.edge.id,
-        type: operation.edge.type as (typeof EDGE_TYPES)[number],
+        type: convergeLegacyEdgeType(operation.edge.type)!,
         source: operation.edge.source,
         target: operation.edge.target,
         directed: true,
-        polarity: operation.edge.type === "contradicts" ? "negative" : "positive",
+        polarity: "positive",
         conditions: [],
         evidenceIds: [],
         note: operation.edge.note,
@@ -385,7 +385,7 @@ function materializeReviewPatchForDiff(
       const edge = project.edges.find((candidate) => candidate.id === operation.edgeId);
       if (!edge) continue;
       if (typeof operation.changes.note === "string") edge.note = operation.changes.note;
-      if (typeof operation.changes.type === "string" && EDGE_TYPES.includes(operation.changes.type as (typeof EDGE_TYPES)[number])) edge.type = operation.changes.type as (typeof EDGE_TYPES)[number];
+      if (typeof operation.changes.type === "string" && convergeLegacyEdgeType(operation.changes.type) !== null) edge.type = convergeLegacyEdgeType(operation.changes.type)!;
       if (typeof operation.changes.confidence === "number" && operation.changes.confidence >= 0 && operation.changes.confidence <= 1) edge.confidence = operation.changes.confidence;
     }
   }

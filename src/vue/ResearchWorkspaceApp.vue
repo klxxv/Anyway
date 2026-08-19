@@ -89,10 +89,11 @@ const layoutLabelKeys: Record<LayoutMode, string> = {
 };
 
 const linkFilterLabelKeys: Record<LinkLegendFilter, string> = {
-  causal: "relation.causal",
-  control: "relation.control",
-  derived: "relation.derived",
-  contradicts: "relation.contradicts",
+  T: "edgeType.transform",
+  K: "edgeType.kernel",
+  I: "edgeType.intervention",
+  M: "edgeType.marginalize",
+  Q: "edgeType.quotient",
 };
 
 const { t } = useI18n();

@@ -238,7 +238,7 @@ export const useProjectStore = defineStore("project", () => {
   const createEdge = (
     source: string,
     target: string,
-    type: ResearchEdgeType = "causes",
+    type: ResearchEdgeType = "T",
   ): string | undefined => {
     if (!source || !target || source === target) return undefined;
     if (

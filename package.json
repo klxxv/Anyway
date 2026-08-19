@@ -36,6 +36,7 @@
     "@vue-flow/minimap": "^1.5.4",
     "drizzle-orm": "0.45.2",
     "jspdf": "^4.2.1",
+    "morphicons": "^1.7.0",
     "pinia": "^4.0.2",
     "vue": "^3.5.18"
   },

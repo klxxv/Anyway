@@ -1,9 +1,8 @@
 import type {
   ProjectState,
-  ResearchEdgeType,
   ResearchNodeType,
 } from "../../../lib/research-types";
-import { EDGE_TYPES, NODE_TYPES } from "../../../lib/research-types";
+import { NODE_TYPES, convergeLegacyEdgeType } from "../../../lib/research-types";
 import type { GraphPatchOperation, PluginGraphPatch } from "../../../plugins/contracts";
 import { makeId } from "./commit-logic";
 
@@ -105,7 +104,7 @@ export function applyGraphPatchToDraft(
     } else if (operation.op === "add-edge") {
       if (
         draft.edges.some((edge) => edge.id === operation.edge.id) ||
-        !EDGE_TYPES.includes(operation.edge.type as (typeof EDGE_TYPES)[number]) ||
+        convergeLegacyEdgeType(operation.edge.type) === null ||
         !draft.nodes.some((node) => node.id === operation.edge.source) ||
         !draft.nodes.some((node) => node.id === operation.edge.target)
       ) {
@@ -114,11 +113,11 @@ export function applyGraphPatchToDraft(
       }
       draft.edges.push({
         id: operation.edge.id,
-        type: operation.edge.type as ResearchEdgeType,
+        type: convergeLegacyEdgeType(operation.edge.type)!,
         source: operation.edge.source,
         target: operation.edge.target,
         directed: true,
-        polarity: operation.edge.type === "contradicts" ? "negative" : "positive",
+        polarity: "positive",
         conditions: [],
         evidenceIds: [],
         note: operation.edge.note,
@@ -157,9 +156,9 @@ export function applyGraphPatchToDraft(
       if (typeof operation.changes.note === "string") edge.note = operation.changes.note;
       if (
         typeof operation.changes.type === "string" &&
-        EDGE_TYPES.includes(operation.changes.type as ResearchEdgeType)
+        convergeLegacyEdgeType(operation.changes.type) !== null
       ) {
-        edge.type = operation.changes.type as ResearchEdgeType;
+        edge.type = convergeLegacyEdgeType(operation.changes.type)!;
       }
       if (
         typeof operation.changes.confidence === "number" &&

@@ -34,7 +34,7 @@ export const useWorkspaceUiStore = defineStore("workspace-ui", () => {
   const searchOpen = ref(false);
   const inspectorOpen = ref(true);
   const connectMode = ref(false);
-  const connectType = ref<ResearchEdgeType>("causes");
+  const connectType = ref<ResearchEdgeType>("T");
   const addRequest = ref(0);
   const composer = ref<ComposerState | null>(null);
   const layoutMode = ref<LayoutMode | null>(null);

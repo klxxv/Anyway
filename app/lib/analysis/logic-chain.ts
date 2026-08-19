@@ -14,7 +14,7 @@ export function computeLogicChain(
   const chosen =
     mode === "refutation"
       ? project.edges.filter(
-          (edge) => edge.type === "contradicts" || edge.experiment?.outcome === "refutes",
+          (edge) => edge.polarity === "negative" || edge.experiment?.outcome === "refutes",
         )
       : mode === "effective"
         ? completed.filter(
@@ -23,10 +23,7 @@ export function computeLogicChain(
               Math.abs(edge.experiment?.delta ?? 0) >= 0.005,
           )
         : project.edges.filter(
-            (edge) =>
-              edge.type === "supports" ||
-              edge.type === "derived_from" ||
-              edge.experiment?.outcome === "supports",
+            (edge) => edge.type === "T" || edge.experiment?.outcome === "supports",
           );
 
   const targetFiltered = targetId

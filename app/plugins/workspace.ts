@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import type { ProjectState } from "../lib/research-types";
+import type { ProjectState, ResearchEdgeType } from "../lib/research-types";
 import type {
   InstalledMycPlugin,
   InstalledPluginLocale,
@@ -80,9 +80,10 @@ export function projectToSvg(project: ProjectState): string {
       const y1 = source.y + source.height / 2;
       const x2 = target.x + target.width / 2;
       const y2 = target.y + target.height / 2;
-      const dash = edge.type === "controls" ? ' stroke-dasharray="8 6"' : edge.type === "derived_from" ? ' stroke-dasharray="3 5"' : "";
-      const color = edge.type === "contradicts" ? "#d15a53" : "#666d75";
-      const label = escapeXml(edge.note?.trim() || edge.type.replaceAll("_", " "));
+      const dash = edge.type === "I" ? ' stroke-dasharray="8 6"' : edge.type === "M" ? ' stroke-dasharray="3 5"' : "";
+      const edgeColors: Record<ResearchEdgeType, string> = { T: "#5271c7", K: "#25836f", I: "#c98a2b", M: "#7d8796", Q: "#6d5bc1" };
+      const color = edgeColors[edge.type];
+      const label = escapeXml(edge.note?.trim() || edge.type);
       return `<g><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.4"${dash}/><text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 7}" text-anchor="middle" fill="${color}" font-size="12" font-family="serif">${label}</text></g>`;
     })
     .join("");
