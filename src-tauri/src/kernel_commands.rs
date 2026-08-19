@@ -1108,6 +1108,7 @@ pub async fn kernel_host_call(
         kernel.blobs(),
         kernel.services(),
         kernel.packages(),
+        kernel.audit(),
     )
     .await;
     let outcome = if handler_result.is_ok() {
@@ -1147,6 +1148,7 @@ async fn dispatch(
     blobs: &RwLock<BlobStore>,
     services: &RwLock<ServiceRegistry>,
     packages: &RwLock<PackageGate>,
+    audit: &RwLock<AuditLedger>,
 ) -> Result<Value, String> {
     match request.operation.as_str() {
         PLUGIN_LIST_OPERATION => {
@@ -1258,6 +1260,7 @@ async fn dispatch(
         "service.unregister" => {
             crate::host_bus::services::dispatch_service_unregister(request, services)
         }
+        "audit.read" => crate::host_bus::audit::dispatch_audit_read(request, audit),
         _ => Err("operation has no registered kernel handler".to_string()),
     }
 }

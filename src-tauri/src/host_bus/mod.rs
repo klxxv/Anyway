@@ -20,6 +20,7 @@
 //! `storage.rs` / `audit.rs` / `ir.rs` / `blob.rs` / `lease.rs`），handler 只依赖
 //! 内核状态（`KernelState` 的 RwLock 分域），不互相 import 具体实现。
 
+pub mod audit;
 pub mod services;
 
 /// A named middleware step in the fixed chain above.
