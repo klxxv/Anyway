@@ -152,14 +152,11 @@ npx tsx --test tests/vue-ui-ir.test.ts
 
 ## 📍 第一阶段边界和后续接线
 
-本阶段只建立前端契约、解析器、renderer 和局部测试，不接入安装器、Rust Kernel、Blob Store 或现有插件 manifest。主线接线需要补充：
+第一阶段的契约、解析器、renderer 和局部测试已落地；官方插件接线也已打通：
 
-- 将插件 manifest 的 UI 声明映射到 `UiIrPermissionPolicy`
-- 由 Host 为每个插件注入独立 `pluginId` 和 capability allowlist
-- 将 `UiIrActionRequest` 封装进统一 Host SDK envelope
-- 让 Blob/大型列表使用 BlobRef 或分页 binding，不把大 payload 塞进 IR
-- 把 parser 的限制和 action 审计结果接入安装/启用生命周期
-- 为原生 Vue slot 建立固定的 Host slot registry
+- ✅ 插件 manifest 的 UI 声明已映射到 `UiIrPermissionPolicy`：v2 平面清单的 `contributes.uiIr` 经 `MycPluginContributions.ui_ir` 透传到安装清单面（`plugin.list`）。
+- ✅ 官方 `myc.pdf-canvas-agent@0.4.0` 声明 `agent.review` 插槽贡献；`AgentReviewPanel.vue` 用 `permissionPolicyForContributions` + `parseUiIR` 校验，由 `UiIRRenderer` 渲染，`review.accept/review.reject` 动作解析到宿主原生审阅处理器。
+- 尚未接线：第三方插件的 Host 注入、`UiIrActionRequest` 到统一 Host SDK envelope 的自动映射、BlobRef/分页 binding、安装/启用生命周期的解析审计钩子。
 
 ## References
 

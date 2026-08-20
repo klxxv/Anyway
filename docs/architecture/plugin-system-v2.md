@@ -125,6 +125,10 @@ HostCallResponse
 9. `graph.ir.compile/query`
 10. 全量测试 + 迁移 `.myc` 包
 
-> 状态：全部完成。`plugins/packages/*.myc` 已用 `pack-plugin.mjs` 重建为 v2 JSON 清单
-> （三个历史 `myc.pdf-canvas-agent` 版本由 v1 YAML 原位转换为 v2 平面 JSON，载荷字节不变）；
+> 状态：全部完成。`plugins/packages/*.myc` 已用 `pack-plugin.mjs` 重建为 v2 JSON 清单；
+> 官方 `myc.pdf-canvas-agent@0.4.0` 已成为第一个 host-bus 消费者：抽取输出
+> `myc.llm.v4`（ExtractionV3）→ 原生中间件链 `graph.ir.compile` → `graph.storage.put`
+> → `event.publish` → review-gated GraphPatch；并声明 `official: true` 与 Vue IR
+> 审阅插槽。旧语义管线（Pass C/D、AgentCandidates、graphpatch-gen、semantic-pipeline
+> crate）已随 0.1.0–0.3.0 历史包一并移除；
 > `plugins::tests::tracked_packages_pass_the_full_v2_install_pipeline` 对每个跟踪包走完整安装管线回归。

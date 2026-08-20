@@ -159,10 +159,14 @@ pub struct PluginConnectionTestAction {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum PluginConnectionTestActionInput {
     #[serde(rename = "text")]
-    Text { file_upload: String },
+    Text {
+        #[serde(rename = "fileUpload", alias = "file_upload")]
+        file_upload: String,
+    },
     #[serde(rename = "bundled-pdf")]
     BundledPdf {
         fixture: String,
+        #[serde(rename = "fileUpload", alias = "file_upload")]
         file_upload: String,
     },
 }
@@ -906,15 +910,31 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 "agent.graph.patch.propose",
                 "agent.review.request",
             ];
-            if manifest.spec.capabilities.is_empty()
-                || !manifest
-                    .spec
-                    .capabilities
-                    .iter()
-                    .all(|capability| AGENT_CAPABILITIES.contains(&capability.as_str()))
-            {
+            // 官方 host-mediated agent 在清单中声明其 host-bus 数据契约;这些
+            // 能力由宿主以 native principal 代持执行,绝不授予 agent 本体。
+            // Official host-mediated agents declare their host-bus data
+            // contract in the manifest; the host exercises these capabilities
+            // as the native principal — they are never granted to the agent.
+            const HOST_BUS_CONTRACT_CAPABILITIES: [&str; 6] = [
+                "graph.ir",
+                "graph.storage.read",
+                "graph.storage.write",
+                "host-bus.event",
+                "audit.read",
+                "blob.manage",
+            ];
+            let has_agent_capability = manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|capability| AGENT_CAPABILITIES.contains(&capability.as_str()));
+            let all_declared = manifest.spec.capabilities.iter().all(|capability| {
+                AGENT_CAPABILITIES.contains(&capability.as_str())
+                    || HOST_BUS_CONTRACT_CAPABILITIES.contains(&capability.as_str())
+            });
+            if !has_agent_capability || !all_declared {
                 return Err(
-                    "AgentPlugin capabilities must be a non-empty subset of agent.pdf.read, agent.graph.patch.propose, agent.review.request"
+                    "AgentPlugin capabilities must include at least one of agent.pdf.read, agent.graph.patch.propose, agent.review.request, plus optional host-bus contract capabilities (graph.ir, graph.storage.read/write, host-bus.event, audit.read, blob.manage)"
                         .to_string(),
                 );
             }
@@ -3338,7 +3358,7 @@ mod tests {
             .collect();
         packages.sort();
         assert!(
-            packages.len() >= 10,
+            packages.len() >= 8,
             "expected the tracked packages, found {}",
             packages.len()
         );
