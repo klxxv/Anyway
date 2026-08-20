@@ -145,6 +145,8 @@ export type PluginSettingsTarget = {
   developer?: string;
   developerUuid?: string;
   signaturePresent?: boolean;
+  /** Official-maintenance marker from the manifest (ResearchCanvas publisher only). */
+  official?: boolean;
   update?: { latestVersion?: string; url?: string; releaseNotes?: string };
   definitions: HostPluginSettingDefinition[];
   connections: HostPluginConnectionDefinition[];

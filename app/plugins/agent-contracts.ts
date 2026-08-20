@@ -45,6 +45,8 @@ export type AgentJobStage =
   | "ocr_optional"
   | "building_document_map"
   | "extracting_semantics"
+  | "compiling_graph_ir"
+  | "persisting_canvas"
   | "generating_patch"
   | "awaiting_review"
   | "accepted"

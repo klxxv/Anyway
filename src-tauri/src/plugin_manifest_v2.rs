@@ -37,6 +37,10 @@ pub struct ManifestV2 {
     /// Free-form categories; the first category is the executable kind.
     #[serde(default)]
     pub categories: Vec<String>,
+    /// Whether the publisher maintains this plugin officially. Honored only
+    /// for the built-in `ResearchCanvas` publisher identity.
+    #[serde(default)]
+    pub official: bool,
     #[serde(default)]
     pub engines: Option<serde_json::Value>,
     /// Entry payload (former `spec.entry`).
@@ -159,6 +163,7 @@ impl From<ManifestV2> for MycPluginManifest {
                         context_menus: c.menus,
                         locales: c.locales,
                         commands: c.commands,
+                        ui_ir: c.ui_ir,
                     }),
                     settings,
                     connections,
@@ -180,6 +185,7 @@ impl From<ManifestV2> for MycPluginManifest {
                 description: value.description.unwrap_or_default(),
                 homepage: value.homepage,
                 license: value.license,
+                official: value.official,
                 update: None,
             },
             spec: MycPluginSpec {
@@ -282,6 +288,24 @@ mod tests {
 
         let manifest = parse_plugin_manifest(&text).expect("parses v2");
         assert_eq!(manifest.spec.language.as_deref(), Some("rust"));
+    }
+
+    #[test]
+    fn v2_manifest_carries_the_official_flag() {
+        let text = json!({
+            "name": "myc.pdf-canvas-agent",
+            "version": "0.4.0",
+            "publisher": "ResearchCanvas",
+            "official": true,
+            "categories": ["AgentPlugin"],
+            "main": "agent-manifest.json",
+            "engines": {"engine": "host-mediated"}
+        })
+        .to_string();
+
+        let manifest = parse_plugin_manifest(&text).expect("parses v2");
+        assert!(manifest.metadata.official);
+        assert_eq!(manifest.metadata.publisher, "ResearchCanvas");
     }
 
     #[test]

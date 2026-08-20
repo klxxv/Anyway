@@ -127,6 +127,7 @@ const targetFromInstalled = (plugin: InstalledMycPlugin): PluginSettingsTarget |
     developer: plugin.manifest.metadata.developer,
     developerUuid: stringMetadata(metadata, ["developerUuid", "developerId", "uuid"]),
     signaturePresent: Boolean(plugin.manifest.signature),
+    official: plugin.manifest.metadata.official === true,
     update: plugin.manifest.metadata.update,
     definitions,
     connections: plugin.manifest.spec.connections ?? [],
@@ -454,6 +455,7 @@ onUnmounted(() => disposeDropListener?.());
                 :on-open-settings="targetFromInstalled(plugin) ? () => void openSettings(targetFromInstalled(plugin)!) : undefined"
               >
                 <template #icon><span class="mt-0.5 text-blue">{{ plugin.runtime ? '◆' : '◈' }}</span></template>
+                <p v-if="plugin.manifest.metadata.official" class="mt-1"><span class="rounded-[3px] bg-blue-soft px-1.5 py-0.5 font-sans text-[7px] uppercase tracking-[0.1em] text-blue">{{ t('plugins.official') }}</span></p>
                 <p class="mt-2 font-sans text-[8px] text-ink/45">{{ plugin.manifest.spec.capabilities.join(' · ') }}{{ plugin.runtime ? ` · ${plugin.runtime.language}/wasm` : '' }}</p>
                 <p v-if="!pluginCompatibility(plugin).compatible" class="mt-1 font-serif text-[8px] text-alert">{{ pluginCompatibility(plugin).issues.map((issue) => t(issue.key, issue.params ?? {})).join(' · ') }}</p>
                 <p v-if="plugin.runtime" class="mt-1 truncate font-mono text-[7px] text-ink/40">{{ t('plugins.sha256') }} · {{ plugin.runtime.entrySha256 }}</p>

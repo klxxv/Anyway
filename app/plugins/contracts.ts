@@ -45,6 +45,8 @@ export interface MycPluginMetadata {
   description: string;
   homepage?: string;
   license?: string;
+  /** Official maintenance marker; only honored for the ResearchCanvas publisher. */
+  official?: boolean;
   update?: PluginUpdateInfo;
 }
 

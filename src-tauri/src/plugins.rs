@@ -68,6 +68,11 @@ pub struct MycPluginMetadata {
     pub description: String,
     pub homepage: Option<String>,
     pub license: Option<String>,
+    /// 官方维护标记;仅在 publisher == "ResearchCanvas" 时被校验接受。
+    /// Official-maintenance marker; validation honors it only for the
+    /// built-in ResearchCanvas publisher identity.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub official: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<PluginUpdateInfo>,
 }
@@ -226,6 +231,10 @@ pub struct MycPluginContributions {
     pub context_menus: Option<Vec<PluginContextMenuContribution>>,
     pub locales: Option<Vec<PluginLocaleContribution>>,
     pub commands: Option<Vec<PluginCommandContribution>>,
+    /// 声明式 Vue UI IR 贡献(v2 平面清单的 contributes.uiIr 透传)。
+    /// Declarative Vue UI IR contributions (v2 `contributes.uiIr` passthrough).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_ir: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -603,6 +612,11 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     }
     validate_slug(&manifest.metadata.id, "plugin id")?;
     validate_slug(&manifest.metadata.version, "plugin version")?;
+    if manifest.metadata.official && manifest.metadata.publisher != "ResearchCanvas" {
+        return Err(
+            "The official flag is reserved for the ResearchCanvas publisher identity".to_string(),
+        );
+    }
     if let Some(developer_uuid) = manifest.metadata.developer_uuid.as_deref() {
         validate_developer_uuid(developer_uuid)?;
     }
@@ -2287,6 +2301,7 @@ mod tests {
             }]),
             locales: None,
             commands: None,
+            ui_ir: None,
         });
         InstalledMycPlugin {
             manifest,
@@ -2514,6 +2529,7 @@ mod tests {
             }]),
             locales: None,
             commands: None,
+            ui_ir: None,
         });
         assert!(validate_manifest(&manifest)
             .expect_err("missing contribution capability is rejected")
@@ -3269,14 +3285,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn official_flag_is_reserved_for_the_research_canvas_publisher() {
+        let spoof = json!({
+            "name": "evil.agent",
+            "version": "1.0.0",
+            "publisher": "Random",
+            "official": true,
+            "categories": ["AgentPlugin"],
+            "main": "agent-manifest.json",
+            "engines": {"engine": "host-mediated"},
+            "capabilities": ["agent.pdf.read", "agent.graph.patch.propose", "agent.review.request"]
+        })
+        .to_string();
+        let manifest =
+            crate::plugin_manifest_v2::parse_plugin_manifest(&spoof).expect("parses v2");
+        let error = validate_manifest(&manifest)
+            .expect_err("a spoofed official flag must be rejected");
+        assert!(error.contains("ResearchCanvas"), "unexpected error: {error}");
+
+        let official = json!({
+            "name": "myc.pdf-canvas-agent",
+            "version": "0.4.0",
+            "publisher": "ResearchCanvas",
+            "official": true,
+            "categories": ["AgentPlugin"],
+            "main": "agent-manifest.json",
+            "engines": {"engine": "host-mediated"},
+            "capabilities": ["agent.pdf.read", "agent.graph.patch.propose", "agent.review.request"]
+        })
+        .to_string();
+        let manifest =
+            crate::plugin_manifest_v2::parse_plugin_manifest(&official).expect("parses v2");
+        validate_manifest(&manifest).expect("the official publisher is accepted");
+    }
+
     /// 仓库内每一个跟踪的 .myc 包都必须走完整的 v2 安装管线:
     /// JSON 清单解析 → 校验 → 解压 → payloads 哈希核验 → 身份比对。
     /// Every tracked .myc package in the repository must pass the full v2
     /// install pipeline: JSON manifest parse → validation → extraction →
     /// payload hash verification → identity comparison.
     #[test]
-    fn tracked_packages_pass_the_full_v2_install_pipeline() {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn tracked_packages_pass_the_full_v2_install_pipeline() {        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("repository root")
             .join("plugins/packages");

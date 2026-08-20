@@ -1,9 +1,18 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import type { MessageKey } from "../../../app/i18n/catalog";
 import { isJobTerminal, type AgentJobStage } from "../../../app/plugins/agent-contracts";
+import { listInstalledMycPlugins } from "../../../app/plugins/tauri-client";
+import {
+  permissionPolicyForContributions,
+  type UiIrActionRequest,
+  type UiIrDocument,
+  type UiIrSlotContribution,
+} from "../../../app/plugins/ui-ir";
 import { normalizePluginGraphPatch } from "../../../app/plugins/workspace";
 import { getPdfJobStatus, reviewPdfPatch } from "../../../app/platform/agent-client";
+import { parseUiIR } from "../runtime/vue-ir/parser";
+import { UiIRRenderer } from "../runtime/vue-ir/renderer";
 import {
   buildAcceptedPatch,
   countAccepted,
@@ -13,12 +22,36 @@ import {
   type ReviewDecision,
 } from "./panel-types";
 
+const PDF_AGENT_PLUGIN_ID = "myc.pdf-canvas-agent";
+
 const props = defineProps<AgentReviewPanelProps>();
 const { t } = usePanelI18n();
 const status = ref<Awaited<ReturnType<typeof getPdfJobStatus>> | null>(null);
 const decisions = ref<Record<number, ReviewDecision>>({});
 const error = ref("");
 const applying = ref(false);
+
+// ── 插件声明的 Vue UI IR 贡献（agent.review 插槽）──
+// The official pdf agent declares a review-slot UI IR contribution; the host
+// parser validates it and the allowlist renderer turns it into static Vue
+// elements. Actions resolve to the trusted native review handlers below.
+const pluginIr = ref<UiIrDocument | null>(null);
+const pluginIrError = ref("");
+onMounted(async () => {
+  try {
+    const plugins = await listInstalledMycPlugins();
+    const pdf = plugins.find(
+      (plugin) => plugin.manifest.metadata.id === PDF_AGENT_PLUGIN_ID,
+    );
+    const contributions = (pdf?.manifest.spec.contributes?.uiIr ??
+      []) as readonly UiIrSlotContribution[];
+    const policy = permissionPolicyForContributions(contributions);
+    const review = contributions.find((contribution) => contribution.slotId === "agent.review");
+    if (review) pluginIr.value = parseUiIR(review.ir, { permissions: policy });
+  } catch (cause) {
+    pluginIrError.value = cause instanceof Error ? cause.message : String(cause);
+  }
+});
 
 const patch = computed(() => {
   if (!status.value?.result) return null;
@@ -112,6 +145,20 @@ const rejectAll = async () => {
     applying.value = false;
   }
 };
+
+// ── IR 运行时注入 ──
+const irState = computed(() => ({
+  job: {
+    title: patch.value?.title ?? "",
+    summary: patch.value?.summary ?? "",
+  },
+}));
+const dispatchIrAction = (request: UiIrActionRequest) => {
+  if (request.pluginId !== PDF_AGENT_PLUGIN_ID) return;
+  if (request.capability !== "agent.job.review") return;
+  if (request.actionId === "review.accept") void applySelected();
+  else if (request.actionId === "review.reject") void rejectAll();
+};
 </script>
 
 <template>
@@ -172,6 +219,11 @@ const rejectAll = async () => {
           <button class="button-secondary w-full justify-center" :disabled="!patch || applying || settled" @click="void rejectAll()">× {{ t('agent.rejectAll') }}</button>
           <button class="button-secondary w-full justify-center" :disabled="!patch || applying" @click="acceptAll">{{ t('agent.acceptAll') }}</button>
         </div>
+        <div v-if="pluginIr" class="mt-5 rounded-[5px] border border-blue/20 bg-blue-soft/40 p-3">
+          <h4 class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/45">{{ t('agent.pluginSurface') }}</h4>
+          <UiIRRenderer class="mt-2" :ir="pluginIr" :plugin-id="PDF_AGENT_PLUGIN_ID" :state="irState" :dispatch-action="dispatchIrAction" :allowed-slots="[]" />
+        </div>
+        <p v-if="pluginIrError" class="mt-3 rounded-[4px] border border-alert/40 bg-alert/5 px-3 py-2 font-serif text-[9px] leading-[1.5] text-alert">⚠ {{ pluginIrError }}</p>
         <p v-if="error" class="mt-3 flex items-start gap-2 rounded-[4px] border border-alert/40 bg-alert/5 px-3 py-2 font-serif text-[9px] leading-[1.5] text-alert">⚠ <span class="min-w-0 break-words">{{ error }}</span></p>
         <p v-if="props.compileError" class="mt-3 flex items-start gap-2 rounded-[4px] border border-alert/40 bg-alert/5 px-3 py-2 font-serif text-[9px] leading-[1.5] text-alert">⚠ <span class="min-w-0 break-words">{{ t('agent.compileFailed', { error: props.compileError }) }}</span></p>
         <div v-if="props.compileResult" class="mt-5 border-t border-ink/15 pt-5">

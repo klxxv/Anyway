@@ -1382,6 +1382,7 @@ mod tests {
                 description: "Settings test".to_string(),
                 homepage: None,
                 license: None,
+                official: false,
                 update: None,
             },
             spec: MycPluginSpec {
