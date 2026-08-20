@@ -25,8 +25,9 @@ const MAX_REPAIR_AUDIT_ENTRIES: usize = 64;
 // ── Job 状态机 ──
 
 /// CREATED → VALIDATING_FILE → EXTRACTING_TEXT → OCR_OPTIONAL →
-/// BUILDING_DOCUMENT_MAP → EXTRACTING_SEMANTICS → GENERATING_PATCH →
-/// AWAITING_REVIEW → ACCEPTED / REJECTED。任一阶段可转入 FAILED。
+/// BUILDING_DOCUMENT_MAP → EXTRACTING_SEMANTICS → COMPILING_GRAPH_IR →
+/// PERSISTING_CANVAS → GENERATING_PATCH → AWAITING_REVIEW → ACCEPTED /
+/// REJECTED。任一阶段可转入 FAILED。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum JobState {
@@ -37,12 +38,14 @@ pub enum JobState {
     OcrOptional = 4,
     BuildingDocumentMap = 5,
     ExtractingSemantics = 6,
-    GeneratingPatch = 7,
-    AwaitingReview = 8,
-    Accepted = 9,
-    Rejected = 10,
-    Cancelled = 11,
-    Failed = 12,
+    CompilingGraphIr = 7,
+    PersistingCanvas = 8,
+    GeneratingPatch = 9,
+    AwaitingReview = 10,
+    Accepted = 11,
+    Rejected = 12,
+    Cancelled = 13,
+    Failed = 14,
 }
 
 impl JobState {
@@ -61,8 +64,12 @@ impl JobState {
                 | (OcrOptional, Failed)
                 | (BuildingDocumentMap, ExtractingSemantics)
                 | (BuildingDocumentMap, Failed)
-                | (ExtractingSemantics, GeneratingPatch)
+                | (ExtractingSemantics, CompilingGraphIr)
                 | (ExtractingSemantics, Failed)
+                | (CompilingGraphIr, PersistingCanvas)
+                | (CompilingGraphIr, Failed)
+                | (PersistingCanvas, GeneratingPatch)
+                | (PersistingCanvas, Failed)
                 | (GeneratingPatch, AwaitingReview)
                 | (GeneratingPatch, Failed)
                 | (AwaitingReview, Accepted)
@@ -86,6 +93,8 @@ impl JobState {
             JobState::OcrOptional => "ocr_optional",
             JobState::BuildingDocumentMap => "building_document_map",
             JobState::ExtractingSemantics => "extracting_semantics",
+            JobState::CompilingGraphIr => "compiling_graph_ir",
+            JobState::PersistingCanvas => "persisting_canvas",
             JobState::GeneratingPatch => "generating_patch",
             JobState::AwaitingReview => "awaiting_review",
             JobState::Accepted => "accepted",
@@ -1004,6 +1013,8 @@ mod tests {
             JobState::OcrOptional,
             JobState::BuildingDocumentMap,
             JobState::ExtractingSemantics,
+            JobState::CompilingGraphIr,
+            JobState::PersistingCanvas,
             JobState::GeneratingPatch,
             JobState::AwaitingReview,
             JobState::Accepted,
@@ -1086,6 +1097,8 @@ mod tests {
             JobState::OcrOptional,
             JobState::BuildingDocumentMap,
             JobState::ExtractingSemantics,
+            JobState::CompilingGraphIr,
+            JobState::PersistingCanvas,
             JobState::GeneratingPatch,
         ];
         for &stage in &stages {
@@ -1185,6 +1198,8 @@ mod tests {
             JobState::OcrOptional,
             JobState::BuildingDocumentMap,
             JobState::ExtractingSemantics,
+            JobState::CompilingGraphIr,
+            JobState::PersistingCanvas,
             JobState::GeneratingPatch,
             JobState::AwaitingReview,
         ];

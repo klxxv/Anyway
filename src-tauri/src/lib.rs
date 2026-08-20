@@ -11,6 +11,7 @@ pub mod llm_client;
 pub mod llm_plugin;
 pub mod llm_provider_registry;
 pub mod native_plugins;
+pub mod pdf_agent_v4;
 pub mod pdf_pipeline;
 pub mod plugin_manifest_v2;
 mod vsix_importer;
@@ -23,9 +24,7 @@ mod signing;
 mod trackpad;
 mod workspace_host;
 
-// ── PDF Agent 多阶段提取与 GraphPatch 构建（不合并到 pdf_pipeline）──
-pub use graphpatch_gen;
-pub use semantic_pipeline;
+// ── PDF Agent 多阶段提取走 myc.llm.v4 抽取 + host bus 编译(见 pdf_agent_v4)──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

@@ -5,12 +5,11 @@
 //! network access, or graph store write permissions. The host manages everything;
 //! agent output can only enter a reviewRequired GraphPatch.
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::Digest;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Manager, State};
 
@@ -23,16 +22,13 @@ use crate::kernel::identity::{PrincipalId, WorkerId};
 use crate::kernel::lifecycle::FailureReason;
 use crate::kernel::scheduler::Scheduler;
 use crate::kernel::supervisor::{Supervisor, SupervisorAction, WorkerObservation};
+use crate::kernel_commands::CapabilityPolicyState;
 use crate::llm_client::{
     ApiFormat, CallRole, LlmClientAdapter, PdfAgentLlmClient, PdfAgentLlmConfig, PdfAgentTransport,
 };
 use crate::native_plugins::pdf_canvas_agent;
 use crate::pdf_pipeline::{DocumentInput, PdfPipeline};
-use semantic_pipeline::pipeline::{LlmProvider, ResponseFormat};
-use semantic_pipeline::{
-    parse_json_with_repair, AuditEntry, AuditReport, AuditSeverity, Pipeline, PipelineConfig,
-    RepairOptions, RepairOutcome,
-};
+use json_repair::{AuditReport, AuditSeverity};
 
 /// 宿主管理的全局 AgentHost 状态 / Host-managed global AgentHost state.
 pub struct AgentHostState(pub Mutex<AgentHost>, pub AgentJobGate);
@@ -283,12 +279,12 @@ pub struct ReviewPatchRequest {
 }
 
 #[derive(Clone, Debug)]
-struct PdfAgentRuntimeConfig {
-    llm: PdfAgentLlmConfig,
-    backend: pdf_canvas_agent::Backend,
-    public_progress: bool,
-    credential_source: String,
-    credential_env_var: String,
+pub(crate) struct PdfAgentRuntimeConfig {
+    pub(crate) llm: PdfAgentLlmConfig,
+    pub(crate) backend: pdf_canvas_agent::Backend,
+    pub(crate) public_progress: bool,
+    pub(crate) credential_source: String,
+    pub(crate) credential_env_var: String,
 }
 
 impl PdfAgentRuntimeConfig {
@@ -317,12 +313,14 @@ impl From<&AgentJob> for PdfJobStatus {
             JobState::OcrOptional => 2,
             JobState::BuildingDocumentMap => 3,
             JobState::ExtractingSemantics => 4,
-            JobState::GeneratingPatch => 5,
+            JobState::CompilingGraphIr => 5,
+            JobState::PersistingCanvas => 6,
+            JobState::GeneratingPatch => 7,
             JobState::AwaitingReview
             | JobState::Accepted
             | JobState::Rejected
             | JobState::Cancelled
-            | JobState::Failed => job.progress().0.min(7),
+            | JobState::Failed => job.progress().0.min(9),
         };
         Self {
             job_id: job.job_id.clone(),
@@ -847,7 +845,7 @@ pub fn list_import_jobs(state: State<'_, AgentHostState>) -> Result<Vec<PdfJobSt
 /// Narrow progress boundary for the queued importer. Hypatia's ProgressSink can
 /// replace this adapter without coupling provider callbacks to AgentHost.
 /// TODO(Hypatia): implement the shared ProgressSink trait here when its API lands.
-struct ImportProgressAdapter<'a> {
+pub(crate) struct ImportProgressAdapter<'a> {
     hosts: &'a Mutex<AgentHost>,
     job_id: &'a str,
 }
@@ -1001,7 +999,7 @@ impl pdf_canvas_agent::ProgressSink for KimiJobProgressSink {
 }
 
 impl ImportProgressAdapter<'_> {
-    fn transition(
+    pub(crate) fn transition(
         &self,
         next: JobState,
         output_hash: Option<&str>,
@@ -1010,7 +1008,7 @@ impl ImportProgressAdapter<'_> {
         advance_stage(self.hosts, self.job_id, next, output_hash, data)
     }
 
-    fn record_repair_audit(
+    pub(crate) fn record_repair_audit(
         &self,
         pass: &str,
         attempt: u32,
@@ -1050,28 +1048,40 @@ impl ImportProgressAdapter<'_> {
                 },
             )
     }
-}
 
-impl NativeProgressSink for ImportProgressAdapter<'_> {
-    fn begin_reasoning_pass(&self, pass: &str, safe_summary: &str) -> Result<(), String> {
+    pub(crate) fn begin_reasoning_pass(&self, pass: &str, safe_summary: &str) -> Result<(), String> {
         self.hosts
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?
             .begin_reasoning_pass(self.job_id, pass, safe_summary)
     }
 
-    fn record_reasoning_chunk(&self, bytes: usize) -> Result<(), String> {
+    pub(crate) fn record_reasoning_chunk(&self, bytes: usize) -> Result<(), String> {
         self.hosts
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?
             .record_reasoning_chunk(self.job_id, bytes)
     }
 
-    fn record_reasoning_retry(&self) -> Result<(), String> {
+    pub(crate) fn record_reasoning_retry(&self) -> Result<(), String> {
         self.hosts
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?
             .record_reasoning_retry(self.job_id)
+    }
+}
+
+impl NativeProgressSink for ImportProgressAdapter<'_> {
+    fn begin_reasoning_pass(&self, pass: &str, safe_summary: &str) -> Result<(), String> {
+        ImportProgressAdapter::begin_reasoning_pass(self, pass, safe_summary)
+    }
+
+    fn record_reasoning_chunk(&self, bytes: usize) -> Result<(), String> {
+        ImportProgressAdapter::record_reasoning_chunk(self, bytes)
+    }
+
+    fn record_reasoning_retry(&self) -> Result<(), String> {
+        ImportProgressAdapter::record_reasoning_retry(self)
     }
 }
 
@@ -1239,25 +1249,48 @@ async fn run_document_stages(
     // ── 阶段 5：ExtractingSemantics ──
     // The host sends bounded text messages to the configured LLM. The PDF
     // bytes have already ended at local extraction (or Kimi text extraction).
-    let patch = run_semantic_graph_pipeline(
+    progress.transition(JobState::ExtractingSemantics, None, None)?;
+
+    // myc.llm.v4 抽取管线:Pass A/B/E → host bus graph.ir.compile →
+    // graph.storage.put → event.publish → review-gated GraphPatch。
+    // The myc.llm.v4 pipeline: Passes A/B/E → host bus graph.ir.compile →
+    // graph.storage.put → event.publish → review-gated GraphPatch.
+    let kernel = app.state::<crate::kernel::state::KernelState>();
+    let policy = app.state::<CapabilityPolicyState>();
+    let client: Arc<dyn crate::llm_client::LlmClient> = match &runtime.backend {
+        pdf_canvas_agent::Backend::KimiK26(config) => {
+            let sink = Arc::new(KimiJobProgressSink::new(app.clone(), job_id));
+            Arc::new(
+                pdf_canvas_agent::KimiK26Client::new_with_progress(config.clone(), sink)
+                    .map_err(|error| error.to_string())?,
+            )
+        }
+        pdf_canvas_agent::Backend::Generic => Arc::new(
+            PdfAgentLlmClient::new(runtime.llm.clone()).map_err(|error| error.to_string())?,
+        ),
+    };
+    let provider = LlmClientAdapter::new(client.clone(), CallRole::Extraction, job_id.to_string());
+    let recovery_provider =
+        LlmClientAdapter::new(client, CallRole::Recovery, format!("{job_id}:recovery"));
+    let patch = crate::pdf_agent_v4::run_v4_pipeline(
         app,
+        &*kernel,
+        &*policy,
         &doc,
         &final_extracted,
         &runtime,
         job_id,
         document_format,
         &progress,
+        &provider,
+        &recovery_provider,
     )
     .await?;
+
     let semantic_hash = format!(
         "{:x}",
         sha2::Sha256::digest(serde_json::to_string(&patch).unwrap_or_default().as_bytes())
     );
-    progress.transition(
-        JobState::ExtractingSemantics,
-        Some(&semantic_hash),
-        Some(patch.clone()),
-    )?;
 
     // ── 阶段 6：GeneratingPatch ──
     progress.transition(
@@ -1315,361 +1348,6 @@ pub fn cancel_job(
     Ok(PdfJobStatus::from(job))
 }
 
-async fn parse_pass_with_auditable_repair<T: DeserializeOwned>(
-    raw_output: &str,
-    pass: &str,
-    schema_contract: &str,
-    recovery_provider: &dyn LlmProvider,
-    progress: &ImportProgressAdapter<'_>,
-) -> Result<T, String> {
-    match parse_json_with_repair::<T>(raw_output, RepairOptions::default()) {
-        RepairOutcome::Parsed(parsed) => {
-            let status = if parsed.audit.is_empty() {
-                "validated"
-            } else {
-                "deterministically-repaired"
-            };
-            progress.record_repair_audit(pass, 0, status, &parsed.audit, None)?;
-            return Ok(parsed.value);
-        }
-        RepairOutcome::NeedsRecovery {
-            repaired_json,
-            audit,
-            error,
-        } => {
-            progress.record_repair_audit(
-                pass,
-                0,
-                "needs-recovery",
-                &audit,
-                Some(error.to_string()),
-            )?;
-            progress.record_reasoning_retry()?;
-
-            let bounded_candidate = if repaired_json.trim().is_empty() {
-                truncate_chars(raw_output, 120_000)
-            } else {
-                truncate_chars(&repaired_json, 120_000)
-            };
-            let system = "Repair one JSON payload to match the supplied contract. Return JSON only. Preserve all supported values exactly. Do not add facts, entities, evidence, anchors, confidence scores, quotations, or inferred claims. Remove unsupported prose and keys only when required for valid JSON. This is output repair, not reasoning or re-analysis.";
-            let user = format!(
-                "Pass: {pass}\nRequired contract: {schema_contract}\nParser error: {error}\nCandidate JSON:\n{bounded_candidate}"
-            );
-            let recovered = match recovery_provider.chat(system, &user, ResponseFormat::Json).await {
-                Ok(recovered) => recovered,
-                Err(recovery_error) => {
-                    let recovery_audit = with_model_recovery_marker(AuditReport::default());
-                    progress.record_repair_audit(
-                        pass,
-                        1,
-                        "recovery-failed",
-                        &recovery_audit,
-                        Some(recovery_error.clone()),
-                    )?;
-                    return Err(format!(
-                        "Pass {pass} recovery request failed: {recovery_error}"
-                    ));
-                }
-            };
-
-            match parse_json_with_repair::<T>(&recovered, RepairOptions::default()) {
-                RepairOutcome::Parsed(parsed) => {
-                    let recovery_audit = with_model_recovery_marker(parsed.audit);
-                    progress.record_repair_audit(
-                        pass,
-                        1,
-                        "model-recovered",
-                        &recovery_audit,
-                        None,
-                    )?;
-                    Ok(parsed.value)
-                }
-                RepairOutcome::NeedsRecovery { audit, error, .. } => {
-                    let recovery_audit = with_model_recovery_marker(audit);
-                    progress.record_repair_audit(
-                        pass,
-                        1,
-                        "recovery-failed",
-                        &recovery_audit,
-                        Some(error.to_string()),
-                    )?;
-                    Err(format!(
-                        "Pass {pass} result remains invalid after one audited recovery attempt: {error}"
-                    ))
-                }
-            }
-        }
-    }
-}
-
-fn with_model_recovery_marker(mut report: AuditReport) -> AuditReport {
-    report.entries.insert(
-        0,
-        AuditEntry {
-            code: "MODEL_RECOVERY_ATTEMPTED".to_string(),
-            path: "$".to_string(),
-            before_summary: "deterministic repair could not satisfy the typed contract".to_string(),
-            after_summary: "one bounded recovery response was requested; local semantic validation remains mandatory"
-                .to_string(),
-            severity: AuditSeverity::Warning,
-            deterministic: false,
-        },
-    );
-    report
-}
-
-async fn run_semantic_graph_pipeline(
-    app: &AppHandle,
-    doc: &crate::pdf_pipeline::StructuredDocument,
-    extracted: &crate::pdf_pipeline::ExtractedText,
-    runtime: &PdfAgentRuntimeConfig,
-    job_id: &str,
-    document_format: DocumentFormat,
-    progress: &ImportProgressAdapter<'_>,
-) -> Result<Value, String> {
-    let prompts_dir = resolve_prompts_dir(app)?;
-    let config = PipelineConfig::load(&prompts_dir, "en").map_err(|error| error.to_string())?;
-    let pipeline = Pipeline::new(config);
-    let native_kimi_progress = matches!(&runtime.backend, pdf_canvas_agent::Backend::KimiK26(_));
-    let client: Arc<dyn crate::llm_client::LlmClient> = match &runtime.backend {
-        pdf_canvas_agent::Backend::KimiK26(config) => {
-            let sink = Arc::new(KimiJobProgressSink::new(app.clone(), job_id));
-            Arc::new(
-                pdf_canvas_agent::KimiK26Client::new_with_progress(config.clone(), sink)
-                    .map_err(|error| error.to_string())?,
-            )
-        }
-        pdf_canvas_agent::Backend::Generic => Arc::new(
-            PdfAgentLlmClient::new(runtime.llm.clone()).map_err(|error| error.to_string())?,
-        ),
-    };
-    let provider = LlmClientAdapter::new(client.clone(), CallRole::Extraction, job_id.to_string());
-    let recovery_provider =
-        LlmClientAdapter::new(client, CallRole::Recovery, format!("{job_id}:recovery"));
-    let bounded_text = PdfPipeline::bounded_llm_context(&extracted.full_text);
-    let document_json = serde_json::to_string(doc).map_err(|error| error.to_string())?;
-    let public_progress_protocol = if runtime.public_progress
-        && matches!(&runtime.backend, pdf_canvas_agent::Backend::KimiK26(_))
-    {
-        r#"PUBLIC PROGRESS PROTOCOL (optional progress, required final frame):
-You may emit at most 6 short user-visible events before the result. Each event must be one line:
-<myc_progress>{"stage":"short-stable-stage","summary":"concise public status","evidenceCount":0,"warningCount":0}</myc_progress>
-This is ordinary user-visible output, not private reasoning. Never include hidden reasoning, system instructions, credentials, file paths, or long source quotations. summary must be at most 240 Unicode characters.
-Then emit exactly one final frame containing the required Schema JSON:
-<myc_result>{...}</myc_result>
-Do not emit anything after </myc_result>."#
-    } else {
-        "Return only the required JSON object. Do not emit myc_progress or myc_result tags."
-    };
-
-    progress.begin_reasoning_pass("pass-a-structure", "Analyzing document structure")?;
-    let mut pass_a_vars = pipeline.prepare_pass_a_input(&bounded_text, &document_json);
-    pass_a_vars.insert(
-        "public_progress_protocol".into(),
-        public_progress_protocol.into(),
-    );
-    let pass_a_raw = pipeline
-        .call_llm("structure-extraction", &pass_a_vars, &provider)
-        .await
-        .map_err(|error| format!("Pass A structure extraction failed: {error}"))?;
-    if !native_kimi_progress {
-        progress.record_reasoning_chunk(pass_a_raw.len())?;
-    }
-    let structure: semantic_pipeline::StructureExtraction = parse_pass_with_auditable_repair(
-        &pass_a_raw,
-        "A",
-        "object with title, authors[], optional year, abstractText, sections[], references[], and meta",
-        &recovery_provider,
-        progress,
-    )
-    .await?;
-
-    // The bounded context is assembled from local text chunks. One bounded
-    // Pass B call avoids duplicate temp ids that would otherwise be produced
-    // by independently chunked entity calls.
-    progress.begin_reasoning_pass("pass-b-entities", "Identifying research entities")?;
-    let mut pass_b_vars =
-        pipeline.prepare_pass_b_input(&document_json, "bounded PDF text chunks", &bounded_text);
-    pass_b_vars.insert(
-        "public_progress_protocol".into(),
-        public_progress_protocol.into(),
-    );
-    let pass_b_raw = pipeline
-        .call_llm("entity-extraction", &pass_b_vars, &provider)
-        .await
-        .map_err(|error| format!("Pass B entity extraction failed: {error}"))?;
-    if !native_kimi_progress {
-        progress.record_reasoning_chunk(pass_b_raw.len())?;
-    }
-    let entities: semantic_pipeline::EntityExtraction = parse_pass_with_auditable_repair(
-        &pass_b_raw,
-        "B",
-        "object with entities[] and meta; never invent entity facts, anchors, or confidence",
-        &recovery_provider,
-        progress,
-    )
-    .await?;
-    let entities_json = serde_json::to_string(&entities).map_err(|error| error.to_string())?;
-
-    let experiment_paragraphs = doc
-        .paragraphs
-        .iter()
-        .filter(|paragraph| {
-            let text = paragraph.text.to_ascii_lowercase();
-            text.contains("experiment")
-                || text.contains("method")
-                || text.contains("result")
-                || text.contains("ablation")
-        })
-        .map(|paragraph| paragraph.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    progress.begin_reasoning_pass("pass-c-variables", "Mapping variables and experiments")?;
-    let mut pass_c_vars = pipeline.prepare_pass_c_input(
-        &entities_json,
-        &truncate_chars(&experiment_paragraphs, 40_000),
-        &bounded_text,
-    );
-    pass_c_vars.insert(
-        "public_progress_protocol".into(),
-        public_progress_protocol.into(),
-    );
-    let pass_c_raw = pipeline
-        .call_llm("variable-fission", &pass_c_vars, &provider)
-        .await
-        .map_err(|error| format!("Pass C variable extraction failed: {error}"))?;
-    if !native_kimi_progress {
-        progress.record_reasoning_chunk(pass_c_raw.len())?;
-    }
-    let variable_fission: semantic_pipeline::VariableFissionResult =
-        parse_pass_with_auditable_repair(
-            &pass_c_raw,
-            "C",
-            "object with experimentMatrix[] and variableRegistry[]",
-            &recovery_provider,
-            progress,
-        )
-        .await?;
-    let variable_json =
-        serde_json::to_string(&variable_fission).map_err(|error| error.to_string())?;
-
-    progress.begin_reasoning_pass("pass-d-merge", "Merging cross-section evidence")?;
-    let mut pass_d_vars =
-        pipeline.prepare_pass_d_input(&entities_json, &variable_json, &bounded_text);
-    pass_d_vars.insert(
-        "public_progress_protocol".into(),
-        public_progress_protocol.into(),
-    );
-    let pass_d_raw = pipeline
-        .call_llm("cross-segment-merge", &pass_d_vars, &provider)
-        .await
-        .map_err(|error| format!("Pass D merge failed: {error}"))?;
-    if !native_kimi_progress {
-        progress.record_reasoning_chunk(pass_d_raw.len())?;
-    }
-    let merge_result: semantic_pipeline::CrossSegmentMergeResult =
-        parse_pass_with_auditable_repair(
-            &pass_d_raw,
-            "D",
-            "object with mergeGroups[], claimEvidenceBundles[], metricAlignment[], and datasetRegistry[]",
-            &recovery_provider,
-            progress,
-        )
-        .await?;
-    let merge_json = serde_json::to_string(&merge_result).map_err(|error| error.to_string())?;
-
-    progress.begin_reasoning_pass("pass-e-synthesis", "Synthesizing the review proposal")?;
-    let mut pass_e_vars = pipeline.prepare_pass_e_input(
-        structure.title.as_deref().unwrap_or("Untitled paper"),
-        &structure.authors.join(", "),
-        &serde_json::to_string(&structure).map_err(|error| error.to_string())?,
-        &entities_json,
-        &variable_json,
-        &merge_json,
-        &bounded_text,
-    );
-    pass_e_vars.insert(
-        "public_progress_protocol".into(),
-        public_progress_protocol.into(),
-    );
-    let pass_e_raw = pipeline
-        .call_llm("paper-level-synthesis", &pass_e_vars, &provider)
-        .await
-        .map_err(|error| format!("Pass E synthesis failed: {error}"))?;
-    if !native_kimi_progress {
-        progress.record_reasoning_chunk(pass_e_raw.len())?;
-    }
-    let synthesis: semantic_pipeline::PaperSynthesisResult = parse_pass_with_auditable_repair(
-        &pass_e_raw,
-        "E",
-        "object with mainConclusions[], ablationAnalysis[], interactionEffects[], confounders[], missingControls[], internalConflicts[], and synthesisSummary",
-        &recovery_provider,
-        progress,
-    )
-    .await?;
-
-    let candidates = Pipeline::build_candidates(
-        &format!("pdf:{job_id}"),
-        None,
-        Some(&structure),
-        Some(&entities),
-        Some(&variable_fission),
-        Some(&merge_result),
-        Some(&synthesis),
-    );
-    let validation = Pipeline::run_validation(&candidates, &extracted.full_text);
-    if !validation.passed {
-        return Err(format!(
-            "PDF semantic validation failed: {}",
-            validation.summary
-        ));
-    }
-    let source = if document_format == DocumentFormat::Pdf {
-        "myc.pdf-canvas-agent"
-    } else {
-        "host.document-import"
-    };
-    let patch = graphpatch_gen::build_graph_patch(&candidates, source);
-    serde_json::to_value(patch).map_err(|error| format!("GraphPatch serialization failed: {error}"))
-}
-
-fn resolve_prompts_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-
-    #[cfg(debug_assertions)]
-    {
-        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-        candidates.push(repository.join("plugins/sources/myc.pdf-canvas-agent/prompts"));
-        candidates.push(repository.join("config/prompts"));
-    }
-
-    if let Ok(app_data) = app.path().app_data_dir() {
-        let installed = app_data.join("plugins/installed");
-        if let Ok(entries) = std::fs::read_dir(installed) {
-            let mut plugin_prompts = entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.starts_with("myc.pdf-canvas-agent@"))
-                })
-                .map(|path| path.join("prompts"))
-                .collect::<Vec<_>>();
-            plugin_prompts.sort_by(|left, right| right.cmp(left));
-            candidates.extend(plugin_prompts);
-        }
-    }
-
-    candidates
-        .into_iter()
-        .find(|path| path.join("manifest.yaml").is_file())
-        .ok_or_else(|| "PDF Agent prompt configuration is unavailable".to_string())
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
-}
 
 // ── GraphPatch 构建（语义提取） ──
 

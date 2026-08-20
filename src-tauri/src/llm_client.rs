@@ -2,7 +2,7 @@
 //!
 //! 提供：
 //! 1. `LlmClient` trait — 富操作接口（角色路由、推理缓存、重试）
-//! 2. `LlmClientAdapter` — 桥接到 `semantic_pipeline::LlmProvider`
+//! 2. `ChatProvider` trait + `LlmClientAdapter` — 受信宿主管线的对话桥接
 //! 3. `OpenAiCompatibleClient` — OpenAI 兼容 API 的具体实现（可配置 base URL）
 //! 4. 所有请求/响应类型、重试/截断修复/缓存工具函数
 //!
@@ -536,10 +536,19 @@ pub trait LlmClient: Send + Sync {
     fn provider_id(&self) -> &str;
 }
 
-// ── LlmClientAdapter: 桥接 LlmClient → semantic_pipeline::LlmProvider ─────
+// ── LlmClientAdapter: 桥接 LlmClient → 受信宿主管线的对话能力 ─────
 
-/// 将富 `LlmClient` 适配为 `semantic_pipeline::LlmProvider` trait。
-/// Pipeline 对每个 CallRole 创建一个适配器。
+/// 宿主受信管线(如 pdf-agent v4 抽取器)使用的最小对话接口。与具体
+/// provider 无关;`LlmClientAdapter` 对每个 CallRole 创建一个实现。
+#[async_trait]
+pub trait ChatProvider: Send + Sync {
+    async fn chat(&self, system_prompt: &str, user_prompt: &str) -> Result<String, String>;
+    fn name(&self) -> &str;
+    fn model(&self) -> &str;
+}
+
+/// 将富 `LlmClient` 适配为 [`ChatProvider`]。
+/// The pipeline creates one adapter per CallRole.
 pub struct LlmClientAdapter {
     client: Arc<dyn LlmClient>,
     role: CallRole,
@@ -557,13 +566,8 @@ impl LlmClientAdapter {
 }
 
 #[async_trait]
-impl semantic_pipeline::pipeline::LlmProvider for LlmClientAdapter {
-    async fn chat(
-        &self,
-        system_prompt: &str,
-        user_prompt: &str,
-        _format: semantic_pipeline::pipeline::ResponseFormat,
-    ) -> Result<String, String> {
+impl ChatProvider for LlmClientAdapter {
+    async fn chat(&self, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
         self.client
             .chat(
                 self.role,

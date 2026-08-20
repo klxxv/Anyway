@@ -1320,17 +1320,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "graphpatch-gen"
-version = "0.1.0"
-dependencies = [
- "research-graph-compiler",
- "semantic-pipeline",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1801,6 +1790,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "json-repair"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2926,14 +2923,13 @@ dependencies = [
  "base64 0.22.1",
  "curve25519-dalek",
  "ed25519-dalek",
- "graphpatch-gen",
+ "json-repair",
  "lopdf",
  "rand 0.8.7",
  "rand_core 0.6.4",
  "regex",
  "reqwest 0.12.28",
  "research-graph-compiler",
- "semantic-pipeline",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3159,18 +3155,6 @@ dependencies = [
  "rustc-hash",
  "servo_arc",
  "smallvec",
-]
-
-[[package]]
-name = "semantic-pipeline"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
 ]
 
 [[package]]
