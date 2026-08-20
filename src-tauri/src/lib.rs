@@ -6,6 +6,7 @@ pub mod graph_compiler;
 pub mod host_bus;
 pub mod kernel;
 mod kernel_commands;
+pub mod kernel_native;
 pub mod llm_client;
 pub mod llm_plugin;
 pub mod llm_provider_registry;

@@ -74,6 +74,21 @@ const AGENT_JOB_REVIEW_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_CANCEL_MAX_INFLIGHT: usize = 8;
 const AGENT_JOB_START_MAX_INFLIGHT: usize = 8;
 const AGENT_BATCH_START_MAX_INFLIGHT: usize = 8;
+const HOST_BUS_GRAPH_STORAGE_PUT_MAX_INFLIGHT: usize = 8;
+const HOST_BUS_GRAPH_STORAGE_QUERY_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_GRAPH_IR_COMPILE_MAX_INFLIGHT: usize = 8;
+const HOST_BUS_GRAPH_IR_QUERY_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_LEASE_RENEW_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_EVENT_SUBSCRIBE_MAX_INFLIGHT: usize = 8;
+const HOST_BUS_EVENT_PUBLISH_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_EVENT_POLL_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_WORKER_SPAWN_MAX_INFLIGHT: usize = 8;
+const HOST_BUS_WORKER_STOP_MAX_INFLIGHT: usize = 8;
+const HOST_BUS_SERVICE_LIST_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_SERVICE_UNREGISTER_MAX_INFLIGHT: usize = 8;
+const HOST_BUS_AUDIT_READ_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_BLOB_LIST_MAX_INFLIGHT: usize = 16;
+const HOST_BUS_BLOB_RELEASE_MAX_INFLIGHT: usize = 8;
 const BLOB_WRITE_MAX_INFLIGHT: usize = 8;
 const BLOB_READ_MAX_INFLIGHT: usize = 16;
 const BLOB_UPLOAD_BEGIN_MAX_INFLIGHT: usize = 8;
@@ -94,12 +109,12 @@ const SERVICE_TTL_MS: u64 = crate::kernel::service_registry::DEFAULT_TTL_MS;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HostCallRequest {
     api_version: String,
-    request_id: String,
-    operation: String,
+    pub(crate) request_id: String,
+    pub(crate) operation: String,
     payload: HostPayload,
-    deadline_ms: u64,
+    pub(crate) deadline_ms: u64,
     #[serde(default)]
-    capability_lease_ids: Vec<String>,
+    pub(crate) capability_lease_ids: Vec<String>,
     trace_parent: Option<String>,
 }
 
@@ -479,7 +494,7 @@ impl Default for CapabilityPolicyState {
 }
 
 impl CapabilityPolicyState {
-    fn now_ms(&self) -> u64 {
+    pub(crate) fn now_ms(&self) -> u64 {
         u64::try_from(self.clock_origin.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
@@ -490,7 +505,7 @@ impl CapabilityPolicyState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum RequestValidationError {
+pub(crate) enum RequestValidationError {
     ApiVersion,
     RequestId,
     Operation,
@@ -504,7 +519,7 @@ enum RequestValidationError {
 }
 
 impl RequestValidationError {
-    fn message(&self) -> &'static str {
+    pub(crate) fn message(&self) -> &'static str {
         match self {
             Self::ApiVersion => "unsupported Host SDK API version",
             Self::RequestId => "invalid request id",
@@ -521,7 +536,7 @@ impl RequestValidationError {
 }
 
 impl HostCallRequest {
-    fn validate(&self) -> Result<(), RequestValidationError> {
+    pub(crate) fn validate(&self) -> Result<(), RequestValidationError> {
         if self.api_version != HOST_SDK_API_VERSION {
             return Err(RequestValidationError::ApiVersion);
         }
@@ -565,7 +580,7 @@ impl HostCallRequest {
         Ok(())
     }
 
-    fn require_empty_inline_payload(&self) -> Result<(), RequestValidationError> {
+    pub(crate) fn require_empty_inline_payload(&self) -> Result<(), RequestValidationError> {
         match &self.payload {
             HostPayload::Inline { value }
                 if value.as_object().is_some_and(|map| map.is_empty()) =>
@@ -597,7 +612,7 @@ impl HostBlobRef {
 }
 
 impl HostCallResponse {
-    fn success(request_id: String, result: Value) -> Self {
+    pub(crate) fn success(request_id: String, result: Value) -> Self {
         Self {
             api_version: HOST_SDK_API_VERSION,
             request_id,
@@ -606,7 +621,7 @@ impl HostCallResponse {
         }
     }
 
-    fn failure(
+    pub(crate) fn failure(
         request_id: String,
         code: impl Into<String>,
         message: impl Into<String>,
@@ -895,6 +910,112 @@ pub fn create_kernel_state() -> Result<KernelState, String> {
         "agent.batch.start",
         AGENT_BATCH_START_MAX_INFLIGHT,
     )?;
+    // ── 8 host-bus domains (plugin-system-v2.md §3) ──
+    register_operation(
+        &mut bus,
+        "graph.storage.put",
+        RpcTarget::new("graph.storage", "put"),
+        "graph.storage.write",
+        HOST_BUS_GRAPH_STORAGE_PUT_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "graph.storage.query",
+        RpcTarget::new("graph.storage", "query"),
+        "graph.storage.read",
+        HOST_BUS_GRAPH_STORAGE_QUERY_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "graph.ir.compile",
+        RpcTarget::new("graph.ir", "compile"),
+        "graph.ir",
+        HOST_BUS_GRAPH_IR_COMPILE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "graph.ir.query",
+        RpcTarget::new("graph.ir", "query"),
+        "graph.ir",
+        HOST_BUS_GRAPH_IR_QUERY_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "lease.renew",
+        RpcTarget::new("lease", "renew"),
+        "host-bus.lease",
+        HOST_BUS_LEASE_RENEW_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "event.subscribe",
+        RpcTarget::new("event", "subscribe"),
+        "host-bus.event",
+        HOST_BUS_EVENT_SUBSCRIBE_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "event.publish",
+        RpcTarget::new("event", "publish"),
+        "host-bus.event",
+        HOST_BUS_EVENT_PUBLISH_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "event.poll",
+        RpcTarget::new("event", "poll"),
+        "host-bus.event",
+        HOST_BUS_EVENT_POLL_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "worker.spawn",
+        RpcTarget::new("worker", "spawn"),
+        "worker.spawn",
+        HOST_BUS_WORKER_SPAWN_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "worker.stop",
+        RpcTarget::new("worker", "stop"),
+        "host-bus.worker",
+        HOST_BUS_WORKER_STOP_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "service.list",
+        RpcTarget::new("ancordis", "list"),
+        "host-bus.service",
+        HOST_BUS_SERVICE_LIST_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "service.unregister",
+        RpcTarget::new("ancordis", "unregister"),
+        "host-bus.service",
+        HOST_BUS_SERVICE_UNREGISTER_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "audit.read",
+        RpcTarget::new("audit", "read"),
+        "audit.read",
+        HOST_BUS_AUDIT_READ_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "blob.list",
+        RpcTarget::new("blob", "list"),
+        "blob.manage",
+        HOST_BUS_BLOB_LIST_MAX_INFLIGHT,
+    )?;
+    register_operation(
+        &mut bus,
+        "blob.release",
+        RpcTarget::new("blob", "release"),
+        "blob.manage",
+        HOST_BUS_BLOB_RELEASE_MAX_INFLIGHT,
+    )?;
     let kernel = KernelState::with_bus(bus, 64);
     register_agent_worker(&kernel)?;
     register_example_service(&kernel)?;
@@ -1150,7 +1271,7 @@ pub async fn kernel_host_call(
     }
 }
 
-async fn dispatch(
+pub(crate) async fn dispatch(
     request: &HostCallRequest,
     app: Option<AppHandle>,
     agent: &crate::agent_commands::AgentHostState,
@@ -2052,7 +2173,7 @@ fn hex_decode(value: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-fn authorize_for_bus(
+pub(crate) fn authorize_for_bus(
     policy_state: &CapabilityPolicyState,
     request: &HostCallRequest,
     principal: &PrincipalId,
@@ -2090,7 +2211,7 @@ fn authorize_for_bus(
     }
 }
 
-fn parse_lease_ids(ids: &[String]) -> Result<Vec<u64>, &'static str> {
+pub(crate) fn parse_lease_ids(ids: &[String]) -> Result<Vec<u64>, &'static str> {
     ids.iter()
         .map(|id| {
             id.parse::<u64>()
@@ -2101,7 +2222,7 @@ fn parse_lease_ids(ids: &[String]) -> Result<Vec<u64>, &'static str> {
         .collect()
 }
 
-fn request_key(request_id: &str) -> RequestId {
+pub(crate) fn request_key(request_id: &str) -> RequestId {
     let digest = Sha256::digest(request_id.as_bytes());
     let mut bytes = [0_u8; 16];
     bytes.copy_from_slice(&digest[..16]);
@@ -2116,7 +2237,7 @@ fn bootstrap_lease_id(request_id: &str) -> u64 {
     u64::from_be_bytes(bytes).max(1)
 }
 
-fn policy_failure(request_id: String, error: PolicyError) -> HostCallResponse {
+pub(crate) fn policy_failure(request_id: String, error: PolicyError) -> HostCallResponse {
     let code = match &error {
         PolicyError::InvalidArgument("capability policy lock is poisoned") => "HOST_INTERNAL",
         _ => "HOST_CAPABILITY_DENIED",
@@ -2124,7 +2245,7 @@ fn policy_failure(request_id: String, error: PolicyError) -> HostCallResponse {
     HostCallResponse::failure(request_id, code, error.to_string(), false)
 }
 
-fn bus_failure(request_id: String, error: BusError) -> HostCallResponse {
+pub(crate) fn bus_failure(request_id: String, error: BusError) -> HostCallResponse {
     let (code, retryable) = match error {
         BusError::TooManyInflight => ("HOST_BUSY", true),
         BusError::RequestExpired => ("HOST_DEADLINE_EXCEEDED", true),
@@ -2143,7 +2264,7 @@ fn bus_failure(request_id: String, error: BusError) -> HostCallResponse {
 /// append the event, drop the guard. Auditing must never change the gateway
 /// response shape or error codes, so a poisoned ledger lock is swallowed
 /// rather than surfaced to the caller.
-fn record_audit(
+pub(crate) fn record_audit(
     ledger: &RwLock<AuditLedger>,
     principal: &PrincipalId,
     request: &HostCallRequest,

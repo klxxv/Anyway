@@ -373,6 +373,39 @@ impl CapabilityPolicy {
                 "agent.batch.start",
                 custom_capability("agent.batch.start"),
             ),
+            // ── 8 host-bus domains: the trusted native UI shell may drive the
+            //    graph storage / IR / lease / event / worker / service / audit
+            //    / blob-management surfaces on behalf of hosted plugins. ──
+            (
+                "graph.storage.put",
+                custom_capability("graph.storage.write"),
+            ),
+            (
+                "graph.storage.query",
+                custom_capability("graph.storage.read"),
+            ),
+            ("graph.ir.compile", custom_capability("graph.ir")),
+            ("graph.ir.query", custom_capability("graph.ir")),
+            ("lease.renew", custom_capability("host-bus.lease")),
+            (
+                "event.subscribe",
+                custom_capability("host-bus.event"),
+            ),
+            ("event.publish", custom_capability("host-bus.event")),
+            ("event.poll", custom_capability("host-bus.event")),
+            ("worker.spawn", Capability::WorkerSpawn),
+            ("worker.stop", custom_capability("host-bus.worker")),
+            (
+                "service.list",
+                custom_capability("host-bus.service"),
+            ),
+            (
+                "service.unregister",
+                custom_capability("host-bus.service"),
+            ),
+            ("audit.read", custom_capability("audit.read")),
+            ("blob.list", custom_capability("blob.manage")),
+            ("blob.release", custom_capability("blob.manage")),
         ];
         let bootstrap_grants = bootstrap_operations
             .into_iter()
@@ -542,6 +575,33 @@ impl CapabilityPolicy {
                 "agent.batch.start",
                 custom_capability("agent.batch.start"),
             ),
+            // ── 8 host-bus domains (plugin-system-v2.md §3) ──
+            "graph.storage.put" => (
+                "graph.storage.put",
+                custom_capability("graph.storage.write"),
+            ),
+            "graph.storage.query" => (
+                "graph.storage.query",
+                custom_capability("graph.storage.read"),
+            ),
+            "graph.ir.compile" => ("graph.ir.compile", custom_capability("graph.ir")),
+            "graph.ir.query" => ("graph.ir.query", custom_capability("graph.ir")),
+            "lease.renew" => ("lease.renew", custom_capability("host-bus.lease")),
+            "event.subscribe" => (
+                "event.subscribe",
+                custom_capability("host-bus.event"),
+            ),
+            "event.publish" => ("event.publish", custom_capability("host-bus.event")),
+            "event.poll" => ("event.poll", custom_capability("host-bus.event")),
+            "worker.stop" => ("worker.stop", custom_capability("host-bus.worker")),
+            "service.list" => ("service.list", custom_capability("host-bus.service")),
+            "service.unregister" => (
+                "service.unregister",
+                custom_capability("host-bus.service"),
+            ),
+            "audit.read" => ("audit.read", custom_capability("audit.read")),
+            "blob.list" => ("blob.list", custom_capability("blob.manage")),
+            "blob.release" => ("blob.release", custom_capability("blob.manage")),
             other => return Err(PolicyError::UnknownOperation(other.to_string())),
         };
 
