@@ -1,10 +1,11 @@
 {
   "name": "myc.pdf-canvas-agent",
-  "version": "0.3.2",
-  "publisher": "Research Canvas",
+  "version": "0.4.0",
+  "publisher": "ResearchCanvas",
   "developer": "Agent Platform Team",
   "developerId": "8bca4aed-e0ab-43c5-89ee-e2bcaf7f0e31",
-  "description": "Extracts a DocumentMap from a research PDF, turns it into semantic structure, and proposes a review-gated GraphPatch. The agent never owns API keys, filesystem handles, network access, or graph-store write permissions.\n",
+  "official": true,
+  "description": "Extracts a myc.llm.v4 ExtractionV3 from a research PDF, compiles it through the deterministic graph.ir compiler, persists it via the graph.storage host bus, and proposes a review-gated GraphPatch. The agent never owns API keys, filesystem handles, network access, or graph-store write permissions.\n",
   "license": "MIT",
   "categories": [
     "AgentPlugin"
@@ -16,7 +17,13 @@
   "capabilities": [
     "agent.pdf.read",
     "agent.graph.patch.propose",
-    "agent.review.request"
+    "agent.review.request",
+    "graph.ir",
+    "graph.storage.read",
+    "graph.storage.write",
+    "host-bus.event",
+    "audit.read",
+    "blob.manage"
   ],
   "permissions": [],
   "contributes": {
@@ -236,7 +243,83 @@
           ]
         }
       ]
-    }
+    },
+    "uiIr": [
+      {
+        "slotId": "agent.review",
+        "ir": {
+          "apiVersion": "anyway.dev/ui-ir/v1",
+          "bindings": [
+            { "type": "state-binding", "path": "job.title", "fallback": "Pending patch review" },
+            { "type": "state-binding", "path": "job.summary", "fallback": "" }
+          ],
+          "root": {
+            "type": "stack",
+            "direction": "column",
+            "gap": 2,
+            "children": [
+              {
+                "type": "text",
+                "text": { "type": "state-binding", "path": "job.title", "fallback": "Pending patch review" }
+              },
+              {
+                "type": "text",
+                "tone": "muted",
+                "text": { "type": "state-binding", "path": "job.summary", "fallback": "" }
+              },
+              {
+                "type": "stack",
+                "direction": "row",
+                "gap": 2,
+                "children": [
+                  {
+                    "type": "button",
+                    "variant": "primary",
+                    "label": "Accept patch",
+                    "action": {
+                      "type": "action-binding",
+                      "actionId": "review.accept",
+                      "capability": "agent.job.review"
+                    }
+                  },
+                  {
+                    "type": "button",
+                    "variant": "danger",
+                    "label": "Reject patch",
+                    "action": {
+                      "type": "action-binding",
+                      "actionId": "review.reject",
+                      "capability": "agent.job.review"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "provides": {
+    "services": [
+      "pdf.extraction"
+    ],
+    "events": [
+      "pdf.job.progress",
+      "pdf.job.completed"
+    ]
+  },
+  "inject": {
+    "services": [
+      "graph.ir",
+      "graph.storage"
+    ],
+    "events": []
+  },
+  "lifecycle": {
+    "start": "agent.job.start",
+    "stop": "agent.job.cancel",
+    "reusable": false
   },
   "privateI18n": {
     "defaultLocale": "en",

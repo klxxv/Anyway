@@ -1,5 +1,6 @@
 version: 1
 defaultLocale: en
+schema: myc.llm.v4
 passes:
   - pass: A
     name: structure-extraction
@@ -9,48 +10,26 @@ passes:
     inputSchema:
       document_structure: StructuredDocument JSON
       full_text: Full extracted text
-    outputSchema: {}
+    outputSchema: ../schemas/pass-a-structure.schema.json
   - pass: B
-    name: entity-extraction
-    file: pass-b-entities.yaml
+    name: entity-extraction-v4
+    file: pass-b-v4.yaml
     description:
-      en: Local entity extraction
+      en: Per-section myc.llm.v4 fragment extraction
     inputSchema:
       document_structure: StructuredDocument JSON
       section_title: string
       section_text: string
-    outputSchema: {}
-  - pass: C
-    name: variable-fission
-    file: pass-c-variable-fission.yaml
-    description:
-      en: Variable fission and experiment matrix
-    inputSchema:
-      pass_b_entities_json: string
-      experiment_paragraphs: string
-      full_text: string
-    outputSchema: {}
-  - pass: D
-    name: cross-segment-merge
-    file: pass-d-merge.yaml
-    description:
-      en: Cross-segment merge
-    inputSchema:
-      pass_b_all_entities_json: string
-      pass_c_variable_registry_json: string
-      full_text: string
-    outputSchema: {}
+    outputSchema: ../schemas/pass-b-v4.schema.json
   - pass: E
-    name: paper-level-synthesis
-    file: pass-e-synthesis.yaml
+    name: synthesis-v4
+    file: pass-e-v4.yaml
     description:
-      en: Paper-level synthesis
+      en: Paper-level synthesis into one myc.llm.v4 ExtractionV3 root
     inputSchema:
       title: string
       authors: string
       pass_a_structure_json: string
-      merged_entities_json: string
-      pass_c_experiment_matrix_json: string
-      pass_d_merge_json: string
+      pass_b_fragments_json: string
       full_text: string
-    outputSchema: {}
+    outputSchema: ../schemas/pass-e-v4.schema.json

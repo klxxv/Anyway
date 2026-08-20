@@ -3,6 +3,9 @@
   "mode": "agent",
   "agentType": "pdf-canvas",
   "reviewGated": true,
+  "maintainer": "official",
+  "extractionSchema": "myc.llm.v4",
+  "compiledSchema": "myc.graph-ir.v4",
   "capabilities": [
     "agent.pdf.read",
     "agent.graph.patch.propose",
@@ -53,9 +56,19 @@
       "ocr_optional",
       "building_document_map",
       "extracting_semantics",
+      "compiling_graph_ir",
+      "persisting_canvas",
       "generating_patch",
       "awaiting_review"
     ],
+    "extractionContract": "myc.llm.v4",
+    "transport": "host-bus",
+    "hostBus": {
+      "compile": "graph.ir.compile",
+      "persist": "graph.storage.put",
+      "progress": "event.publish",
+      "audit": "audit.read"
+    },
     "idempotent": true,
     "checkpointEnabled": true
   }

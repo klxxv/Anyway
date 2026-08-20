@@ -91,20 +91,17 @@ Partial results are diagnostic/intermediate artifacts until the host has validat
 
 ## Schema policy
 
-Every schema is Draft 2020-12. Objects use `additionalProperties: false` unless the corresponding Rust IR field is an open `serde_json::Value`, such as `ivSettings`, node `data`, edge `data`, and operation `changes`. Optional Rust `Option<T>` fields may be omitted or set to `null`; non-optional IR fields are required.
+Every schema is Draft 2020-12. Objects use `additionalProperties: false` unless the corresponding Rust IR field is an open `serde_json::Value`, such as operator `payload`, node `data`, edge `data`, and operation `changes`. Optional Rust `Option<T>` fields may be omitted or set to `null`; non-optional IR fields are required.
 
-`agent-candidates.schema.json` references the item definitions in the Pass B-E schemas. The host schema loader must resolve relative `$ref` values within the plugin package and reject references that escape the package root.
+`pass-b-v4.schema.json` and `pass-e-v4.schema.json` mirror `crates/anyway-schema-v4/src/extract.rs` (`ExtractionV3`, `myc.llm.v4`) with snake_case field names. The host schema loader must resolve relative `$ref` values within the plugin package and reject references that escape the package root.
 
-## Current integration limitation
+## myc.llm.v4 pipeline
 
-These assets are now present in the plugin source package, but the current Rust host still executes its existing built-in PDF path and reads `config/prompts`. The host does not yet discover `agent.yml`, resolve this native provider profile, inject model-slot settings, or run the plugin-owned schemas. A follow-up host integration must add:
+The extraction contract is the schema-v4 root `myc.llm.v4`:
 
-- package-relative `agent.yml` discovery and signature/version validation;
-- native provider profile and model-slot settings resolution with secure credential references;
-- provider gateway calls that return structured JSON to the declared stage;
-- prompt rendering and schema loading from the package;
-- Pass F validation/transform dispatch;
-- checkpoint metadata for pipeline version, prompt version, model id, and non-secret settings snapshot;
-- review-gated GraphPatch handoff to the existing review UI.
+1. **Pass A** — paper structure (title, authors, abstract, section tree, references).
+2. **Pass B** — one `ExtractionV3` fragment per section (evidence, variables, contexts, axiom sets, experiments, operator candidates, abstraction candidates).
+3. **Pass E** — one complete `ExtractionV3` root with `schema_version: "myc.llm.v4"`.
+4. **Pass F (host bus)** — the host validates the root, compiles it deterministically via `graph.ir.compile` into `myc.graph-ir.v4` (`CanvasIRV3`), persists the canvas through `graph.storage.put`, publishes progress through `event.publish`, and converts the compiled canvas into a `reviewRequired: true` GraphPatch for the review UI.
 
-No host implementation is modified by this asset change.
+The LLM only extracts what the source states; variable merging, state diffs, joint interventions, identifiability, and abstraction promotion are the deterministic compiler's work.

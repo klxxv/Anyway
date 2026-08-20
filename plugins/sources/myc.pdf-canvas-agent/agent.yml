@@ -182,94 +182,56 @@ stages:
       document_structure: input.structuredDocument
       full_text: input.fullText
 
-  - id: pass-b-entities
+  - id: pass-b-entities-v4
     pass: B
-    name: entity-extraction
+    name: entity-extraction-v4
     type: model-map
     modelSlot: extraction
     dependsOn: []
     parallelGroup: local-extraction
     mapOver: input.structuredDocument.sections
-    prompt: prompts/pass-b-entities.yaml
-    outputSchema: schemas/pass-b-entities.schema.json
+    prompt: prompts/pass-b-v4.yaml
+    outputSchema: schemas/pass-b-v4.schema.json
+    extractionContract: myc.llm.v4
     inputBindings:
       document_structure: input.structuredDocument
       section_title: item.title
       section_text: input.derivedServices.sectionText(item.id)
 
-  - id: pass-c-variable-fission
-    pass: C
-    name: variable-fission-experiment-matrix
-    type: model
-    modelSlot: extraction
-    dependsOn:
-      - pass-b-entities
-    prompt: prompts/pass-c-variable-fission.yaml
-    outputSchema: schemas/pass-c-variable-fission.schema.json
-    inputBindings:
-      pass_b_entities_json: stages.pass-b-entities.output
-      experiment_paragraphs: input.derivedServices.experimentParagraphs
-      full_text: input.fullText
-
-  - id: pass-d-cross-segment-merge
-    pass: D
-    name: cross-segment-merge
-    type: model
-    modelSlot: extraction
-    dependsOn:
-      - pass-b-entities
-      - pass-c-variable-fission
-    prompt: prompts/pass-d-merge.yaml
-    outputSchema: schemas/pass-d-merge.schema.json
-    inputBindings:
-      pass_b_all_entities_json: stages.pass-b-entities.output
-      pass_c_variable_registry_json: stages.pass-c-variable-fission.output.variableRegistry
-      full_text: input.fullText
-
-  - id: pass-e-paper-synthesis
+  - id: pass-e-synthesis-v4
     pass: E
-    name: paper-level-synthesis
+    name: synthesis-v4
     type: model
     modelSlot: synthesis
     dependsOn:
       - pass-a-structure
-      - pass-b-entities
-      - pass-c-variable-fission
-      - pass-d-cross-segment-merge
-    prompt: prompts/pass-e-synthesis.yaml
-    outputSchema: schemas/pass-e-synthesis.schema.json
+      - pass-b-entities-v4
+    prompt: prompts/pass-e-v4.yaml
+    outputSchema: schemas/pass-e-v4.schema.json
+    extractionContract: myc.llm.v4
     inputBindings:
       title: stages.pass-a-structure.output.title
       authors: stages.pass-a-structure.output.authors
       pass_a_structure_json: stages.pass-a-structure.output
-      merged_entities_json: stages.pass-b-entities.output
-      pass_c_experiment_matrix_json: stages.pass-c-variable-fission.output.experimentMatrix
-      pass_d_merge_json: stages.pass-d-cross-segment-merge.output
+      pass_b_fragments_json: stages.pass-b-entities-v4.output
       full_text: input.fullText
 
-  - id: pass-f-validate-and-transform
+  - id: pass-f-compile-and-transform
     pass: F
-    name: local-validation-and-graph-patch-transform
-    type: local-transform
-    runtime: host.validation-and-transform
+    name: host-bus-compile-and-graph-patch-transform
+    type: host-transform
+    runtime: host.host-bus
     dependsOn:
-      - pass-a-structure
-      - pass-b-entities
-      - pass-c-variable-fission
-      - pass-d-cross-segment-merge
-      - pass-e-paper-synthesis
-    inputSchema: schemas/agent-candidates.schema.json
+      - pass-e-synthesis-v4
+    inputSchema: schemas/pass-e-v4.schema.json
     outputSchema: schemas/graph-patch.schema.json
-    validationReportSchema: schemas/pass-f-validation-report.schema.json
     inputBindings:
-      candidates: pipeline.agentCandidates
-      full_text: input.fullText
+      extraction: stages.pass-e-synthesis-v4.output
     operations:
-      - validate-json-shape
-      - validate-quotes-and-anchors
-      - validate-anchor-uniqueness
-      - validate-temp-id-closure
-      - validate-numerical-consistency
+      - validate-extraction
+      - bus.graph.ir.compile
+      - bus.graph.storage.put
+      - bus.event.publish
       - build-review-gated-graph-patch
     outputPolicy:
       type: graph-patch
