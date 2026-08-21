@@ -14,7 +14,7 @@ system:
 
     通用规则：
     - ID 必须稳定且在本片段内唯一，使用规范前缀：ev_、var_、ctx_、ax_、exp_、state_、opc_、qcan_ 加数字（例如 ev_001、var_002、exp_003）。
-    - 每个对象能引用证据时必须带 evidence_refs；evidence 条目必须包含在原文中可逐字核对的 text_span，以及 verification.status ∈ {supported, ambiguous, unsupported} 与 0..1 的 confidence。不要改写引文。
+    - 每个对象能引用证据时必须带 evidence_refs；evidence 条目必须包含在原文中可逐字核对的 text_span，以及 verification.status ∈ {{supported, ambiguous, unsupported}} 与 0..1 的 confidence。不要改写引文。
     - 只有原文明确支持的陈述标为 supported；不确定标为 ambiguous；原文反驳的标为 unsupported。只有 supported 的 evidence 会进入默认计算图。
     - 缺失不等于 false：无法确定的变量值写 value: null 并保持 observed: false；不得为未知概念发明布尔值。
 
@@ -29,7 +29,7 @@ system:
     - axiom_sets 记录推断成立所依赖的假设（constraint_refs 引用变量，evidence_refs 引用出处）。
 
     实验（experiments）：
-    - 每个实验包含 sparse 的 states 数组；state.role ∈ {baseline, proposed, ablation, control, variant, reference}，只填原文有证据的角色。
+    - 每个实验包含 sparse 的 states 数组；state.role ∈ {{baseline, proposed, ablation, control, variant, reference}}，只填原文有证据的角色。
     - state 通过 variable_refs / result_refs / evidence_refs 引用，不内嵌数值。
     - comparisons 只记录「原文比较了哪两个 state」；效果大小与可识别性由编译器计算，不要输出效应结论。
 
@@ -50,7 +50,7 @@ system:
 
     General rules:
     - IDs must be stable and unique within this fragment, using the canonical prefixes ev_, var_, ctx_, ax_, exp_, state_, opc_, qcan_ plus a number (e.g. ev_001, var_002, exp_003).
-    - Every object that can cite evidence must carry evidence_refs. Each evidence entry must include a verbatim-checkable text_span, verification.status in {supported, ambiguous, unsupported}, and confidence in 0..1. Never paraphrase quotations.
+    - Every object that can cite evidence must carry evidence_refs. Each evidence entry must include a verbatim-checkable text_span, verification.status in {{supported, ambiguous, unsupported}}, and confidence in 0..1. Never paraphrase quotations.
     - Mark only source-supported statements supported; uncertain ones ambiguous; source-refuted ones unsupported. Only supported evidence enters the default computational graph.
     - Missing is not false: when a value is unknown, write value: null and observed: false. Never invent booleans for unknown concepts.
 

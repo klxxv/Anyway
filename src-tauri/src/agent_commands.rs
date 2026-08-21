@@ -850,6 +850,12 @@ pub(crate) struct ImportProgressAdapter<'a> {
     job_id: &'a str,
 }
 
+impl<'a> ImportProgressAdapter<'a> {
+    pub(crate) fn new(hosts: &'a Mutex<AgentHost>, job_id: &'a str) -> Self {
+        Self { hosts, job_id }
+    }
+}
+
 /// Provider-neutral hook for Hypatia/native streaming and a future Tauri event
 /// emitter. Implementations accept counts and fixed summaries only, never text.
 #[allow(dead_code)]
@@ -1117,7 +1123,7 @@ async fn run_document_stages(
     selected_path: &Path,
     runtime: PdfAgentRuntimeConfig,
 ) -> Result<(), String> {
-    let progress = ImportProgressAdapter { hosts, job_id };
+    let progress = ImportProgressAdapter::new(hosts, job_id);
     // ── 阶段 1：ValidatingFile ──
     progress.transition(
         JobState::ValidatingFile,
@@ -1273,7 +1279,7 @@ async fn run_document_stages(
     let recovery_provider =
         LlmClientAdapter::new(client, CallRole::Recovery, format!("{job_id}:recovery"));
     let patch = crate::pdf_agent_v4::run_v4_pipeline(
-        app,
+        Some(app),
         &*kernel,
         &*policy,
         &doc,

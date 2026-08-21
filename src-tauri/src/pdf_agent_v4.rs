@@ -135,38 +135,46 @@ pub struct V4FragmentEvidence {
 
 /// Locate the plugin prompt directory: repository sources in debug builds,
 /// installed package prompts otherwise (highest version first).
-fn resolve_prompts_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-
+/// Locate the plugin prompt directory: repository sources in debug builds,
+/// installed package prompts otherwise (highest version first). The app
+/// handle is optional so tests can run the pipeline against the repository
+/// prompts without a Tauri runtime.
+fn resolve_prompts_dir(app: Option<&AppHandle>) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-        candidates.push(repository.join("plugins/sources/myc.pdf-canvas-agent/prompts"));
-        candidates.push(repository.join("config/prompts"));
-    }
-
-    if let Ok(app_data) = app.path().app_data_dir() {
-        let installed = app_data.join("plugins/installed");
-        if let Ok(entries) = std::fs::read_dir(installed) {
-            let mut plugin_prompts = entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.starts_with("myc.pdf-canvas-agent@"))
-                })
-                .map(|path| path.join("prompts"))
-                .collect::<Vec<_>>();
-            plugin_prompts.sort_by(|left, right| right.cmp(left));
-            candidates.extend(plugin_prompts);
+        let source = repository.join("plugins/sources/myc.pdf-canvas-agent/prompts");
+        if source.join("manifest.yaml").is_file() {
+            return Ok(source);
         }
     }
 
-    candidates
-        .into_iter()
-        .find(|path| path.join("manifest.yaml").is_file())
-        .ok_or_else(|| "PDF Agent prompt configuration is unavailable".to_string())
+    if let Some(app) = app {
+        if let Ok(app_data) = app.path().app_data_dir() {
+            let installed = app_data.join("plugins/installed");
+            if let Ok(entries) = std::fs::read_dir(installed) {
+                let mut plugin_prompts = entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with("myc.pdf-canvas-agent@"))
+                    })
+                    .map(|path| path.join("prompts"))
+                    .collect::<Vec<_>>();
+                plugin_prompts.sort_by(|left, right| right.cmp(left));
+                if let Some(found) = plugin_prompts
+                    .into_iter()
+                    .find(|path| path.join("manifest.yaml").is_file())
+                {
+                    return Ok(found);
+                }
+            }
+        }
+    }
+
+    Err("PDF Agent prompt configuration is unavailable".to_string())
 }
 
 struct LoadedPrompts {
@@ -209,12 +217,26 @@ fn load_prompts(dir: &Path) -> Result<LoadedPrompts, String> {
 }
 
 /// Render a `{placeholder}` template; every placeholder must be provided.
+/// `{{` renders a literal `{` so prompt text can show brace groups such as
+/// `{{supported, ambiguous, unsupported}}`.
 fn render_template(template: &str, variables: &BTreeMap<&str, String>) -> Result<String, String> {
     let mut rendered = String::with_capacity(template.len() + 256);
     let mut rest = template;
     while let Some(start) = rest.find('{') {
         rendered.push_str(&rest[..start]);
         let after = &rest[start + 1..];
+        if after.starts_with('{') {
+            // Escaped literal brace group: `{{...}}` → `{...}`.
+            let inner = &after[1..];
+            let Some(close) = inner.find("}}") else {
+                return Err("unbalanced '{{' in prompt template".to_string());
+            };
+            rendered.push('{');
+            rendered.push_str(&inner[..close]);
+            rendered.push('}');
+            rest = &inner[close + 2..];
+            continue;
+        }
         let Some(end) = after.find('}') else {
             return Err("unbalanced '{' in prompt template".to_string());
         };
@@ -384,9 +406,11 @@ fn bus_json(response: crate::kernel_commands::HostCallResponse) -> Result<Value,
 }
 
 /// The official pdf-canvas-agent v4 pipeline. See the module docs for the
-/// pass and bus flow. Returns the review-gated GraphPatch payload.
+/// pass and bus flow. Returns the review-gated GraphPatch payload. The app
+/// handle is optional (prompt discovery falls back to the repository sources
+/// in debug builds), which lets tests drive the full pipeline offline.
 pub(crate) async fn run_v4_pipeline(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     kernel: &KernelState,
     policy: &CapabilityPolicyState,
     doc: &StructuredDocument,
@@ -722,6 +746,12 @@ mod tests {
             render_template("Missing {ghost}.", &BTreeMap::new()).is_err(),
             "unknown placeholders must fail loudly"
         );
+        let escaped = render_template(
+            "status in {{supported, ambiguous, unsupported}}.",
+            &BTreeMap::new(),
+        )
+        .expect("renders");
+        assert_eq!(escaped, "status in {supported, ambiguous, unsupported}.");
     }
 
     #[test]
@@ -777,5 +807,261 @@ mod tests {
         assert_eq!(edge["edge"]["type"], "T");
         assert_eq!(edge["edge"]["source"], "block_var_x");
         assert_eq!(edge["edge"]["target"], "block_var_y");
+    }
+
+    // ── 端到端:mock LLM → Pass A/B/E → host bus → GraphPatch ──
+
+    struct MockProvider {
+        responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChatProvider for MockProvider {
+        async fn chat(&self, _system: &str, _user: &str) -> Result<String, String> {
+            self.responses
+                .lock()
+                .expect("mock lock")
+                .pop_front()
+                .ok_or_else(|| "mock provider exhausted".to_string())
+        }
+
+        fn name(&self) -> &str {
+            "mock"
+        }
+
+        fn model(&self) -> &str {
+            "mock-v4"
+        }
+    }
+
+    fn fragment_response() -> String {
+        json!({
+            "evidence": [{
+                "id": "ev_001",
+                "location": {"section": "s1"},
+                "text_span": "Fourier features improve accuracy.",
+                "verification": {"status": "supported", "confidence": 0.9}
+            }],
+            "variables": [{
+                "id": "var_001",
+                "concept_id": "representation.fourier.enabled",
+                "value_type": "bool",
+                "observed": true,
+                "value": true,
+                "unit_raw": null,
+                "expression_raw": null,
+                "evidence_refs": ["ev_001"]
+            }],
+            "contexts": [],
+            "axiom_sets": [],
+            "experiments": [],
+            "operator_candidates": [],
+            "abstraction_candidates": []
+        })
+        .to_string()
+    }
+
+    fn root_response() -> String {
+        json!({
+            "schema_version": "myc.llm.v4",
+            "document": {
+                "document_id": "doc_test",
+                "title": "Test Paper",
+                "authors": ["A. Author"],
+                "year": 2024,
+                "source_type": "paper"
+            },
+            "evidence": [{
+                "id": "ev_001",
+                "document_id": "doc_test",
+                "location": {"section": "s1"},
+                "text_span": "Fourier features improve accuracy.",
+                "verification": {"status": "supported", "confidence": 0.9}
+            }],
+            "variables": [{
+                "id": "var_001",
+                "concept_id": "representation.fourier.enabled",
+                "value_type": "bool",
+                "observed": true,
+                "value": true,
+                "unit_raw": null,
+                "expression_raw": null,
+                "evidence_refs": ["ev_001"]
+            }],
+            "contexts": [],
+            "axiom_sets": [],
+            "experiments": [],
+            "operator_candidates": [],
+            "abstraction_candidates": []
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn end_to_end_pipeline_compiles_persists_and_emits_a_review_gated_patch() {
+        use crate::agent_commands::PdfAgentRuntimeConfig;
+        use crate::agent_host::{AgentHost, DocumentFormat, JobState};
+        use crate::kernel_commands::{create_kernel_state, CapabilityPolicyState};
+        use crate::llm_client::{ApiFormat, PdfAgentLlmConfig, PdfAgentTransport};
+        use crate::pdf_pipeline::{
+            DocumentMap, ExtractedText, PageText, StructureParagraph, StructureSection,
+            StructuredDocument,
+        };
+        use std::collections::VecDeque;
+
+        // ── 状态:kernel 平面 + policy + 一个推进到语义阶段的 job ──
+        let kernel = create_kernel_state().expect("kernel state");
+        let policy = CapabilityPolicyState::default();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pdf_path = dir.path().join("paper.pdf");
+        std::fs::write(&pdf_path, b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n").expect("pdf");
+        let host = AgentHost::new(dir.path().to_path_buf());
+        let hosts = std::sync::Mutex::new(host);
+        let job_id = {
+            let mut host = hosts.lock().expect("host lock");
+            let id = host
+                .create_job(&pdf_path)
+                .expect("create job")
+                .job_id
+                .clone();
+            let stages = [
+                JobState::ValidatingFile,
+                JobState::ExtractingText,
+                JobState::OcrOptional,
+                JobState::BuildingDocumentMap,
+                JobState::ExtractingSemantics,
+            ];
+            for stage in &stages {
+                host.advance_job(&id, *stage, Some("h"), None, None)
+                    .expect("advance");
+            }
+            id
+        };
+        let progress = ImportProgressAdapter::new(&hosts, &job_id);
+
+        // ── 文档夹具:一个覆盖全文的章节 ──
+        let full_text = "We introduce Fourier features and show they improve accuracy.".to_string();
+        let pages = vec![PageText {
+            page_number: 1,
+            text: full_text.clone(),
+            char_count: full_text.chars().count(),
+        }];
+        let sections = vec![StructureSection {
+            id: "s1".to_string(),
+            title: "Method".to_string(),
+            level: 1,
+            start_offset: 0,
+            end_offset: full_text.chars().count(),
+            child_section_ids: vec![],
+        }];
+        let paragraphs = vec![StructureParagraph {
+            id: "p1".to_string(),
+            section_id: "s1".to_string(),
+            text: full_text.clone(),
+            start_offset: 0,
+            end_offset: full_text.chars().count(),
+        }];
+        let doc = StructuredDocument {
+            document_map: DocumentMap::build(&sections, &paragraphs, &pages),
+            sections,
+            paragraphs,
+            figures_tables: vec![],
+            ocr_triggered: false,
+            ocr_confidence: None,
+        };
+        let extracted = ExtractedText {
+            total_chars: full_text.chars().count(),
+            pages,
+            full_text,
+        };
+        let runtime = PdfAgentRuntimeConfig {
+            llm: PdfAgentLlmConfig {
+                api_url: "https://example.invalid".to_string(),
+                api_format: ApiFormat::OpenAi,
+                api_key: String::new(),
+                model: "mock-v4".to_string(),
+                thinking: false,
+                thinking_level: None,
+                provider: "mock".to_string(),
+                transport: PdfAgentTransport::LocalText,
+                timeout_secs: 30,
+            },
+            backend: crate::native_plugins::pdf_canvas_agent::Backend::Generic,
+            public_progress: false,
+            credential_source: "environment".to_string(),
+            credential_env_var: "MOCK_KEY".to_string(),
+        };
+
+        let provider = MockProvider {
+            responses: std::sync::Mutex::new(VecDeque::from([
+                // Pass A
+                json!({
+                    "title": "Test Paper",
+                    "authors": ["A. Author"],
+                    "year": 2024,
+                    "abstractText": null,
+                    "sections": [{"id": "s1", "title": "Method", "level": 1}],
+                    "references": []
+                })
+                .to_string(),
+                // Pass B fragment
+                fragment_response(),
+                // Pass E root
+                root_response(),
+            ])),
+        };
+        let recovery = MockProvider {
+            responses: std::sync::Mutex::new(VecDeque::new()),
+        };
+
+        let patch = tauri::async_runtime::block_on(run_v4_pipeline(
+            None,
+            &kernel,
+            &policy,
+            &doc,
+            &extracted,
+            &runtime,
+            &job_id,
+            DocumentFormat::Pdf,
+            &progress,
+            &provider,
+            &recovery,
+        ))
+        .expect("the v4 pipeline completes");
+
+        // ── GraphPatch 契约 ──
+        assert_eq!(patch["reviewRequired"], true);
+        assert_eq!(patch["apiVersion"], "researchcanvas.dev/graph-patch/v1alpha1");
+        assert_eq!(patch["source"]["pluginId"], "myc.pdf-canvas-agent");
+        let operations = patch["operations"].as_array().expect("operations");
+        assert!(
+            operations.iter().any(|operation| {
+                operation["node"]["id"] == "block_var_var_001"
+                    && operation["node"]["type"] == "variable"
+                    && operation["node"]["data"]["conceptId"] == "representation.fourier.enabled"
+            }),
+            "the compiled variable block must reach the patch: {operations:?}"
+        );
+
+        // ── host bus 审计轨迹 ──
+        let audit = kernel.audit().read().expect("audit lock");
+        for operation in ["graph.ir.compile", "graph.storage.put", "event.publish"] {
+            assert!(
+                audit.query(0, 1024).iter().any(|entry| {
+                    entry.operation == operation
+                        && entry.principal.as_str() == crate::kernel::policy::NATIVE_UI_PRINCIPAL_NAME
+                }),
+                "{operation} must be audited through the native chain"
+            );
+        }
+
+        // ── 持久化的画布内容 ──
+        let storage = kernel.graph_storage().read().expect("storage lock");
+        assert!(storage.block_count() >= 1, "the canvas must be persisted");
+        drop(storage);
+
+        // ── job 停在持久化阶段,等待宿主生成审阅补丁 ──
+        let host = hosts.lock().expect("host lock");
+        assert_eq!(host.get_job(&job_id).expect("job").state, JobState::PersistingCanvas);
     }
 }

@@ -67,11 +67,14 @@ The host supplies `application/pdf` through `host.pdf.extract`. The normalized i
 - the host-derived `sectionText(sectionId)` service;
 - host-derived experiment-related paragraphs where available.
 
-Pass A-E outputs are aligned with `crates/semantic-pipeline/src/ir.rs` and use camelCase Serde names. In particular:
+Pass A output stays camelCase (`abstractText`). Pass B fragments and the Pass E root
+follow the `myc.llm.v4` snake_case contract (`crates/anyway-schema-v4/src/extract.rs`).
+In particular:
 
 - Pass A uses `abstractText`;
-- Pass E uses `conclusionType`;
-- Pass F consumes merged `AgentCandidates`;
+- Pass B emits per-section `ExtractionV3` fragments (evidence, variables, contexts, axiom_sets, experiments, operator_candidates, abstraction_candidates);
+- Pass E emits the complete `myc.llm.v4` root with `schema_version`;
+- the host compiles the root deterministically into `myc.graph-ir.v4` (`CanvasIRV3`) and persists it through `graph.storage.put`;
 - the final GraphPatch uses `researchcanvas.dev/graph-patch/v1alpha1` and `reviewRequired: true`.
 
 `GraphPatch` operations are proposals only. The host must apply them only after user review.

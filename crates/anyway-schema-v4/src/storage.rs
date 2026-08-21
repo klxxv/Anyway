@@ -112,6 +112,18 @@ pub struct InMemoryStorage {
     provenance: HashMap<String, Vec<String>>,
 }
 
+impl InMemoryStorage {
+    /// Number of stored blocks (test observability and bus-level checks).
+    pub fn block_count(&self) -> usize {
+        self.blocks.len()
+    }
+
+    /// Number of stored operators (test observability and bus-level checks).
+    pub fn operator_count(&self) -> usize {
+        self.operators.len()
+    }
+}
+
 impl Storage for InMemoryStorage {
     fn put_block(&mut self, block: &Block) -> Result<(), StorageError> {
         self.blocks.insert(block.id.clone(), block.clone());

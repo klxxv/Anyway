@@ -1,10 +1,14 @@
 # PDF → Research Canvas Agent（DeepSeek API）开发与测试规范
 
-> 文档状态：Architecture & Implementation Specification  
+> 文档状态：Architecture & Implementation Specification（历史）  
 > 目标版本：PDF Canvas Agent v1  
 > API 基线日期：2026-08-06  
 > 目标读者：Agent/后端开发者、Tauri 宿主开发者、Prompt 工程师、测试工程师、安全与运维人员  
 > 规范关键词：**MUST**=必须，**SHOULD**=建议，**MAY**=可选
+>
+> ⚠️ **实现已演进（2026-08-20）**：本文档中的 Pass C（变量裂变）与 Pass D（跨段合并）
+> 已由确定性编译器取代；LLM 抽取契约现为 `myc.llm.v4`（ExtractionV3），管线实现见
+> `src-tauri/src/pdf_agent_v4.rs`。本文保留 DeepSeek API 契约与测试矩阵的历史参考价值。
 
 ## 0. 文档目的
 

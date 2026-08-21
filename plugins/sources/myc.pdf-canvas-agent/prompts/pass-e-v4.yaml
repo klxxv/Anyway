@@ -3,7 +3,7 @@ pass: E
 name: synthesis-v4
 description:
   zh: 论文级综合：合并 Pass A 结构与所有 Pass B 片段，输出完整的 myc.llm.v4 ExtractionV3 根对象。
-  en: Paper-level synthesis: merge Pass A structure and all Pass B fragments into one complete myc.llm.v4 ExtractionV3 root.
+  en: "Paper-level synthesis: merge Pass A structure and all Pass B fragments into one complete myc.llm.v4 ExtractionV3 root."
 output_schema: ../schemas/pass-e-v4.schema.json
 
 system:

@@ -2,6 +2,13 @@
 
 > **版本**: v1.0 | **日期**: 2026-08-06 | **目标 crate**: `pdf-agent-server`
 > **传输协议**: MCP (Model Context Protocol) / stdio | **语言**: Rust
+>
+> ⚠️ **实现已演进（2026-08-20）**：本文件是历史设计提案，其中的
+> `graphpatch-gen`、`semantic-pipeline` 五段 Pass 管线（Pass C/D、AgentCandidates、
+> `run_semantic_pipeline`）已被 myc.llm.v4 架构取代——当前实现见
+> `src-tauri/src/pdf_agent_v4.rs`（抽取输出 `myc.llm.v4` → 宿主 host bus
+> `graph.ir.compile`/`graph.storage.put`/`event.publish` → review-gated GraphPatch）。
+> 本文件中的 MCP 传输与 provider 网关分析仍具参考价值，但 crate 结构与映射表不再反映代码现状。
 
 ---
 

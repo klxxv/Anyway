@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://researchcanvas.dev/plugins/myc.pdf-canvas-agent/schemas/pass-a-structure.schema.json",
   "title": "PDF Agent Pass A StructureExtraction",
-  "description": "Schema aligned with semantic_pipeline::ir::StructureExtraction and camelCase Serde output.",
+  "description": "Pass A paper structure; feeds the myc.llm.v4 document object and per-section anchors (camelCase Serde output).",
   "type": "object",
   "additionalProperties": false,
   "properties": {
