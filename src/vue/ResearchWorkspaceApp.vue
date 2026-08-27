@@ -4,9 +4,6 @@ import { storeToRefs } from "pinia";
 import { IconChevronRight, IconPlugConnected } from "@tabler/icons-vue";
 
 import {
-  compileProject,
-} from "../../app/platform/agent-client";
-import {
   exportProjectWithPlugin,
   generateGitHubSshKey,
   gitAutosaveProject,
@@ -21,7 +18,6 @@ import {
   uploadGitHubSshKey,
 } from "../../app/platform/native-project";
 import type { PluginGraphPatch } from "../../app/plugins/contracts";
-import type { CanvasDiffBatchResult } from "../../app/domain/canvas-diff";
 import type { ResolvedPluginContextMenuAction as AppPluginContextMenuAction } from "../../app/plugins/context-menu";
 import { runAnalysisPlugin } from "../../app/plugins/tauri-client";
 import { contextMenuContributionsFromPlugins } from "../../app/plugins/context-menu";
@@ -31,9 +27,15 @@ import { resolveTheme, themeCssVariables } from "../../app/plugins/theme";
 import type { EnabledWorkspaceCommand } from "../../app/plugins/workspace";
 import type {
   LayoutMode,
+  ProjectState,
   ResearchEdgeType,
   ResearchNodeType,
 } from "../../app/lib/research-types";
+import {
+  ANYWAY_GRAPH_PROJECT_COMMITTED_EVENT,
+  parseGraphProjectCommittedEvent,
+  syncGraphProject,
+} from "../../app/platform/graph-project";
 import { edgeTypeMessageKeys } from "../../app/features/research-workspace/workspace-edge-labels";
 import {
   isEditableShortcutTarget,
@@ -54,6 +56,7 @@ import { useCanvasInteractionStore } from "./stores/canvas-interaction";
 import { useWorkspaceUiStore } from "./stores/workspace-ui";
 import ResearchGraphCanvas from "./canvas/ResearchGraphCanvas.vue";
 import InspectorPanel from "./components/InspectorPanel.vue";
+import PluginContributionSlot from "./components/PluginContributionSlot.vue";
 import WorkspaceTopbar from "./components/WorkspaceTopbar.vue";
 import type {
   DiffVersion,
@@ -69,9 +72,7 @@ import type {
   ResolvedPluginContextMenuAction as CanvasPluginContextMenuAction,
 } from "./canvas/canvas-types";
 
-const AgentReviewPanel = defineAsyncComponent(() => import("./components/AgentReviewPanel.vue"));
 const DiffPanel = defineAsyncComponent(() => import("./components/DiffPanel.vue"));
-const PdfUploadDialog = defineAsyncComponent(() => import("./components/PdfUploadDialog.vue"));
 const PluginStoreDialog = defineAsyncComponent(() => import("./components/PluginStoreDialog.vue"));
 const WorkspaceDialogs = defineAsyncComponent(() => import("./components/WorkspaceDialogs.vue"));
 const WorkspacePluginDialogs = defineAsyncComponent(() => import("./components/WorkspacePluginDialogs.vue"));
@@ -115,11 +116,7 @@ const {
   linkFilter,
   notice,
   preferences,
-  pdfDialogOpen,
-  reviewJobId,
   highlightChain,
-  pdfCompileResult,
-  pdfCompileError,
   diffOpen,
   diffMode,
   diffBaseId,
@@ -150,6 +147,12 @@ const {
 const { trackpadFrame } = useNativeTrackpadFrames();
 
 const project = computed(() => workspace.project.value);
+const pluginSlotContext = computed(() => ({
+  workspace: {
+    projectId: project.value.id,
+    baseRevision: project.value.revision,
+  },
+}));
 const history = computed(() => workspace.history.value);
 const selectedNode = computed(() => workspace.selectedNode.value);
 const selectedEdge = computed(() => workspace.selectedEdge.value);
@@ -165,15 +168,7 @@ const gitHubAccount = ref<GitWorkspaceState["account"]>(null);
 const gitCommand = ref<EnabledWorkspaceCommand | null>(null);
 const gitAutoSave = ref(false);
 const pluginBusy = ref(false);
-const importedBatchDiff = ref<CanvasDiffBatchResult | null>(null);
 
-const hasPdfAgent = computed(() =>
-  pluginHost.activePlugins.some(
-    (plugin) =>
-      plugin.manifest.kind === "AgentPlugin" &&
-      plugin.manifest.spec.capabilities.includes("agent.graph.patch.propose"),
-  ),
-);
 const hasDiffCapability = computed(() =>
   pluginHost.activePlugins.some(
     (plugin) => plugin.manifest.kind === "AgentPlugin" || plugin.manifest.kind === "AnalysisPlugin",
@@ -220,6 +215,68 @@ const diffOverlay = computed(() => diff.overlay.value);
 const diffLoading = computed(() => diff.loading.value);
 const diffError = computed(() => diff.error.value);
 let preferencesFrame: number | null = null;
+let graphProjectSyncQueue: Promise<void> = Promise.resolve();
+let graphProjectSyncGeneration = 0;
+let graphProjectSyncDesktopUnavailable = false;
+
+function isDesktopUnavailableError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "TauriHostUnavailableError" ||
+      error.message === "DESKTOP_REQUIRED" ||
+      error.message.includes("Tauri runtime"))
+  );
+}
+
+function isGraphProjectTooLargeError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "HostPayloadRequiresBlobError" ||
+      error.message.startsWith("GRAPH_PROJECT_TOO_LARGE:") ||
+      error.message.includes("inline limit"))
+  );
+}
+
+async function syncWorkspaceProjectToHost(nextProject: ProjectState, generation: number) {
+  try {
+    await syncGraphProject(nextProject);
+  } catch (error) {
+    if (isDesktopUnavailableError(error)) {
+      graphProjectSyncDesktopUnavailable = true;
+      return;
+    }
+    console.warn("GraphProject sync failed", error);
+    if (generation !== graphProjectSyncGeneration) return;
+    showNotice(
+      isGraphProjectTooLargeError(error)
+        ? "Project is too large for current plugin review sync."
+        : "Project sync for plugin review failed.",
+    );
+  }
+}
+
+function enqueueGraphProjectSync(nextProject: ProjectState) {
+  if (graphProjectSyncDesktopUnavailable) return;
+  graphProjectSyncGeneration += 1;
+  const generation = graphProjectSyncGeneration;
+  graphProjectSyncQueue = graphProjectSyncQueue
+    .catch(() => undefined)
+    .then(() => syncWorkspaceProjectToHost(nextProject, generation));
+}
+
+function handleGraphProjectCommitted(event: Event) {
+  const snapshot = parseGraphProjectCommittedEvent(event);
+  if (!snapshot) {
+    showNotice("Reviewed plugin GraphPatch returned an invalid project.");
+    return;
+  }
+  if (snapshot.projectId !== project.value.id) {
+    showNotice("Reviewed plugin GraphPatch targets a different project.");
+    return;
+  }
+  workspace.replaceProject(snapshot.project, "Apply reviewed plugin GraphPatch");
+  showNotice("Reviewed plugin GraphPatch applied.");
+}
 
 function downloadProject(nextProject: typeof project.value) {
   const blob = new Blob([JSON.stringify(nextProject, null, 2)], { type: "application/json" });
@@ -234,34 +291,6 @@ function downloadProject(nextProject: typeof project.value) {
 function showOperationError(error: unknown) {
   console.warn("Research Canvas operation failed", error);
   showNotice(t("toast.operationFailed"));
-}
-
-async function applyAgentPatch(patch: PluginGraphPatch) {
-  pdfDialogOpen.value = false;
-  workspace.applyGraphPatch(patch);
-  pdfCompileResult.value = null;
-  pdfCompileError.value = "";
-  showNotice(t("agent.patchApplied"));
-  try {
-    const result = await compileProject(workspace.projectRef.value);
-    pdfCompileResult.value = result;
-    highlightChain.value = {
-      nodeIds: result.logicChain.nodeIds,
-      edgeIds: result.logicChain.edgeIds,
-    };
-    showNotice(t("agent.highlightChain"));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    pdfCompileError.value = message;
-    showNotice(t("agent.compileFailed", { error: message }));
-  }
-}
-
-function rejectAgentPatch() {
-  reviewJobId.value = null;
-  pdfDialogOpen.value = false;
-  highlightChain.value = null;
-  showNotice(t("agent.patchRejected"));
 }
 
 function requestCreate(type: ResearchNodeType, x: number, y: number) {
@@ -445,14 +474,7 @@ async function uploadGitHubKey(path: string) {
 }
 
 function openDiffPanel() {
-  importedBatchDiff.value = null;
   openDiff(history.value.length > 0 ? `history-${history.value.length - 1}` : "current");
-}
-
-function openImportedBatchDiff(result: CanvasDiffBatchResult) {
-  importedBatchDiff.value = result;
-  pdfDialogOpen.value = false;
-  openDiff("current");
 }
 
 function closeDiffPanel() {
@@ -633,8 +655,7 @@ function runShortcut(event: KeyboardEvent) {
     isEditableShortcutTarget(event.target) ||
     settingsOpen.value ||
     pluginStoreOpen.value ||
-    composer.value ||
-    reviewJobId.value
+    composer.value
   ) {
     return;
   }
@@ -722,11 +743,6 @@ function createNodeFromComposer(draft: NodeDraft, x: number, y: number) {
   showNotice(t("toast.nodeAdded"));
 }
 
-function handlePdfReady(jobId: string) {
-  pdfDialogOpen.value = false;
-  reviewJobId.value = jobId;
-}
-
 function closeGitWorkspace() {
   gitSnapshot.value = null;
   gitCommand.value = null;
@@ -736,9 +752,7 @@ function closeGitWorkspace() {
 
 function applyGitPatch(acceptedPatch: PluginGraphPatch | null) {
   if (!acceptedPatch) return;
-  workspace.applyGraphPatch(acceptedPatch);
-  if (gitSnapshot.value) gitSnapshot.value = { ...gitSnapshot.value, graphPatch: undefined };
-  showNotice(t("workspace.patchApplied"));
+  showNotice("GraphPatch must be committed by the Rust review flow before updating the canvas.");
 }
 
 const stopNoticeWatch = watch(notice, (current, _previous, onCleanup) => {
@@ -748,6 +762,12 @@ const stopNoticeWatch = watch(notice, (current, _previous, onCleanup) => {
   }, toastVisibleMs);
   onCleanup(() => window.clearTimeout(timer));
 });
+
+const stopGraphProjectSyncWatch = watch(
+  project,
+  (nextProject) => enqueueGraphProjectSync(nextProject),
+  { immediate: true },
+);
 
 onMounted(() => {
   preferencesFrame = window.requestAnimationFrame(() => {
@@ -762,13 +782,16 @@ onMounted(() => {
 
   window.addEventListener("keydown", runShortcut);
   window.addEventListener("keydown", closeTransientUiOnEscape);
+  window.addEventListener(ANYWAY_GRAPH_PROJECT_COMMITTED_EVENT, handleGraphProjectCommitted);
 });
 
 onBeforeUnmount(() => {
   stopNoticeWatch();
+  stopGraphProjectSyncWatch();
   if (preferencesFrame !== null) window.cancelAnimationFrame(preferencesFrame);
   window.removeEventListener("keydown", runShortcut);
   window.removeEventListener("keydown", closeTransientUiOnEscape);
+  window.removeEventListener(ANYWAY_GRAPH_PROJECT_COMMITTED_EVENT, handleGraphProjectCommitted);
 });
 
 watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) => {
@@ -796,7 +819,6 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       :shortcuts="preferences.shortcuts"
       :active-layout="layoutMode"
       :compare-enabled="hasDiffCapability"
-      :import-pdf-enabled="hasPdfAgent"
       :export-formats="exportCommand?.formats"
       @menu="toggleMenu"
       @add="requestAdd"
@@ -811,8 +833,11 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       @redo="workspace.redo"
       @export="exportProject"
       @export-format="runPluginExport"
-      @import-pdf="pdfDialogOpen = true"
-    />
+    >
+      <template #actions>
+        <PluginContributionSlot slot-id="workspace.toolbar.actions" :context="pluginSlotContext" />
+      </template>
+    </WorkspaceTopbar>
 
     <div
       class="relative grid min-h-0 flex-1 transition-[grid-template-columns] duration-[360ms] ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none"
@@ -900,6 +925,7 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       {{ edgeTypeLabel(connectType) }} 路 {{ t("workspace.connectInstruction") }}
     </div>
     <div v-if="notice && !connectMode" :key="notice.id" class="workspace-toast" role="status" aria-live="polite">{{ notice.text }}</div>
+    <PluginContributionSlot slot-id="workspace.status" :context="pluginSlotContext" />
 
     <WorkspaceDialogs
       v-if="menuOpen"
@@ -958,17 +984,7 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       :on-close="() => { searchOpen = false }"
       :on-select="handleSelectNode"
     />
-    <PdfUploadDialog v-if="pdfDialogOpen" @close="pdfDialogOpen = false" @ready="handlePdfReady" @diff-ready="openImportedBatchDiff" />
-    <AgentReviewPanel
-      v-if="reviewJobId"
-      :job-id="reviewJobId"
-      :compile-result="pdfCompileResult"
-      :compile-error="pdfCompileError"
-      @close="reviewJobId = null"
-      @apply="(patch) => void applyAgentPatch(patch)"
-      @reject="rejectAgentPatch"
-      @rollback="workspace.undo"
-    />
+    <PluginContributionSlot slot-id="workspace.dialogs" :context="pluginSlotContext" />
     <WorkspaceDialogs
       v-if="composer"
       view="composer"
@@ -984,7 +1000,6 @@ watch([gitAutoSave, gitCommand, gitSnapshot], (_current, _previous, onCleanup) =
       :compare-id="diffCompareId"
       :mode="diffMode"
       :result="diffResult"
-      :batch="importedBatchDiff"
       :loading="diffLoading"
       :error="diffError ? t('diff.error', { error: diffError }) : null"
       @base-change="(id) => { diffBaseId = id; diffFocus = null }"

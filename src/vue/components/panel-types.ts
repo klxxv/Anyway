@@ -13,13 +13,11 @@ import type {
   ResearchNode,
   ResearchNodeType,
 } from "../../../app/lib/research-types";
-import type { PdfCompileResult } from "../../../app/platform/agent-client";
 import type {
   FolderProjectSummary,
   GitHubAccountStatus,
   GitWorkspaceSnapshot,
 } from "../../../app/platform/native-project";
-import type { AgentJobStage, AgentJobStatus } from "../../../app/plugins/agent-contracts";
 import type {
   GraphPatchOperation,
   InstalledMycPlugin,
@@ -446,23 +444,6 @@ export type DiffPanelProps = {
   onFocus: (kind: "node" | "edge", entityId: string) => void;
 };
 
-export type ReviewDecision = { accept: boolean; edits?: Record<string, string> };
-export type AgentReviewPanelProps = {
-  jobId: string;
-  compileResult?: PdfCompileResult | null;
-  compileError?: string;
-  onClose: () => void;
-  onApply: (patch: PluginGraphPatch) => void;
-  onReject: () => void;
-  onRollback: () => void;
-};
-
-export type PdfUploadDialogProps = {
-  onClose: () => void;
-  onReady: (jobId: string, status: AgentJobStatus) => void;
-  onDiffReady?: (result: CanvasDiffBatchResult) => void;
-};
-
 export type FolderWorkspaceDialogProps = {
   root: string;
   projects: FolderProjectSummary[];
@@ -599,62 +580,4 @@ export function operationSubject(operation: GraphPatchOperation): string {
   }
 }
 
-/** Filters a patch by explicit decisions and applies local title/note edits. */
-export function buildAcceptedPatch(
-  patch: PluginGraphPatch,
-  decisions: Record<number, ReviewDecision>,
-): PluginGraphPatch | null {
-  const operations = patch.operations
-    .map((operation, index) => {
-      const decision = decisions[index];
-      if (!decision || !decision.accept) return null;
-      if (!decision.edits) return operation;
-      if (operation.op === "add-node" && decision.edits.title !== undefined) {
-        return { ...operation, node: { ...operation.node, title: decision.edits.title } };
-      }
-      if (operation.op === "add-edge" && decision.edits.note !== undefined) {
-        return { ...operation, edge: { ...operation.edge, note: decision.edits.note } };
-      }
-      return operation;
-    })
-    .filter((operation): operation is GraphPatchOperation => operation !== null);
-  if (operations.length === 0) return null;
-  return { ...patch, operations };
-}
-
-export function countAccepted(decisions: Record<number, ReviewDecision>, total: number): number {
-  let count = 0;
-  for (let index = 0; index < total; index += 1) {
-    if (decisions[index]?.accept) count += 1;
-  }
-  return count;
-}
-
-export const PDF_PIPELINE_STAGES: readonly AgentJobStage[] = [
-  "queued",
-  "created",
-  "validating_file",
-  "extracting_text",
-  "ocr_optional",
-  "building_document_map",
-  "extracting_semantics",
-  "generating_patch",
-  "awaiting_review",
-];
-
-export function jobStageIndex(state: AgentJobStage): number {
-  return PDF_PIPELINE_STAGES.indexOf(state);
-}
-
-export function deriveUploadProgress(status: AgentJobStatus): {
-  done: number;
-  total: number;
-  percent: number;
-  stage: AgentJobStage;
-} {
-  const [done, total] = status.progress;
-  const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  return { done, total, percent, stage: status.state };
-}
-
-export type { AgentJobStage, AgentJobStatus, CanvasDiffResult, DiffState, GraphPatchOperation, InstalledMycPlugin, MessageKey, NodeDraft, PluginGraphPatch, ProjectState, ResearchEdge, ResearchNode, ResearchNodeType, VariableValueType, WorkspacePreferences, WorkspaceShortcuts, ShortcutAction, ContextMenuActionId, ContextMenuScope, RadialMenuAction, RadialMenuPosition, EdgeInspectorUpdate, InspectorUpdate };
+export type { CanvasDiffResult, DiffState, GraphPatchOperation, InstalledMycPlugin, MessageKey, NodeDraft, PluginGraphPatch, ProjectState, ResearchEdge, ResearchNode, ResearchNodeType, VariableValueType, WorkspacePreferences, WorkspaceShortcuts, ShortcutAction, ContextMenuActionId, ContextMenuScope, RadialMenuAction, RadialMenuPosition, EdgeInspectorUpdate, InspectorUpdate };

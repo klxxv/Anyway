@@ -121,9 +121,17 @@ impl ScanReport {
 pub enum PackageGateError {
     DuplicateCandidate(String),
     UnknownCandidate(String),
-    DigestMismatch { expected: String, got: String },
-    InvalidTransition { from: CandidateStatus, to: &'static str },
-    TooManyCandidates { max: usize },
+    DigestMismatch {
+        expected: String,
+        got: String,
+    },
+    InvalidTransition {
+        from: CandidateStatus,
+        to: &'static str,
+    },
+    TooManyCandidates {
+        max: usize,
+    },
     Invalid(String),
 }
 
@@ -458,9 +466,12 @@ mod tests {
                 to: "activated",
             })
         );
-        assert_eq!(gate.status(&digest).unwrap(), CandidateStatus::Rejected {
-            reason: "malware signature match".to_string()
-        });
+        assert_eq!(
+            gate.status(&digest).unwrap(),
+            CandidateStatus::Rejected {
+                reason: "malware signature match".to_string()
+            }
+        );
     }
 
     #[test]
@@ -626,12 +637,7 @@ mod tests {
             Err(PackageGateError::TooManyCandidates { max: 2 })
         );
         assert_eq!(gate.candidate_count(), 2);
-        assert_eq!(
-            gate.config(),
-            &PackageGateConfig {
-                max_candidates: 2
-            }
-        );
+        assert_eq!(gate.config(), &PackageGateConfig { max_candidates: 2 });
     }
 
     #[test]
@@ -673,13 +679,8 @@ mod tests {
             Err(PackageGateError::Invalid(_))
         ));
 
-        let whitespace_scanner = ScanReport::new(
-            digest_a(),
-            true,
-            Vec::new(),
-            "anyway scanner",
-            "1.0.0",
-        );
+        let whitespace_scanner =
+            ScanReport::new(digest_a(), true, Vec::new(), "anyway scanner", "1.0.0");
         assert!(
             matches!(whitespace_scanner, Err(PackageGateError::Invalid(_))),
             "scanner_id with whitespace must be rejected"
@@ -817,6 +818,9 @@ mod tests {
 
         let message = PackageGateError::Invalid("bad input".to_string()).to_string();
         assert!(message.contains("bad input"), "message: {message}");
-        assert!(message.contains("invalid package gate input"), "message: {message}");
+        assert!(
+            message.contains("invalid package gate input"),
+            "message: {message}"
+        );
     }
 }

@@ -17,7 +17,6 @@ import type {
   GitHubAccountStatus,
   GitWorkspaceSnapshot,
 } from "../../../app/platform/native-project";
-import type { PdfCompileResult } from "../../../app/platform/agent-client";
 import type { PluginGraphPatch } from "../../../app/plugins/contracts";
 import type { ResolvedPluginContextMenuAction } from "../../../app/plugins/context-menu";
 import type { EnabledWorkspaceCommand } from "../../../app/plugins/workspace";
@@ -68,7 +67,6 @@ export type {
   GraphSelectionResult,
   NodeMove,
   NodeDraft,
-  PdfCompileResult,
   PluginGraphPatch,
   ProjectState,
   RadialMenuAction,
@@ -124,7 +122,6 @@ export type WorkspaceTopbarProps = {
   activeLayout: LayoutMode | null;
   exportFormats?: Array<"pdf" | "svg" | "png">;
   compareEnabled?: boolean;
-  importPdfEnabled?: boolean;
 };
 
 export type WorkspaceTopbarEmits = {
@@ -141,7 +138,6 @@ export type WorkspaceTopbarEmits = {
   (event: "redo"): void;
   (event: "export"): void;
   (event: "export-format", format: "pdf" | "svg" | "png"): void;
-  (event: "import-pdf"): void;
 };
 
 export type WorkspaceContextMenuProps = {

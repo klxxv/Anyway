@@ -54,42 +54,50 @@ pub fn dispatch_graph_storage_put(
         .map_err(|_| "graph storage lock is poisoned".to_string())?;
     match put.kind.as_str() {
         "block" => {
-            let block: Block = serde_json::from_value(put.object)
+            let block: Block =
+                serde_json::from_value(put.object).map_err(|error| put_error("block", error))?;
+            guard
+                .put_block(&block)
                 .map_err(|error| put_error("block", error))?;
-            guard.put_block(&block).map_err(|error| put_error("block", error))?;
         }
         "operator" => {
-            let operator: Operator = serde_json::from_value(put.object)
-                .map_err(|error| put_error("operator", error))?;
+            let operator: Operator =
+                serde_json::from_value(put.object).map_err(|error| put_error("operator", error))?;
             guard
                 .put_operator(&operator)
                 .map_err(|error| put_error("operator", error))?;
         }
         "chain" => {
-            let chain: Chain = serde_json::from_value(put.object)
+            let chain: Chain =
+                serde_json::from_value(put.object).map_err(|error| put_error("chain", error))?;
+            guard
+                .put_chain(&chain)
                 .map_err(|error| put_error("chain", error))?;
-            guard.put_chain(&chain).map_err(|error| put_error("chain", error))?;
         }
         "fiber" => {
-            let fiber: Fiber = serde_json::from_value(put.object)
+            let fiber: Fiber =
+                serde_json::from_value(put.object).map_err(|error| put_error("fiber", error))?;
+            guard
+                .put_fiber(&fiber)
                 .map_err(|error| put_error("fiber", error))?;
-            guard.put_fiber(&fiber).map_err(|error| put_error("fiber", error))?;
         }
         "bundle" => {
-            let bundle: Bundle = serde_json::from_value(put.object)
-                .map_err(|error| put_error("bundle", error))?;
+            let bundle: Bundle =
+                serde_json::from_value(put.object).map_err(|error| put_error("bundle", error))?;
             guard
                 .put_bundle(&bundle)
                 .map_err(|error| put_error("bundle", error))?;
         }
         "state" => {
-            let state: CompilerState = serde_json::from_value(put.object)
+            let state: CompilerState =
+                serde_json::from_value(put.object).map_err(|error| put_error("state", error))?;
+            guard
+                .put_state(&state)
                 .map_err(|error| put_error("state", error))?;
-            guard.put_state(&state).map_err(|error| put_error("state", error))?;
         }
         "canvas" => {
-            let canvas: CanvasIRV3 = serde_json::from_value(put.object)
-                .map_err(|error| put_error("canvas", error))?;
+            let canvas: CanvasIRV3 =
+                serde_json::from_value(put.object).map_err(|error| put_error("canvas", error))?;
             guard
                 .put_canvas(&canvas)
                 .map_err(|error| put_error("canvas", error))?;
@@ -116,7 +124,9 @@ pub fn dispatch_graph_storage_query(
     match query.query.as_str() {
         "neighbors" => {
             let state: CompilerState = serde_json::from_value(
-                query.state.ok_or_else(|| "neighbors query requires a state".to_string())?,
+                query
+                    .state
+                    .ok_or_else(|| "neighbors query requires a state".to_string())?,
             )
             .map_err(|error| error.to_string())?;
             let neighbors = guard

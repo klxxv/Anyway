@@ -4,7 +4,7 @@ _基于基线 `ae47fe6` 的 AnMarket 官方系统插件设计与最小契约骨�
 
 ---
 
-> **状态：** 本文和 `plugins/system/anmarket/` 是设计级最小骨架。它不修改现有安装器、签名实现、插件契约、Cargo 或前端；`SystemPlugin` 需要后续 Kernel 迭代后才会成为可执行插件。
+> **状态：** 本文和 `my-plugins/anmarket/` 是设计级最小骨架。它不修改现有安装器、签名实现、插件契约、Cargo 或前端；`SystemPlugin` 需要后续 Kernel 迭代后才会成为可执行插件。
 
 ## 📋 设计边界
 
@@ -101,7 +101,7 @@ AnMarket 能力只代表“可以提出供应链操作”，不代表获得了�
 
 ## 🧩 Provider 契约
 
-无依赖 TypeScript 契约位于 [`plugins/system/anmarket/types.ts`](../../plugins/system/anmarket/types.ts)，入口位于 [`plugins/system/anmarket/index.ts`](../../plugins/system/anmarket/index.ts)。Provider 接口按“输入不可变、输出可审计、权限不可隐式扩张”设计。
+无依赖 TypeScript 契约位于 [`my-plugins/anmarket/types.ts`](../../my-plugins/anmarket/types.ts)，入口位于 [`my-plugins/anmarket/index.ts`](../../my-plugins/anmarket/index.ts)。Provider 接口按“输入不可变、输出可审计、权限不可隐式扩张”设计。
 
 | Provider | 输入 | 输出 | 允许的副作用 |
 | --- | --- | --- | --- |
@@ -337,7 +337,7 @@ Blob Store 只产生不可变 `BlobRef`，引用至少包含 `digest`、`size`�
 
 AnMarket 的设置、仓库列表、权限 diff、扫描报告和更新历史通过 Vue IR 提供。Vue Host 只接受白名单组件和 JSON 值，禁止插件提供任意 HTML 或 JavaScript。
 
-允许的最小组件集合在 [`types.ts`](../../plugins/system/anmarket/types.ts) 中声明：
+允许的最小组件集合在 [`types.ts`](../../my-plugins/anmarket/types.ts) 中声明：
 
 - `anmarket.registry-list`
 - `anmarket.install-card`
@@ -361,9 +361,9 @@ AnMarket 的设置、仓库列表、权限 diff、扫描报告和更新历史通
 
 | 文件 | 内容 |
 | --- | --- |
-| [`plugin.json`](../../plugins/system/anmarket/plugin.json) | `SystemPlugin` manifest 示例、官方信任类别、Provider 和 Vue IR contributions |
-| [`types.ts`](../../plugins/system/anmarket/types.ts) | Provider、BlobRef、RPC、finding/report、权限差异、blocklist、Vue IR 类型 |
-| [`index.ts`](../../plugins/system/anmarket/index.ts) | 无依赖的类型导出入口 |
+| [`plugin.json`](../../my-plugins/anmarket/plugin.json) | `SystemPlugin` manifest 示例、官方信任类别、Provider 和 Vue IR contributions |
+| [`types.ts`](../../my-plugins/anmarket/types.ts) | Provider、BlobRef、RPC、finding/report、权限差异、blocklist、Vue IR 类型 |
+| [`index.ts`](../../my-plugins/anmarket/index.ts) | 无依赖的类型导出入口 |
 
 后续实现必须分阶段落在 Kernel 和 AnCordis 边界：
 

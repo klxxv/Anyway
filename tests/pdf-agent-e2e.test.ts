@@ -223,10 +223,10 @@ test("Agent 插件清单声明了正确的安全边界", () => {
     AGENT_PERMISSIONS.some((p) => p.includes("No filesystem")),
     "Agent must declare no filesystem handles",
   );
-  // Agent 不持有网络访问
+  // Worker 仅声明 provider 直连；当前没有 OS 级 egress sandbox
   assert.ok(
-    AGENT_PERMISSIONS.some((p) => p.includes("No network")),
-    "Agent must declare no network access",
+    AGENT_PERMISSIONS.some((p) => p.includes("Declared direct provider network egress")),
+    "Agent must declare direct provider egress without claiming an OS sandbox",
   );
   // Agent 不持有 Graph store 写权限
   assert.ok(
@@ -427,7 +427,7 @@ test("审阅 UI 契约接口结构正确", () => {
 });
 
 test("plugin.json 清单文件存在且结构正确", () => {
-  const jsonPath = "plugins/sources/myc.pdf-canvas-agent/plugin.json";
+  const jsonPath = "my-plugins/anPdfsolver/plugin.json";
   const manifest = JSON.parse(readFileSync(jsonPath, "utf8"));
 
   // 验证 Manifest 结构 / Verify the manifest structure
@@ -442,7 +442,7 @@ test("plugin.json 清单文件存在且结构正确", () => {
 });
 
 test("agent-manifest.json 安全边界声明完整", () => {
-  const manifestPath = "plugins/sources/myc.pdf-canvas-agent/agent-manifest.json";
+  const manifestPath = "my-plugins/anPdfsolver/agent-manifest.json";
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
   assert.equal(manifest.schemaVersion, 1);
@@ -451,14 +451,18 @@ test("agent-manifest.json 安全边界声明完整", () => {
   assert.equal(manifest.reviewGated, true);
 
   const sec = manifest.securityBoundary;
-  assert.equal(sec.noApiKey, true);
+  assert.equal(sec.providerSecretInjected, true);
+  assert.equal(sec.apiKeyExposure, "exact plugin-version process environment only");
   assert.equal(sec.noFileHandles, true);
-  assert.equal(sec.noNetwork, true);
+  assert.equal(sec.directProviderEgress, true);
+  assert.match(sec.egressEnforcement, /OS network sandbox not implemented/);
   assert.equal(sec.noGraphStoreWrite, true);
   assert.equal(sec.hostMediated, true);
 
   const pipeline = manifest.pipeline;
   assert.ok(pipeline.stages.includes("awaiting_review"));
+  assert.equal(pipeline.hostBus.proposal, "graph.patch.propose");
+  assert.equal(pipeline.hostBus.directStorageWrite, false);
   assert.ok(pipeline.idempotent);
   assert.ok(pipeline.checkpointEnabled);
 });

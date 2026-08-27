@@ -637,15 +637,16 @@ test("AgentPlugin and ProviderPlugin are activatable install kinds", () => {
     false,
   );
 
-  // The shipped pdf-canvas-agent source stays review-gated and host-mediated.
+  // The shipped anPdfsolver source stays review-gated while using the generic
+  // trusted-plugin frontend/worker contract instead of a Host PDF engine.
   const descriptor = JSON.parse(
-    readFileSync("plugins/sources/myc.pdf-canvas-agent/agent-manifest.json", "utf8"),
+    readFileSync("my-plugins/anPdfsolver/agent-manifest.json", "utf8"),
   ) as { mode?: string; reviewGated?: boolean };
-  assert.equal(descriptor.mode, "agent");
+  assert.equal(descriptor.mode, "trusted-plugin");
   assert.equal(descriptor.reviewGated, true);
   const manifest = JSON.parse(
-    readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.json", "utf8"),
+    readFileSync("my-plugins/anPdfsolver/plugin.json", "utf8"),
   ) as { categories?: string[]; engines?: { engine?: string } };
   assert.ok((manifest.categories ?? []).includes("AgentPlugin"));
-  assert.equal(manifest.engines?.engine, "host-mediated");
+  assert.equal(manifest.engines?.engine, "trusted-plugin");
 });

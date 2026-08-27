@@ -26,9 +26,7 @@ fn now_ms() -> u64 {
 }
 
 /// `service.list` — snapshot every non-expired registration.
-pub fn dispatch_service_list(
-    services: &RwLock<ServiceRegistry>,
-) -> Result<Value, String> {
+pub fn dispatch_service_list(services: &RwLock<ServiceRegistry>) -> Result<Value, String> {
     let registry = services
         .read()
         .map_err(|_| "service registry lock is poisoned".to_string())?;

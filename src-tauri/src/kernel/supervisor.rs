@@ -1,9 +1,8 @@
 //! Pure supervisor model shared by thread-pool tasks and external processes.
 //!
-//! This phase intentionally stops at planning and bookkeeping.  `Supervisor`
-//! emits typed actions; a future platform adapter will map them to Tokio task
-//! cancellation, a bounded thread pool, or OS process control.  No OS sandbox
-//! is implemented by this module.
+//! `Supervisor` remains the deterministic lifecycle ledger. The concrete
+//! stdio process adapter for Python lives in `host_bus::python_worker`; it
+//! owns process handles and maps EOF, timeout and cancellation to observations.
 
 use super::{identity::*, lifecycle::*};
 
@@ -14,8 +13,7 @@ use std::collections::BTreeMap;
 pub enum FailureDomain {
     /// Tasks share the host process and may share a pool's executor state.
     SharedThreadPool,
-    /// The worker is expected to have a process boundary, but this type does
-    /// not create or sandbox that process.
+    /// The worker has a process boundary managed by a Host-side adapter.
     ExternalProcess,
 }
 
@@ -447,7 +445,10 @@ mod tests {
         assert!(unknown.contains(&worker.to_string()), "message: {unknown}");
 
         let duplicate = SupervisorError::DuplicateWorker(worker.clone()).to_string();
-        assert!(duplicate.contains("duplicate worker"), "message: {duplicate}");
+        assert!(
+            duplicate.contains("duplicate worker"),
+            "message: {duplicate}"
+        );
 
         let lifecycle = SupervisorError::Lifecycle(InvalidTransition {
             state: LifecycleState::Declared,

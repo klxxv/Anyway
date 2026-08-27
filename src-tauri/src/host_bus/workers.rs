@@ -1,10 +1,8 @@
 //! Host bus worker lifecycle: `worker.spawn` + `worker.stop`.
 //!
-//! Declarative registration against the kernel `Supervisor`. This slice
-//! records the worker and plans start/stop actions; the platform adapter that
-//! executes the actions is out of scope for the in-memory kernel. The
-//! supervisor stays lock-free; the kernel's `RwLock<Supervisor>` is held by
-//! the caller.
+//! Declarative registration against the kernel `Supervisor`, plus the concrete
+//! Python stdio worker transport re-exported below. The supervisor stays
+//! lock-free; the kernel's `RwLock<Supervisor>` is held by the caller.
 
 use std::sync::RwLock;
 
@@ -15,6 +13,20 @@ use crate::kernel::identity::{PrincipalId, WorkerId};
 use crate::kernel::lifecycle::LifecycleSpec;
 use crate::kernel::supervisor::{Supervisor, SupervisorAction, WorkerSpec};
 use crate::kernel_commands::{inline_request, HostCallRequest};
+
+#[path = "plugin_worker.rs"]
+pub mod plugin_worker;
+
+pub use super::python_worker::{
+    decode_frame, encode_frame, read_frame, validate_hello_ack, write_frame, PythonWorkerSession,
+    SecretEnv, WorkerError, WorkerSessionConfig, MAX_ERROR_MESSAGE_BYTES, MAX_EVENTS_PER_REQUEST,
+    MAX_FRAME_BYTES, MAX_HOST_CALLS_PER_REQUEST, MAX_INLINE_BYTES, WORKER_RPC_API_VERSION,
+};
+pub use plugin_worker::{
+    PluginWorkerCallRequest, PluginWorkerCallResponse, PluginWorkerCancelRequest,
+    PluginWorkerCloseRequest, PluginWorkerCloseResponse, PluginWorkerCommand,
+    PluginWorkerLaunchPlan, PluginWorkerManager, PluginWorkerOpenRequest, PluginWorkerOpenResponse,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

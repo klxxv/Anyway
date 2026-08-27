@@ -262,15 +262,53 @@ impl CapabilityPolicy {
                 PLUGIN_CATALOG_READ_OPERATION,
                 custom_capability("plugin.catalog.read"),
             ),
+            (
+                "plugin.frontend.resolve",
+                custom_capability("plugin.frontend.resolve"),
+            ),
+            ("plugin.files.pick", custom_capability("plugin.files.pick")),
+            (
+                "plugin.worker.open",
+                custom_capability("plugin.worker.open"),
+            ),
+            (
+                "plugin.worker.call",
+                custom_capability("plugin.worker.call"),
+            ),
+            (
+                "plugin.worker.cancel",
+                custom_capability("plugin.worker.cancel"),
+            ),
+            (
+                "plugin.worker.close",
+                custom_capability("plugin.worker.close"),
+            ),
             ("blob.read", Capability::BlobRead),
+            ("graph.patch.propose", Capability::GraphPatchPropose),
             (
-                "blob.upload.begin",
-                custom_capability("blob.upload.begin"),
+                "graph.patch.review",
+                custom_capability("agent.review.request"),
+            ),
+            ("graph.patch.get", custom_capability("agent.review.request")),
+            (
+                "graph.patch.cleanup-session",
+                custom_capability("agent.review.request"),
             ),
             (
-                "blob.upload.chunk",
-                custom_capability("blob.upload.chunk"),
+                "graph.project.sync",
+                custom_capability("graph.project.sync"),
             ),
+            ("graph.project.get", custom_capability("graph.project.get")),
+            (
+                "graph.project.remove",
+                custom_capability("graph.project.remove"),
+            ),
+            (
+                "graph.project.cleanup-session",
+                custom_capability("graph.project.cleanup-session"),
+            ),
+            ("blob.upload.begin", custom_capability("blob.upload.begin")),
+            ("blob.upload.chunk", custom_capability("blob.upload.chunk")),
             (
                 "blob.upload.commit",
                 custom_capability("blob.upload.commit"),
@@ -285,8 +323,28 @@ impl CapabilityPolicy {
             ("service.register", custom_capability("service.register")),
             ("service.call", custom_capability("service.call")),
             (
+                "plugin.surface.state",
+                custom_capability("plugin.surface.state"),
+            ),
+            (
+                "plugin.surface.action",
+                custom_capability("plugin.surface.action"),
+            ),
+            (
+                "plugin.surface.host-action",
+                custom_capability("plugin.surface.host-action"),
+            ),
+            (
+                "plugin.surface.file-attach",
+                custom_capability("plugin.surface.file-attach"),
+            ),
+            (
                 "plugin.settings.read",
                 custom_capability("plugin.settings.read"),
+            ),
+            (
+                "plugin.settings.read-trusted",
+                custom_capability("plugin.settings.read-trusted"),
             ),
             (
                 "plugin.settings.write",
@@ -360,19 +418,10 @@ impl CapabilityPolicy {
                 "agent.batch.status",
                 custom_capability("agent.batch.status"),
             ),
-            (
-                "agent.job.review",
-                custom_capability("agent.job.review"),
-            ),
-            (
-                "agent.job.cancel",
-                custom_capability("agent.job.cancel"),
-            ),
+            ("agent.job.review", custom_capability("agent.job.review")),
+            ("agent.job.cancel", custom_capability("agent.job.cancel")),
             ("agent.job.start", custom_capability("agent.job.start")),
-            (
-                "agent.batch.start",
-                custom_capability("agent.batch.start"),
-            ),
+            ("agent.batch.start", custom_capability("agent.batch.start")),
             // ── 8 host-bus domains: the trusted native UI shell may drive the
             //    graph storage / IR / lease / event / worker / service / audit
             //    / blob-management surfaces on behalf of hosted plugins. ──
@@ -387,22 +436,13 @@ impl CapabilityPolicy {
             ("graph.ir.compile", custom_capability("graph.ir")),
             ("graph.ir.query", custom_capability("graph.ir")),
             ("lease.renew", custom_capability("host-bus.lease")),
-            (
-                "event.subscribe",
-                custom_capability("host-bus.event"),
-            ),
+            ("event.subscribe", custom_capability("host-bus.event")),
             ("event.publish", custom_capability("host-bus.event")),
             ("event.poll", custom_capability("host-bus.event")),
             ("worker.spawn", Capability::WorkerSpawn),
             ("worker.stop", custom_capability("host-bus.worker")),
-            (
-                "service.list",
-                custom_capability("host-bus.service"),
-            ),
-            (
-                "service.unregister",
-                custom_capability("host-bus.service"),
-            ),
+            ("service.list", custom_capability("host-bus.service")),
+            ("service.unregister", custom_capability("host-bus.service")),
             ("audit.read", custom_capability("audit.read")),
             ("blob.list", custom_capability("blob.manage")),
             ("blob.release", custom_capability("blob.manage")),
@@ -451,16 +491,31 @@ impl CapabilityPolicy {
                 PLUGIN_CATALOG_READ_OPERATION,
                 custom_capability("plugin.catalog.read"),
             ),
+            "plugin.frontend.resolve" => (
+                "plugin.frontend.resolve",
+                custom_capability("plugin.frontend.resolve"),
+            ),
+            "plugin.files.pick" => ("plugin.files.pick", custom_capability("plugin.files.pick")),
+            "plugin.worker.open" => (
+                "plugin.worker.open",
+                custom_capability("plugin.worker.open"),
+            ),
+            "plugin.worker.call" => (
+                "plugin.worker.call",
+                custom_capability("plugin.worker.call"),
+            ),
+            "plugin.worker.cancel" => (
+                "plugin.worker.cancel",
+                custom_capability("plugin.worker.cancel"),
+            ),
+            "plugin.worker.close" => (
+                "plugin.worker.close",
+                custom_capability("plugin.worker.close"),
+            ),
             "blob.read" => ("blob.read", Capability::BlobRead),
             "blob.write" => ("blob.write", Capability::BlobWrite),
-            "blob.upload.begin" => (
-                "blob.upload.begin",
-                custom_capability("blob.upload.begin"),
-            ),
-            "blob.upload.chunk" => (
-                "blob.upload.chunk",
-                custom_capability("blob.upload.chunk"),
-            ),
+            "blob.upload.begin" => ("blob.upload.begin", custom_capability("blob.upload.begin")),
+            "blob.upload.chunk" => ("blob.upload.chunk", custom_capability("blob.upload.chunk")),
             "blob.upload.commit" => (
                 "blob.upload.commit",
                 custom_capability("blob.upload.commit"),
@@ -472,6 +527,28 @@ impl CapabilityPolicy {
             "rpc.invoke" => ("rpc.invoke", Capability::RpcInvoke),
             "graph.read" => ("graph.read", Capability::GraphRead),
             "graph.patch.propose" => ("graph.patch.propose", Capability::GraphPatchPropose),
+            "graph.patch.review" => (
+                "graph.patch.review",
+                custom_capability("agent.review.request"),
+            ),
+            "graph.patch.get" => ("graph.patch.get", custom_capability("agent.review.request")),
+            "graph.patch.cleanup-session" => (
+                "graph.patch.cleanup-session",
+                custom_capability("agent.review.request"),
+            ),
+            "graph.project.sync" => (
+                "graph.project.sync",
+                custom_capability("graph.project.sync"),
+            ),
+            "graph.project.get" => ("graph.project.get", custom_capability("graph.project.get")),
+            "graph.project.remove" => (
+                "graph.project.remove",
+                custom_capability("graph.project.remove"),
+            ),
+            "graph.project.cleanup-session" => (
+                "graph.project.cleanup-session",
+                custom_capability("graph.project.cleanup-session"),
+            ),
             "ui.register" => ("ui.register", Capability::UiRegister),
             "worker.spawn" => ("worker.spawn", Capability::WorkerSpawn),
             "network.request" => ("network.request", Capability::NetworkClient),
@@ -480,9 +557,29 @@ impl CapabilityPolicy {
             "process.spawn" => ("process.spawn", Capability::ProcessSpawn),
             "service.register" => ("service.register", custom_capability("service.register")),
             "service.call" => ("service.call", custom_capability("service.call")),
+            "plugin.surface.state" => (
+                "plugin.surface.state",
+                custom_capability("plugin.surface.state"),
+            ),
+            "plugin.surface.action" => (
+                "plugin.surface.action",
+                custom_capability("plugin.surface.action"),
+            ),
+            "plugin.surface.host-action" => (
+                "plugin.surface.host-action",
+                custom_capability("plugin.surface.host-action"),
+            ),
+            "plugin.surface.file-attach" => (
+                "plugin.surface.file-attach",
+                custom_capability("plugin.surface.file-attach"),
+            ),
             "plugin.settings.read" => (
                 "plugin.settings.read",
                 custom_capability("plugin.settings.read"),
+            ),
+            "plugin.settings.read-trusted" => (
+                "plugin.settings.read-trusted",
+                custom_capability("plugin.settings.read-trusted"),
             ),
             "plugin.settings.write" => (
                 "plugin.settings.write",
@@ -550,31 +647,16 @@ impl CapabilityPolicy {
                 "plugin.icon-theme.read",
                 custom_capability("plugin.icon-theme.read"),
             ),
-            "agent.job.status" => (
-                "agent.job.status",
-                custom_capability("agent.job.status"),
-            ),
+            "agent.job.status" => ("agent.job.status", custom_capability("agent.job.status")),
             "agent.job.list" => ("agent.job.list", custom_capability("agent.job.list")),
             "agent.batch.status" => (
                 "agent.batch.status",
                 custom_capability("agent.batch.status"),
             ),
-            "agent.job.review" => (
-                "agent.job.review",
-                custom_capability("agent.job.review"),
-            ),
-            "agent.job.cancel" => (
-                "agent.job.cancel",
-                custom_capability("agent.job.cancel"),
-            ),
-            "agent.job.start" => (
-                "agent.job.start",
-                custom_capability("agent.job.start"),
-            ),
-            "agent.batch.start" => (
-                "agent.batch.start",
-                custom_capability("agent.batch.start"),
-            ),
+            "agent.job.review" => ("agent.job.review", custom_capability("agent.job.review")),
+            "agent.job.cancel" => ("agent.job.cancel", custom_capability("agent.job.cancel")),
+            "agent.job.start" => ("agent.job.start", custom_capability("agent.job.start")),
+            "agent.batch.start" => ("agent.batch.start", custom_capability("agent.batch.start")),
             // ── 8 host-bus domains (plugin-system-v2.md §3) ──
             "graph.storage.put" => (
                 "graph.storage.put",
@@ -587,18 +669,12 @@ impl CapabilityPolicy {
             "graph.ir.compile" => ("graph.ir.compile", custom_capability("graph.ir")),
             "graph.ir.query" => ("graph.ir.query", custom_capability("graph.ir")),
             "lease.renew" => ("lease.renew", custom_capability("host-bus.lease")),
-            "event.subscribe" => (
-                "event.subscribe",
-                custom_capability("host-bus.event"),
-            ),
+            "event.subscribe" => ("event.subscribe", custom_capability("host-bus.event")),
             "event.publish" => ("event.publish", custom_capability("host-bus.event")),
             "event.poll" => ("event.poll", custom_capability("host-bus.event")),
             "worker.stop" => ("worker.stop", custom_capability("host-bus.worker")),
             "service.list" => ("service.list", custom_capability("host-bus.service")),
-            "service.unregister" => (
-                "service.unregister",
-                custom_capability("host-bus.service"),
-            ),
+            "service.unregister" => ("service.unregister", custom_capability("host-bus.service")),
             "audit.read" => ("audit.read", custom_capability("audit.read")),
             "blob.list" => ("blob.list", custom_capability("blob.manage")),
             "blob.release" => ("blob.release", custom_capability("blob.manage")),
@@ -930,10 +1006,7 @@ mod tests {
             .expect("native bootstrap");
 
         assert_eq!(authorization.source(), AuthorizationSource::NativeBootstrap);
-        assert_eq!(
-            authorization.capability().name(),
-            "plugin.settings.read"
-        );
+        assert_eq!(authorization.capability().name(), "plugin.settings.read");
         assert!(policy.bootstrap_grants().iter().any(|grant| {
             grant.operation() == "plugin.settings.read"
                 && grant.capability().name() == "plugin.settings.read"

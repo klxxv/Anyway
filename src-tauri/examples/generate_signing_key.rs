@@ -35,6 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("public key (paste into signing.rs BUILTIN_RESEARCH_CANVAS_PUBKEY):");
     println!("{public_b64}");
-    println!("secret key written to {} -- keep it private", key_file.display());
+    println!(
+        "secret key written to {} -- keep it private",
+        key_file.display()
+    );
     Ok(())
 }

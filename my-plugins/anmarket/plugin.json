@@ -1,0 +1,59 @@
+{
+  "name": "anyway.anmarket",
+  "displayName": "AnMarket",
+  "version": "0.1.0",
+  "publisher": "Anyway Core Team",
+  "developer": "Anyway Core Team",
+  "description": "Official supply-chain registry, analysis, reputation, policy, and update coordinator.",
+  "license": "MIT",
+  "categories": [
+    "SystemPlugin"
+  ],
+  "main": "index.ts",
+  "engines": {
+    "engine": "ancordis"
+  },
+  "capabilities": [
+    "registry.provider",
+    "supplychain.analyzer",
+    "supplychain.reputation",
+    "supplychain.policy-advisor",
+    "vue-ir.contribute"
+  ],
+  "permissions": [],
+  "contributes": {
+    "uiIr": [
+      { "slotId": "market.registry", "source": "ui/MarketRegistry.vue", "artifact": "ui/MarketRegistry.uiir.json" },
+      { "slotId": "market.install", "source": "ui/MarketInstall.vue", "artifact": "ui/MarketInstall.uiir.json" },
+      { "slotId": "market.scan-report", "source": "ui/MarketScanReport.vue", "artifact": "ui/MarketScanReport.uiir.json" },
+      { "slotId": "market.update-history", "source": "ui/MarketUpdateHistory.vue", "artifact": "ui/MarketUpdateHistory.uiir.json" }
+    ]
+  },
+  "provides": {
+    "services": [
+      "RegistryProvider",
+      "AnalyzerProvider",
+      "ReputationProvider",
+      "PolicyAdvisor"
+    ],
+    "events": []
+  },
+  "trustClass": "official-system",
+  "security": {
+    "kernelEnforced": [
+      "trust-root",
+      "subject-hash",
+      "signature-verification",
+      "quarantine-install",
+      "permission-grant",
+      "atomic-activation",
+      "rollback"
+    ],
+    "providerRestrictions": {
+      "analyzerInput": "read-only-BlobRef",
+      "analyzerCanInstall": false,
+      "analyzerCanApprove": false,
+      "policyAdvisorCanGrant": false
+    }
+  }
+}

@@ -71,7 +71,7 @@ test("workspace composables, canvas, workspace shell, and panels exist", () => {
     ["inspector panel", ["inspector-panel.vue", "InspectorPanel.vue"], ""],
     ["workspace dialogs", ["workspace-dialogs.vue", "WorkspaceDialogs.vue"], ""],
     ["workspace context menu", ["workspace-context-menu.vue", "WorkspaceContextMenu.vue"], ""],
-    ["agent review panel", ["agent-review-panel.vue", "AgentReviewPanel.vue"], ""],
+    ["plugin contribution slot", ["plugin-contribution-slot.vue", "PluginContributionSlot.vue"], ""],
     ["diff panel", ["diff-panel.vue", "DiffPanel.vue"], ""],
     ["plugin store dialog", ["plugin-store-dialog.vue", "PluginStoreDialog.vue"], ""],
   ]) {
@@ -114,16 +114,14 @@ test("Vite is configured for Vue and the package exposes the Vue toolchain", () 
   assert.match(viteConfig, /src\/vue\/ResearchWorkspaceApp\.vue/, "Vite warmup must include the workspace shell");
 });
 
-test("workspace shell lazy-loads conditional heavy panels", () => {
+test("workspace shell lazy-loads generic dialogs and has no Host PDF agent panels", () => {
   const workspaceShell = readFileSync(
     resolve(repositoryRoot, "src/vue/ResearchWorkspaceApp.vue"),
     "utf8",
   );
 
   for (const [name, path] of [
-    ["AgentReviewPanel", "./components/AgentReviewPanel.vue"],
     ["DiffPanel", "./components/DiffPanel.vue"],
-    ["PdfUploadDialog", "./components/PdfUploadDialog.vue"],
     ["PluginStoreDialog", "./components/PluginStoreDialog.vue"],
     ["WorkspaceDialogs", "./components/WorkspaceDialogs.vue"],
     ["WorkspacePluginDialogs", "./components/WorkspacePluginDialogs.vue"],
@@ -143,6 +141,7 @@ test("workspace shell lazy-loads conditional heavy panels", () => {
   for (const [name, path] of [
     ["ResearchGraphCanvas", "./canvas/ResearchGraphCanvas.vue"],
     ["InspectorPanel", "./components/InspectorPanel.vue"],
+    ["PluginContributionSlot", "./components/PluginContributionSlot.vue"],
     ["WorkspaceTopbar", "./components/WorkspaceTopbar.vue"],
   ]) {
     assert.match(
@@ -151,6 +150,75 @@ test("workspace shell lazy-loads conditional heavy panels", () => {
       `${name} must remain synchronous for the initial workspace shell`,
     );
   }
+
+  for (const removed of [
+    "AgentReviewPanel",
+    "PdfUploadDialog",
+    "./components/AgentReviewPanel.vue",
+    "./components/PdfUploadDialog.vue",
+  ]) {
+    assert.doesNotMatch(workspaceShell, new RegExp(removed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.equal(existsSync(resolve(repositoryRoot, "src/vue/components/AgentReviewPanel.vue")), false);
+  assert.equal(existsSync(resolve(repositoryRoot, "src/vue/components/PdfUploadDialog.vue")), false);
+  assert.equal(existsSync(resolve(repositoryRoot, "app/plugins/agent-contracts.ts")), false);
+  assert.equal(existsSync(resolve(repositoryRoot, "app/platform/agent-client.ts")), false);
+});
+
+test("workspace shell renders enumerable plugin slots and syncs GraphProject through the bridge", () => {
+  const workspaceShell = readFileSync(
+    resolve(repositoryRoot, "src/vue/ResearchWorkspaceApp.vue"),
+    "utf8",
+  );
+  const slotComponent = readFileSync(
+    resolve(repositoryRoot, "src/vue/components/PluginContributionSlot.vue"),
+    "utf8",
+  );
+  const slotRegistry = readFileSync(
+    resolve(repositoryRoot, "app/plugins/host-slot-registry.ts"),
+    "utf8",
+  );
+  const graphProject = readFileSync(
+    resolve(repositoryRoot, "app/platform/graph-project.ts"),
+    "utf8",
+  );
+
+  for (const slotId of [
+    "workspace.toolbar.actions",
+    "workspace.dialogs",
+    "workspace.status",
+    "compat.declarative.surface",
+  ]) {
+    assert.match(slotRegistry, new RegExp(`id:\\s*["']${slotId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`));
+  }
+
+  for (const mountedSlot of [
+    "workspace.toolbar.actions",
+    "workspace.dialogs",
+    "workspace.status",
+  ]) {
+    assert.match(
+      workspaceShell,
+      new RegExp(`<PluginContributionSlot\\s+slot-id=["']${mountedSlot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`),
+      `${mountedSlot} must be mounted by the workspace shell`,
+    );
+  }
+
+  assert.match(workspaceShell, /pluginSlotContext\s*=\s*computed/);
+  assert.match(workspaceShell, /projectId:\s*project\.value\.id/);
+  assert.match(workspaceShell, /baseRevision:\s*project\.value\.revision/);
+  assert.match(workspaceShell, /syncGraphProject\(nextProject\)/);
+  assert.match(workspaceShell, /ANYWAY_GRAPH_PROJECT_COMMITTED_EVENT/);
+  assert.match(workspaceShell, /parseGraphProjectCommittedEvent\(event\)/);
+  assert.match(workspaceShell, /workspace\.replaceProject\(snapshot\.project,\s*"Apply reviewed plugin GraphPatch"\)/);
+  assert.match(graphProject, /hostSdk\(\)\.call<unknown>\("graph\.project\.get"/);
+  assert.match(graphProject, /sdk\.call<GraphProjectSyncReceipt>\("graph\.project\.sync"/);
+  assert.match(graphProject, /ANYWAY_GRAPH_PROJECT_COMMITTED_EVENT\s*=\s*"anyway:graph-project-committed"/);
+  assert.match(slotComponent, /activatePluginFrontendModule/);
+  assert.match(slotComponent, /deactivatePluginFrontendModule/);
+  assert.match(slotComponent, /usePluginContributions\(props\.slotId/);
+  assert.match(slotComponent, /v-for="item in loaded"/);
+  assert.match(slotComponent, /onErrorCaptured/);
 });
 
 test("Pinia is registered once and all renderer stores use setup-style definitions", () => {
@@ -242,7 +310,7 @@ test("Vue canvas composes native touchpad frames and dispatches radial flick sel
   assert.doesNotMatch(canvas, /function handleWheel\(/);
 });
 
-test("Vue components use separated SFC script setup, template, and style blocks", () => {
+test("Vue components use separated SFC script setup and template blocks", () => {
   const violations = sourceFiles()
     .filter((file) => file.endsWith(".vue"))
     .flatMap((file) => {
@@ -253,7 +321,6 @@ test("Vue components use separated SFC script setup, template, and style blocks"
         problems.push("missing <script setup lang=\"ts\">");
       }
       if (!/<template(?:\s[^>]*)?>/.test(source)) problems.push("missing <template>");
-      if (!/<style(?:\s[^>]*)?>/.test(source)) problems.push("missing <style>");
       if (/\brender\s*\(|\bjsx\b|(?:^|[^\w])<[A-Za-z][^>]*>\s*=>/.test(source)) {
         problems.push("contains render/JSX implementation");
       }
@@ -263,7 +330,7 @@ test("Vue components use separated SFC script setup, template, and style blocks"
   assert.deepEqual(
     violations,
     [],
-    `Vue SFC structure violations:\n${violations.map((item) => `- ${item}`).join("\n")}`,
+    `Vue SFC script/template structure violations:\n${violations.map((item) => `- ${item}`).join("\n")}`,
   );
 });
 

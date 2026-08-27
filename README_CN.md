@@ -50,8 +50,8 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 
 ```bash
 node scripts/pack-plugin.mjs \
-  plugins/sources/myc.onedarkpro \
-  plugins/packages/myc.onedarkpro@1.3.0.myc
+  my-plugins/anPdfsolver \
+  plugins/packages/myc.pdf-canvas-agent@0.4.0.myc
 ```
 
 插件类型：

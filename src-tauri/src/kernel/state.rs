@@ -6,11 +6,15 @@ use super::audit::AuditLedger;
 use super::blob::{BlobQuota, BlobStore};
 use super::bus::HostBus;
 use super::events::EventBus;
+use super::graph_patches::graph_projects::GraphProjectRegistry;
+use super::graph_patches::GraphPatchProposalRegistry;
 use super::package_gate::PackageGate;
+use super::plugin_surfaces::{PluginSurfaceRegistry, PluginWorkerSessionRegistry};
 use super::rpc::RpcLedger;
 use super::scheduler::Scheduler;
 use super::service_registry::ServiceRegistry;
 use super::supervisor::Supervisor;
+use crate::host_bus::workers::PluginWorkerManager;
 use anyway_schema_v4::storage::InMemoryStorage;
 
 /// Application state that can be registered with Tauri's managed state.
@@ -28,9 +32,14 @@ pub struct KernelState {
     supervisor: Arc<RwLock<Supervisor>>,
     services: Arc<RwLock<ServiceRegistry>>,
     packages: Arc<RwLock<PackageGate>>,
+    plugin_surfaces: Arc<RwLock<PluginSurfaceRegistry>>,
+    plugin_worker_sessions: Arc<PluginWorkerSessionRegistry>,
+    plugin_workers: Arc<PluginWorkerManager>,
     audit: Arc<RwLock<AuditLedger>>,
     events: Arc<RwLock<EventBus>>,
     graph_storage: Arc<RwLock<InMemoryStorage>>,
+    graph_patch_proposals: Arc<RwLock<GraphPatchProposalRegistry>>,
+    graph_projects: Arc<RwLock<GraphProjectRegistry>>,
 }
 
 impl KernelState {
@@ -43,9 +52,14 @@ impl KernelState {
             supervisor: Arc::new(RwLock::new(Supervisor::default())),
             services: Arc::new(RwLock::new(ServiceRegistry::default())),
             packages: Arc::new(RwLock::new(PackageGate::default())),
+            plugin_surfaces: Arc::new(RwLock::new(PluginSurfaceRegistry::default())),
+            plugin_worker_sessions: Arc::new(PluginWorkerSessionRegistry::default()),
+            plugin_workers: Arc::new(PluginWorkerManager::new()),
             audit: Arc::new(RwLock::new(AuditLedger::default())),
             events: Arc::new(RwLock::new(EventBus::default())),
             graph_storage: Arc::new(RwLock::new(InMemoryStorage::default())),
+            graph_patch_proposals: Arc::new(RwLock::new(GraphPatchProposalRegistry::default())),
+            graph_projects: Arc::new(RwLock::new(GraphProjectRegistry::default())),
         }
     }
 
@@ -122,6 +136,30 @@ impl KernelState {
         self.packages.as_ref()
     }
 
+    pub fn plugin_surfaces(&self) -> &RwLock<PluginSurfaceRegistry> {
+        self.plugin_surfaces.as_ref()
+    }
+
+    pub fn shared_plugin_surfaces(&self) -> Arc<RwLock<PluginSurfaceRegistry>> {
+        Arc::clone(&self.plugin_surfaces)
+    }
+
+    pub fn plugin_worker_sessions(&self) -> &PluginWorkerSessionRegistry {
+        self.plugin_worker_sessions.as_ref()
+    }
+
+    pub fn shared_plugin_worker_sessions(&self) -> Arc<PluginWorkerSessionRegistry> {
+        Arc::clone(&self.plugin_worker_sessions)
+    }
+
+    pub fn plugin_workers(&self) -> &PluginWorkerManager {
+        self.plugin_workers.as_ref()
+    }
+
+    pub fn shared_plugin_workers(&self) -> Arc<PluginWorkerManager> {
+        Arc::clone(&self.plugin_workers)
+    }
+
     pub fn shared_packages(&self) -> Arc<RwLock<PackageGate>> {
         Arc::clone(&self.packages)
     }
@@ -148,6 +186,22 @@ impl KernelState {
 
     pub fn shared_graph_storage(&self) -> Arc<RwLock<InMemoryStorage>> {
         Arc::clone(&self.graph_storage)
+    }
+
+    pub fn graph_patch_proposals(&self) -> &RwLock<GraphPatchProposalRegistry> {
+        self.graph_patch_proposals.as_ref()
+    }
+
+    pub fn shared_graph_patch_proposals(&self) -> Arc<RwLock<GraphPatchProposalRegistry>> {
+        Arc::clone(&self.graph_patch_proposals)
+    }
+
+    pub fn graph_projects(&self) -> &RwLock<GraphProjectRegistry> {
+        self.graph_projects.as_ref()
+    }
+
+    pub fn shared_graph_projects(&self) -> Arc<RwLock<GraphProjectRegistry>> {
+        Arc::clone(&self.graph_projects)
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, HostBus>> {
@@ -197,7 +251,11 @@ mod tests {
 
         assert_eq!(worker.join().expect("worker completed"), (0, 0));
         assert_eq!(
-            state.blobs().read().expect("blob read lock").stored_blob_count(),
+            state
+                .blobs()
+                .read()
+                .expect("blob read lock")
+                .stored_blob_count(),
             0
         );
         assert_eq!(state.rpc().read().expect("rpc read lock").active_count(), 0);
@@ -211,15 +269,15 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let schedulers = shared_schedulers.read().expect("scheduler read lock");
             let supervisor = shared_supervisor.read().expect("supervisor read lock");
-            (schedulers.config().default_per_principal_quota, supervisor.worker_count())
+            (
+                schedulers.config().default_per_principal_quota,
+                supervisor.worker_count(),
+            )
         });
 
         assert_eq!(
             worker.join().expect("worker completed"),
-            (
-                crate::kernel::scheduler::DEFAULT_PER_PRINCIPAL_QUOTA,
-                0
-            )
+            (crate::kernel::scheduler::DEFAULT_PER_PRINCIPAL_QUOTA, 0)
         );
         assert_eq!(
             state
@@ -245,9 +303,7 @@ mod tests {
         let state = Arc::new(KernelState::default());
         let shared_services = state.shared_services();
         let worker = std::thread::spawn(move || {
-            let services = shared_services
-                .read()
-                .expect("service registry read lock");
+            let services = shared_services.read().expect("service registry read lock");
             services.service_count()
         });
 
@@ -267,9 +323,7 @@ mod tests {
         let state = Arc::new(KernelState::default());
         let shared_packages = state.shared_packages();
         let worker = std::thread::spawn(move || {
-            let packages = shared_packages
-                .read()
-                .expect("package gate read lock");
+            let packages = shared_packages.read().expect("package gate read lock");
             packages.candidate_count()
         });
 

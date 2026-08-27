@@ -12,13 +12,17 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' tauri://localhost ipc://localhost; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+      "csp": "default-src 'self'; connect-src 'self' tauri://localhost ipc://localhost https: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' blob:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
     }
   },
   "bundle": {
     "active": true,
     "resources": {
-      "../plugins/packages/*.myc": "plugins/packages/"
+      "../.plugin-runtime/release-staging/packages/myc.circuit-orthogonal@1.1.0.myc": "plugins/packages/myc.circuit-orthogonal@1.1.0.myc",
+      "../.plugin-runtime/release-staging/packages/myc.export-suite@1.0.0.myc": "plugins/packages/myc.export-suite@1.0.0.myc",
+      "../.plugin-runtime/release-staging/packages/myc.folder-workspaces@1.0.0.myc": "plugins/packages/myc.folder-workspaces@1.0.0.myc",
+      "../.plugin-runtime/release-staging/packages/myc.git-workspace@1.2.0.myc": "plugins/packages/myc.git-workspace@1.2.0.myc",
+      "../.plugin-runtime/release-staging/packages/myc.pdf-canvas-agent@0.5.0.myc": "plugins/packages/myc.pdf-canvas-agent@0.5.0.myc"
     },
     "targets": [
       "nsis",

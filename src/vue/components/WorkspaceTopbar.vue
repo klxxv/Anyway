@@ -52,7 +52,6 @@ import type {
 const props = withDefaults(defineProps<WorkspaceTopbarProps>(), {
   exportFormats: () => [],
   compareEnabled: false,
-  importPdfEnabled: false,
 });
 const emit = defineEmits<WorkspaceTopbarEmits>();
 const { t } = useI18n();
@@ -371,10 +370,7 @@ function hasPluginFormats() {
     </nav>
 
     <nav class="flex h-full items-stretch" aria-label="History and export">
-      <button v-if="props.importPdfEnabled" :class="commandClass(props.commandDensity)" @click="emit('import-pdf')" :aria-label="t('agent.importPdf')">
-        <IconFileText size="19" stroke="1.4" />
-        {{ t("agent.importPdf") }}
-      </button>
+      <slot name="actions" />
       <button :class="commandClass(props.commandDensity)" @click="emit('undo')" :disabled="!props.canUndo" aria-label="Undo" :aria-keyshortcuts="shortcutToAria(props.shortcuts.undo)">
         <IconArrowBackUp size="19" stroke="1.45" />
         {{ t("workspace.undo") }}

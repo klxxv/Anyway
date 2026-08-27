@@ -111,7 +111,10 @@ fn bfs_is_deterministic_and_returns_depth_parent_and_tree_edges() {
 #[test]
 fn dfs_distinguishes_tree_and_back_edges_when_a_directed_cycle_exists() {
     let mut project = initial_project();
-    project["edges"].as_array_mut().unwrap().push(edge("cycle-r1-q1", "r1", "q1", "causes", &[]));
+    project["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(edge("cycle-r1-q1", "r1", "q1", "causes", &[]));
     let result = traverse_graph(
         &project,
         &TraversalRequest {
@@ -127,8 +130,12 @@ fn dfs_distinguishes_tree_and_back_edges_when_a_directed_cycle_exists() {
     let cycles = detect_cycles(&project, None);
     assert!(result.back_edge_ids.iter().any(|id| id == "cycle-r1-q1"));
     assert!(!cycles.is_empty());
-    assert!(cycles.iter().all(|cycle| cycle.node_ids.contains(&"q1".to_string())));
-    assert!(cycles.iter().any(|cycle| cycle.edge_ids.iter().any(|id| id == "cycle-r1-q1")));
+    assert!(cycles
+        .iter()
+        .all(|cycle| cycle.node_ids.contains(&"q1".to_string())));
+    assert!(cycles
+        .iter()
+        .any(|cycle| cycle.edge_ids.iter().any(|id| id == "cycle-r1-q1")));
 }
 
 #[test]
@@ -143,18 +150,30 @@ fn scenario_overlay_filters_nodes_and_edges_without_mutating_the_base_graph() {
 
 #[test]
 fn shortest_path_follows_semantic_direction_and_returns_stable_ids() {
-    assert_eq!(shortest_path(&initial_project(), "q1", "r1", None), vec!["q1", "h1", "x1", "r1"]);
+    assert_eq!(
+        shortest_path(&initial_project(), "q1", "r1", None),
+        vec!["q1", "h1", "x1", "r1"]
+    );
     assert!(shortest_path(&initial_project(), "r1", "q1", None).is_empty());
 }
 
 #[test]
 fn all_equally_short_paths_remain_deterministic() {
     let mut project = initial_project();
-    project["edges"].as_array_mut().unwrap().push(edge("parallel-q1-r1", "q1", "r1", "supports", &["ev1"]));
+    project["edges"].as_array_mut().unwrap().push(edge(
+        "parallel-q1-r1",
+        "q1",
+        "r1",
+        "supports",
+        &["ev1"],
+    ));
     let paths = all_shortest_paths(&project, "q1", "r1", None);
     assert_eq!(paths, vec![vec!["q1", "r1"]]);
     // 无平行边时回到唯一最短路径。
-    assert_eq!(all_shortest_paths(&initial_project(), "q1", "r1", None), vec![vec!["q1", "h1", "x1", "r1"]]);
+    assert_eq!(
+        all_shortest_paths(&initial_project(), "q1", "r1", None),
+        vec![vec!["q1", "h1", "x1", "r1"]]
+    );
 }
 
 #[test]
@@ -163,12 +182,30 @@ fn clean_graph_has_no_cycles_but_a_contradiction_ring_is_detected_as_minimal() {
     assert!(detect_cycles(&base, None).is_empty());
 
     let mut ring = base.clone();
-    ring["edges"].as_array_mut().unwrap().push(edge("cx-a-b", "n-a", "n-b", "contradicts", &[]));
-    ring["edges"].as_array_mut().unwrap().push(edge("cx-b-c", "n-b", "n-c", "contradicts", &[]));
-    ring["edges"].as_array_mut().unwrap().push(edge("cx-c-a", "n-c", "n-a", "contradicts", &[]));
-    ring["nodes"].as_array_mut().unwrap().push(node("n-a", "concept", &[]));
-    ring["nodes"].as_array_mut().unwrap().push(node("n-b", "concept", &[]));
-    ring["nodes"].as_array_mut().unwrap().push(node("n-c", "concept", &[]));
+    ring["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(edge("cx-a-b", "n-a", "n-b", "contradicts", &[]));
+    ring["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(edge("cx-b-c", "n-b", "n-c", "contradicts", &[]));
+    ring["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(edge("cx-c-a", "n-c", "n-a", "contradicts", &[]));
+    ring["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(node("n-a", "concept", &[]));
+    ring["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(node("n-b", "concept", &[]));
+    ring["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(node("n-c", "concept", &[]));
     let chains = contradiction_chains(&ring, None);
     assert_eq!(chains.minimal_size, Some(3));
     assert_eq!(chains.cycles.len(), 1);
@@ -184,9 +221,13 @@ fn logic_chain_selects_supporting_relations_and_scores_mean_confidence() {
     assert!(evidence.edge_ids.iter().any(|id| id == "e-e1-h1"));
     assert!(evidence.edge_ids.iter().any(|id| id == "e-h1-x1")); // derived_from
     assert!(!evidence.edge_ids.contains(&"e-m2-m3".to_string())); // depends_on 不在链内
-    // 四边：e-h1-x1(0.72) + e-r1-p1(0.72) + e-r2-p1(0.72) + e-e1-h1(0.89)。
+                                                                  // 四边：e-h1-x1(0.72) + e-r1-p1(0.72) + e-r2-p1(0.72) + e-e1-h1(0.89)。
     let expected = (0.72 * 3.0 + 0.89) / 4.0;
-    assert!((evidence.score - expected).abs() < 1e-9, "score = {}", evidence.score);
+    assert!(
+        (evidence.score - expected).abs() < 1e-9,
+        "score = {}",
+        evidence.score
+    );
 
     // 无实验边时 effective/refutation 为空链，score 回落 0.0（与 TS 一致：0 / max(1, 0)）。
     let effective = compute_logic_chain(&project, "effective", None);

@@ -90,7 +90,10 @@ fn main() {
             args.get("rootId").and_then(Value::as_str),
         ),
         _ => {
-            eprintln!(r#"{{"ok":false,"error":"unknown-command","command":{}}}"#, json!(command));
+            eprintln!(
+                r#"{{"ok":false,"error":"unknown-command","command":{}}}"#,
+                json!(command)
+            );
             std::process::exit(4);
         }
     };

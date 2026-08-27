@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs::{self, OpenOptions},
@@ -20,7 +21,9 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-use crate::plugins::{MycPluginManifest, PluginSettingDefinition};
+use crate::plugins::{
+    MycPluginManifest, PluginApiKeySource, PluginSettingDefinition, PluginWorkerDescriptor,
+};
 
 const SETTINGS_SCHEMA_VERSION: u32 = 1;
 const SETTINGS_DIRECTORY: &str = "plugin-settings";
@@ -861,6 +864,143 @@ pub(crate) fn persisted_values_for_execution(
         .unwrap_or_default())
 }
 
+pub(crate) struct WorkerProviderLaunchSettings {
+    pub runtime_config: Value,
+    pub secrets: Vec<(String, String)>,
+    pub fingerprint: String,
+}
+
+/// Resolve direct-provider runtime metadata and the exact declared process
+/// secret environment. Plaintext secrets never enter `runtime_config`, errors,
+/// logs, command arguments, RPC payloads, or the returned fingerprint.
+pub(crate) fn resolve_worker_provider_launch_settings(
+    app: &AppHandle,
+    manifest: &MycPluginManifest,
+    plugin_id: &str,
+    plugin_version: &str,
+    worker: &PluginWorkerDescriptor,
+) -> Result<WorkerProviderLaunchSettings, String> {
+    let snapshot = get_snapshot(app, manifest, plugin_id, plugin_version)?;
+    let connections = manifest.spec.connections.as_deref().unwrap_or_default();
+    let mut providers = Vec::new();
+    let mut secrets = Vec::new();
+    let mut fingerprint_hasher = Sha256::new();
+    for egress in &worker.provider_egress {
+        let connection = connections
+            .iter()
+            .find(|candidate| candidate.id == egress.connection_id)
+            .ok_or_else(|| {
+                format!(
+                    "Worker provider connection is not declared: {}",
+                    egress.connection_id
+                )
+            })?;
+        let value = |setting_id: &str| {
+            snapshot
+                .effective_values
+                .get(setting_id)
+                .and_then(Value::as_str)
+        };
+        let base_url = value(&connection.url_setting_id).ok_or_else(|| {
+            format!(
+                "Provider URL setting is not configured: {}",
+                connection.url_setting_id
+            )
+        })?;
+        let parsed_url =
+            reqwest::Url::parse(base_url).map_err(|_| "Provider URL is invalid".to_string())?;
+        let host = parsed_url
+            .host_str()
+            .ok_or("Provider URL has no host")?
+            .to_ascii_lowercase();
+        if parsed_url.scheme() != "https" || !egress.domains.iter().any(|domain| domain == &host) {
+            return Err(
+                "Provider URL must use HTTPS and an exact manifest-declared domain".to_string(),
+            );
+        }
+        let format = value(&connection.format_setting_id).unwrap_or("openai");
+        let model = connection
+            .model_setting_id
+            .as_deref()
+            .and_then(value)
+            .unwrap_or_default();
+        let transport = value("pdf-transport").unwrap_or("local-text");
+        let thinking = value("thinking").unwrap_or("disabled");
+        let public_progress = value("public-progress").unwrap_or("disabled");
+        let (default_source, default_env, host_secret_setting) = match &connection.api_key {
+            PluginApiKeySource::HostSecret { setting_id } => {
+                ("host-secret", "", Some(setting_id.as_str()))
+            }
+            PluginApiKeySource::Environment {
+                name,
+                fallback_setting_id,
+            } => ("environment", name.as_str(), fallback_setting_id.as_deref()),
+        };
+        let source = connection
+            .credential_source_setting_id
+            .as_deref()
+            .and_then(value)
+            .unwrap_or(default_source);
+        let env_name = connection
+            .credential_env_var_setting_id
+            .as_deref()
+            .and_then(value)
+            .unwrap_or(default_env);
+        let secret = match host_secret_setting {
+            Some(setting_id) => resolve_connection_credentials(
+                plugin_id,
+                Some(plugin_version),
+                source,
+                env_name,
+                setting_id,
+            )?,
+            None if matches!(source, "environment" | "env" | "env-var") => std::env::var(env_name)
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+            None => None,
+        };
+        if let Some(secret) = secret.as_ref() {
+            if secret.len() > MAX_SECRET_LENGTH {
+                return Err("Configured provider credential is too long".to_string());
+            }
+            secrets.push((egress.secret_env.clone(), secret.clone()));
+        }
+        let provider_runtime = serde_json::json!({
+            "id": egress.provider_id,
+            "connectionId": egress.connection_id,
+            "baseUrl": base_url,
+            "format": format,
+            "model": model,
+            "pdfTransport": transport,
+            "thinking": thinking,
+            "publicProgress": public_progress,
+            "credentialSource": source,
+            "allowedDomains": egress.domains,
+            "purpose": egress.purpose,
+            "secretEnv": egress.secret_env,
+            "secretConfigured": secret.is_some(),
+            "egressEnforcement": "declarative-policy-only"
+        });
+        let public_bytes =
+            serde_json::to_vec(&provider_runtime).map_err(|error| error.to_string())?;
+        fingerprint_hasher.update((public_bytes.len() as u64).to_be_bytes());
+        fingerprint_hasher.update(&public_bytes);
+        if let Some(secret) = secret {
+            fingerprint_hasher.update((secret.len() as u64).to_be_bytes());
+            fingerprint_hasher.update(secret.as_bytes());
+        } else {
+            fingerprint_hasher.update(0_u64.to_be_bytes());
+        }
+        providers.push(provider_runtime);
+    }
+    let fingerprint = format!("{:x}", fingerprint_hasher.finalize());
+    Ok(WorkerProviderLaunchSettings {
+        runtime_config: serde_json::json!({ "providers": providers }),
+        secrets,
+        fingerprint,
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConnectionTestResult {
@@ -1182,42 +1322,40 @@ async fn test_pdf_extraction(
             Ok(_) => Err("Local PDF extraction returned no text".to_string()),
             Err(_) => Err("Local PDF extraction failed".to_string()),
         },
-        "kimi-file-extract" => {
-            match context.api_key.as_ref() {
-                None => Err("No API credential is configured for this connection".to_string()),
-                Some(api_key) => {
-                    let api_format = crate::llm_client::ApiFormat::parse(Some(&context.api_format))
-                        .map_err(|_| "Kimi parser backend is invalid".to_string())?;
-                    let config = crate::llm_client::PdfAgentLlmConfig {
-                        api_url: context.api_url.clone(),
-                        api_format,
-                        api_key: api_key.clone(),
-                        model: context.model.clone(),
-                        thinking: false,
-                        thinking_level: None,
-                        provider: "moonshot".to_string(),
-                        transport: crate::llm_client::PdfAgentTransport::KimiFileExtract,
-                        timeout_secs: 30,
-                    };
-                    let runtime = crate::native_plugins::pdf_canvas_agent::normalize_config(config)
-                        .map_err(|_| "Kimi PDF extraction could not be initialized".to_string())?;
-                    let crate::native_plugins::pdf_canvas_agent::Backend::KimiK26(config) =
-                        runtime.backend
-                    else {
-                        return Err("Kimi PDF extraction could not be initialized".to_string());
-                    };
-                    let client = crate::native_plugins::pdf_canvas_agent::KimiK26Client::new(config)
-                        .map_err(|_| "Kimi PDF extraction could not be initialized".to_string())?;
-                    match client.extract_pdf_text(&path).await {
-                        Ok(_) => Ok(result_ok(
-                            "pdf-remote-extraction-succeeded",
-                            "Kimi PDF extraction succeeded.",
-                        )),
-                        Err(_) => Err("Kimi PDF extraction failed".to_string()),
-                    }
+        "kimi-file-extract" => match context.api_key.as_ref() {
+            None => Err("No API credential is configured for this connection".to_string()),
+            Some(api_key) => {
+                let api_format = crate::llm_client::ApiFormat::parse(Some(&context.api_format))
+                    .map_err(|_| "Kimi parser backend is invalid".to_string())?;
+                let config = crate::llm_client::PdfAgentLlmConfig {
+                    api_url: context.api_url.clone(),
+                    api_format,
+                    api_key: api_key.clone(),
+                    model: context.model.clone(),
+                    thinking: false,
+                    thinking_level: None,
+                    provider: "moonshot".to_string(),
+                    transport: crate::llm_client::PdfAgentTransport::KimiFileExtract,
+                    timeout_secs: 30,
+                };
+                let runtime = crate::native_plugins::pdf_canvas_agent::normalize_config(config)
+                    .map_err(|_| "Kimi PDF extraction could not be initialized".to_string())?;
+                let crate::native_plugins::pdf_canvas_agent::Backend::KimiK26(config) =
+                    runtime.backend
+                else {
+                    return Err("Kimi PDF extraction could not be initialized".to_string());
+                };
+                let client = crate::native_plugins::pdf_canvas_agent::KimiK26Client::new(config)
+                    .map_err(|_| "Kimi PDF extraction could not be initialized".to_string())?;
+                match client.extract_pdf_text(&path).await {
+                    Ok(_) => Ok(result_ok(
+                        "pdf-remote-extraction-succeeded",
+                        "Kimi PDF extraction succeeded.",
+                    )),
+                    Err(_) => Err("Kimi PDF extraction failed".to_string()),
                 }
             }
-        }
+        },
         _ => Err("Unsupported PDF extraction mode".to_string()),
     };
     let _ = fs::remove_file(path);
@@ -1395,6 +1533,11 @@ mod tests {
                 settings: Some(settings),
                 connections: None,
             },
+            frontend: None,
+            worker: None,
+            workers: None,
+            network: None,
+            provides: None,
             payloads: None,
             signature: None,
         }

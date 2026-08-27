@@ -18,6 +18,12 @@
   "homepage": "...",
   "categories": ["Workspace"],              // 原 kind（WorkspacePlugin/ThemePlugin/AgentPlugin/...）
   "engines": { "engine": "host-mediated" }, // 原 spec.engine
+  "frontend": {
+    "mode": "trusted-module",
+    "entry": "dist/frontend.mjs",
+    "framework": "vue3",
+    "apiVersion": "1"
+  },
   "main": "workspace-plugin.json",          // 原 spec.entry
   "language": "rust",                       // 可选：AnalysisPlugin 载荷语言（原 spec.language）
   "activationEvents": ["onCommand:open-folder-workspace"],
@@ -29,9 +35,20 @@
     "configuration": { "title", "settings": [ ... ], "connections": [ ... ] },   // 原 spec.settings/connections
     "viewsContainers": { "activitybar": [ { "id", "title", "icon" } ] },
     "views": { "activity-sidebar": [ { "id", "name", "when" } ] },
-    "uiIr":      [ { "slotId", "ir" } ],
+    "ui":        [ { "id", "slotId", "export", "order?", "when?" } ],
+    "uiIr":      [ { "slotId", "ir" } ], // 兼容轨道：仅用于不可信声明式 UI，不是 anPdfsolver 当前路径
     "locales":   [ { "locale", "name", "path" } ]
   },
+
+  "workers": [
+    {
+      "id": "worker",
+      "language": "python",
+      "entrypoint": "workers/python/main.py",
+      "transport": "stdio-framed-json-v1"
+    }
+  ],
+  "network": { "mode": "direct" },
 
   // ── Cordis 服务/事件/生命周期语义 ──
   "provides":  { "services": ["git.repository"], "events": ["git.commit"] },  // 插件对外提供
@@ -71,7 +88,7 @@ signed_bytes = canonical_json(manifest_without_signature + payloads)
 signature    = Ed25519_sign(publisher_key, SHA256(signed_bytes))
 ```
 
-- 信任链：`plugins/packages/*.myc` 由 `scripts/pack-plugin.mjs` 生成（`--key <pkcs8 pem>` 时用离线 `id_ed25519` 签发）；`src-tauri/src/signing.rs` 只验证。当前仓库内跟踪包尚未签名（离线私钥不在仓库，`.gitignore` 排除 `id_ed25519*`）；拿到密钥后带 `--key` 重新打包即完成签发。
+- 信任链：官方 `.myc` 包由 `scripts/pack-plugin.mjs` 生成，并由 `config/plugin-loading.json` 的显式清单选择进入 dev/release staging；`src-tauri/src/signing.rs` 只验证。当前仓库内跟踪包不包含签名（离线私钥不在仓库，`.gitignore` 排除 `id_ed25519*`）；拿到密钥后带 `--key` 重新打包即完成签发。
 - 清单文件名统一 `plugin.json`；`payloads` 不含 `plugin.json` 自身。
 
 ## 3. 8 个 Host Bus API（文件解耦 + 中间件）
@@ -80,10 +97,10 @@ signature    = Ed25519_sign(publisher_key, SHA256(signed_bytes))
 
 | # | operation | 文件 | 能力 | 生命周期 |
 |---|---|---|---|---|
-| 1 | `graph.storage.put` / `graph.storage.query.*` | `storage.rs` | `graph.storage.write/read` | 请求级（幂等 put，query 只读） |
+| 1 | `graph.patch.propose` / `graph.patch.review` / `graph.patch.commit` / `graph.project.get` | `graph_patch.rs` | `graph.patch.propose/review/commit` | proposal/session 级；commit 由 Rust canonical registry 原子执行 |
 | 2 | `lease.renew` | `lease.rs` | `host-bus.lease` | 租约级（续期/过期/吊销） |
 | 3 | `event.subscribe` / `event.publish` | `events.rs` | `host-bus.event` | 订阅级（ack/replay/关闭） |
-| 4 | `worker.spawn` / `worker.stop` | `workers.rs` | `host-bus.worker` | worker 级（spawn/lease/stop） |
+| 4 | `plugin.worker.open` / `plugin.worker.call` / `plugin.worker.cancel` / `plugin.worker.close` | `workers.rs` | `host-bus.worker` | worker 级（Rust 启动、身份绑定、取消和回收） |
 | 5 | `service.list` / `service.unregister` | `services.rs` | `host-bus.service` | 注册级 |
 | 6 | `audit.read` / `audit.query` | `audit.rs` | `audit.read` | 请求级（只读） |
 | 7 | `graph.ir.compile` / `graph.ir.query` | `ir.rs` | `graph.ir` | 请求级（调用 schema-v4 编译器） |
@@ -110,7 +127,24 @@ HostCallResponse
 
 - 每层是独立函数（中间件），`host_bus/mod.rs` 提供 `pub fn chain(...)` 组合，不互相 import 具体 handler。
 - 状态经 `KernelState`（audit/blobs/services/packages）+ 新增 `HostBusState`（leases/events/workers）注入。
-- 信息流：request → 中间件链 → handler → response；大 payload 走 `blob.*` 多分块，handler 只拿 `BlobRef`。
+- 信息流：request → 中间件链 → handler → response；大 payload 走 `blob.*` 多分块，handler 只拿 `BlobRef`。插件不能直写 graph storage；GraphPatch 只能进入 Rust canonical proposal/review/commit 流程，`GraphProjectRegistry` 完成原子 commit 后通过 `graph.project.get` 和 canonical `ProjectState` event 让 Host/Vue 更新。
+
+### anPdfsolver 数据流
+
+```text
+installed verified frontend
+  -> shared Vue singleton + PluginContext
+  -> plugin SFC from dist/frontend.mjs
+  -> files API returns BlobRef
+  -> Rust Worker Manager opens Python worker through stdio-framed-json-v1
+  -> plugin frontend/worker talks directly to provider when network.mode=direct
+  -> provider streams small typed NDJSON frames
+  -> plugin deterministically builds GraphPatch proposal
+  -> Rust canonical registry reviews and commits atomically
+  -> canonical ProjectState event + graph.project.get update Host
+```
+
+Host 只枚举物理 slot，例如 `workspace.toolbar.actions`、`workspace.dialogs`、`workspace.status`，再按已安装/启用插件的 `contributes.ui` 渲染 `PluginContributionSlot`。插件组件内部自己的 Vue slots 只是组件实现细节，不是 Host Slot Catalog。
 
 ## 4. 实施顺序（每步一 commit）
 
@@ -125,10 +159,40 @@ HostCallResponse
 9. `graph.ir.compile/query`
 10. 全量测试 + 迁移 `.myc` 包
 
-> 状态：全部完成。`plugins/packages/*.myc` 已用 `pack-plugin.mjs` 重建为 v2 JSON 清单；
-> 官方 `myc.pdf-canvas-agent@0.4.0` 已成为第一个 host-bus 消费者：抽取输出
-> `myc.llm.v4`（ExtractionV3）→ 原生中间件链 `graph.ir.compile` → `graph.storage.put`
-> → `event.publish` → review-gated GraphPatch；并声明 `official: true` 与 Vue IR
-> 审阅插槽。旧语义管线（Pass C/D、AgentCandidates、graphpatch-gen、semantic-pipeline
-> crate）已随 0.1.0–0.3.0 历史包一并移除；
+> 状态：全部完成。官方 `plugins/packages/<id>@<version>.myc` 已用 `pack-plugin.mjs` 重建为 v2 JSON 清单，并通过显式 staging 清单进入运行时；
+> 官方 `myc.pdf-canvas-agent@0.5.0` 已成为可信动态插件消费者：Host 加载
+> `dist/frontend.mjs`，提供共享 Vue 单例和 `PluginContext`；插件拥有上传、批量分析、
+> response SSE、错误和 review UI，并可在 `network.mode=direct` 下直接连接 provider。
+> GraphPatch 只走 Rust canonical proposal/review/commit，`GraphProjectRegistry`
+> 原子提交后发布 canonical `ProjectState` event；
 > `plugins::tests::tracked_packages_pass_the_full_v2_install_pipeline` 对每个跟踪包走完整安装管线回归。
+
+## 5. 目录与加载策略
+
+插件目录分成三层，不允许互相替代：
+
+| 层级 | 路径 | 说明 |
+|---|---|---|
+| 开发源码 | `my-plugins/<plugin-folder>/` | 官方和本地开发源码，如 `anPdfsolver`、`ancordis`、`anmarket`。Host 不直接从这里运行插件。 |
+| 第三方缓存 | `my-third-plugins/` | 本地第三方包、导入包、日语包、One Dark Pro 等外部内容；该目录被 Git 忽略，并且 Desktop dev 默认不扫描。 |
+| 调试运行时 | `.plugin-runtime/dev/` | `scripts/stage-plugin-runtime.mjs dev` 生成的运行时目录，包含 `packages/`、`installed/`、`quarantine/` 和 `dev-manifest.json`。 |
+| 正式安装 | Desktop 管理的 app data | 安装器校验后展开的用户安装状态，不在仓库内维护。 |
+
+`config/plugin-loading.json` 是 staging 的唯一输入。Desktop dev 默认策略是
+`official-bundled-only`：只加载 `desktopDev.packageFiles` 中显式列出的官方内置包；
+`my-plugins/` 里的开发插件必须通过 `desktopDev.enabledDevelopmentPluginIds` 或
+`--with-dev-plugin <pluginId>` 显式选择后才会被打包到 `.plugin-runtime/dev`。
+
+`scripts/stage-plugin-runtime.mjs` 只复制显式 package 文件或调用
+`scripts/pack-plugin.mjs` 将显式 source 打包进 runtime。它不会从源码目录直接运行，
+不会扫描 `my-third-plugins/`，也不会自动恢复日语包或 One Dark Pro。单个版本清理只接受
+精确的 `pluginId@version`，并限制在 `.plugin-runtime/*` 内部。
+
+`scripts/pack-plugin.mjs` 在写出 `.myc` 前校验 manifest 引用的 `frontend.entry`、
+`workers[*].entrypoint` 和 `artifacts` 路径：这些路径必须是包内相对 POSIX 路径，
+不能包含绝对路径、反斜杠或 `..`，并且必须已经存在于包内容中。旧
+`contributes.uiIr` 的 Vue SFC 编译路径继续作为不可信声明式 UI 兼容轨道，但不是
+`anPdfsolver` 当前路径。
+
+目录、脚本、`package.json` 命令、Tauri resource wiring 和 Rust loader 已统一到
+`.plugin-runtime/dev` / `.plugin-runtime/release-staging` 的 staging 边界。

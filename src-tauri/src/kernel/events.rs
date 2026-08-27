@@ -218,11 +218,19 @@ mod tests {
     #[test]
     fn publish_fans_out_to_matching_subscriptions() {
         let mut bus = EventBus::new();
-        let alpha = bus.subscribe("project.saved", DeliveryMode::Queued, 10_000, 0).unwrap();
-        let beta = bus.subscribe("project.saved", DeliveryMode::Queued, 10_000, 0).unwrap();
-        let other = bus.subscribe("project.deleted", DeliveryMode::Queued, 10_000, 0).unwrap();
+        let alpha = bus
+            .subscribe("project.saved", DeliveryMode::Queued, 10_000, 0)
+            .unwrap();
+        let beta = bus
+            .subscribe("project.saved", DeliveryMode::Queued, 10_000, 0)
+            .unwrap();
+        let other = bus
+            .subscribe("project.deleted", DeliveryMode::Queued, 10_000, 0)
+            .unwrap();
 
-        let delivered = bus.publish("project.saved", json!({"id": "p1"}), 100).unwrap();
+        let delivered = bus
+            .publish("project.saved", json!({"id": "p1"}), 100)
+            .unwrap();
         assert_eq!(delivered, 2);
 
         assert_eq!(bus.poll(alpha, 8, 200).unwrap().len(), 1);
@@ -233,7 +241,9 @@ mod tests {
     #[test]
     fn latest_mode_keeps_only_the_newest_event() {
         let mut bus = EventBus::new();
-        let id = bus.subscribe("metric", DeliveryMode::Latest, 10_000, 0).unwrap();
+        let id = bus
+            .subscribe("metric", DeliveryMode::Latest, 10_000, 0)
+            .unwrap();
         bus.publish("metric", json!({"v": 1}), 100).unwrap();
         bus.publish("metric", json!({"v": 2}), 200).unwrap();
         let events = bus.poll(id, 8, 300).unwrap();
@@ -244,7 +254,9 @@ mod tests {
     #[test]
     fn expired_subscription_rejects_poll() {
         let mut bus = EventBus::new();
-        let id = bus.subscribe("topic", DeliveryMode::Queued, 1_000, 0).unwrap();
+        let id = bus
+            .subscribe("topic", DeliveryMode::Queued, 1_000, 0)
+            .unwrap();
         assert!(matches!(
             bus.poll(id, 8, 2_000),
             Err(EventBusError::ExpiredSubscription(_))

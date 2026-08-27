@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createDefaultTauriHostSdkTransport,
   createTauriHostSdkTransport,
+  KERNEL_HOST_CANCEL_COMMAND,
   KERNEL_HOST_CALL_COMMAND,
   TAURI_HOST_UNAVAILABLE_MESSAGE,
   TauriHostUnavailableError,
@@ -94,7 +95,11 @@ test("Tauri transport locally aborts an in-flight call and consumes its late rej
   const invokeSettled = new Promise<HostCallResponse<unknown>>((_, reject) => {
     rejectInvoke = reject;
   });
-  const transport = createTauriHostSdkTransport(async () => invokeSettled);
+  const cancelled: string[] = [];
+  const transport = createTauriHostSdkTransport(async () => invokeSettled, async (requestId) => {
+    cancelled.push(requestId);
+    return { command: KERNEL_HOST_CANCEL_COMMAND };
+  });
   const controller = new AbortController();
   const pending = transport.invoke(request(), controller.signal);
 
@@ -103,6 +108,8 @@ test("Tauri transport locally aborts an in-flight call and consumes its late rej
     pending,
     (error: unknown) => error instanceof DOMException && error.name === "AbortError",
   );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(cancelled, ["request-1"]);
   rejectInvoke?.(new Error("late Tauri failure"));
   await new Promise((resolve) => setImmediate(resolve));
 });

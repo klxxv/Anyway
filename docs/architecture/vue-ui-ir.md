@@ -6,9 +6,9 @@ _Anyway 第一阶段 UI 扩展契约：在保留可信原生 Vue 开发体验的
 
 ## 🎯 设计目标
 
-UI 扩展采用双轨模型：可信的 Anyway 原生代码继续使用完整 Vue 组件、`slot`、composable 和现有状态层；不可信插件只能提交版本化 JSON UI IR，由 Host 解析、授权并交给 allowlist renderer 渲染。
+UI 扩展采用双轨模型：可信的 Anyway 原生代码和已信任插件可以使用完整 Vue SFC、`slot`、composable 和现有状态层；不可信插件只能提交版本化 JSON UI IR，由 Host 解析、授权并交给 allowlist renderer 渲染。
 
-这两个轨道共享 Host 的状态和 RPC 语义，但不共享代码执行权限。IR 不会被编译成 Vue 模板，也不会让插件提供组件名、事件函数、任意表达式或 HTML 字符串。
+这两个轨道共享 Host 的状态和 RPC 语义，但不共享代码执行权限。IR 不会被编译成 Vue 模板，也不会让插件提供组件名、事件函数、任意表达式或 HTML 字符串。当前 `anPdfsolver` 走可信 `frontend.mode="trusted-module"` 轨道：源码是 `my-plugins/anPdfsolver/frontend/src/*.vue` 和 TypeScript，构建产物是 `dist/frontend.mjs`，不是 JSON UI IR。
 
 ```mermaid
 sequenceDiagram
@@ -90,6 +90,8 @@ renderer 位于 [`src/vue/runtime/vue-ir/renderer.ts`](../../src/vue/runtime/vue
 
 这保留了 Vue 的组合方式，但把“不可信插件能描述什么”和“可信 Host 能实现什么”分开。Vue 的 render function、slot 和 composable 语义可参考官方文档[^1]。
 
+这里的 UI IR `slot` 只是声明式界面中的受控占位节点，不等同于 Host 的物理 Slot Catalog。Host 物理 slot 是可枚举放置点，例如 `workspace.toolbar.actions`、`workspace.dialogs`、`workspace.status`；插件内部 Vue 组件可以继续使用普通 Vue slots，但这些内部 slots 不会被称为 Host slot，也不会被 Host 枚举。
+
 ## 🔗 Host RPC action
 
 按钮、输入和选择器的动作最终都转换为以下数据对象：
@@ -114,13 +116,13 @@ Host 接收到 action 后仍需执行自己的顺序：
 4. 将请求转给统一 Host SDK envelope
 5. 返回结构化结果、稳定错误码和审计信息
 
-第一阶段不改变既有 `contracts.ts`。后续主线接线时，应将 `UiIrActionRequest` 映射到统一 Host SDK envelope，而不是让 Vue runtime 直接调用 Tauri 或 Rust。
+第一阶段不改变既有 `contracts.ts`。`UiIrActionRequest` 进入统一 Host SDK envelope，而不是让 Vue runtime 直接调用 Tauri 或 Rust。
 
 ## 🧭 可信与不可信双轨
 
 | 能力 | 可信原生 Vue | 不可信 UI IR |
 | --- | --- | --- |
-| 自定义 SFC | 允许 | 不允许 |
+| 自定义 SFC | 允许；可信插件通过 `dist/frontend.mjs` 加载 | 不允许 |
 | Vue slot | 完整 slot | 只请求 allowlisted slot |
 | composable | 可直接使用 | 只能使用 Host 注入的 reader/writer/dispatcher |
 | 动态组件 | 由代码审计后决定 | 禁止 |
@@ -129,7 +131,7 @@ Host 接收到 action 后仍需执行自己的顺序：
 | 文件、网络、进程 | 由 Host/Kernel policy 控制 | 只能通过 RPC capability |
 | UI 结构 | 任意 Vue 组件树 | 固定 IR 节点集合 |
 
-这不是把所有 Anyway UI 改成 IR。账户、设置、恢复、权限提示等核心界面仍可使用原生 Vue；只有第三方或未完全信任的插件界面进入 IR 轨道。
+这不是把所有 Anyway UI 改成 IR。账户、设置、恢复、权限提示等核心界面仍可使用原生 Vue；可信插件也可以使用打包后的 Vue SFC 模块。只有第三方或未完全信任的插件界面进入 IR 轨道。`anPdfsolver` 当前不属于本页描述的 JSON UI IR 路径。
 
 ## 🧪 第一阶段测试
 
@@ -148,15 +150,16 @@ Host 接收到 action 后仍需执行自己的顺序：
 npx tsx --test tests/vue-ui-ir.test.ts
 ```
 
-本阶段不新增测试依赖，也不修改 `package.json`。
+SFC 编译阶段使用 `@vue/compiler-sfc`/`@vue/compiler-dom`；运行时不编译 SFC。
 
-## 📍 第一阶段边界和后续接线
+## 📍 当前边界
 
-第一阶段的契约、解析器、renderer 和局部测试已落地；官方插件接线也已打通：
+UI IR 契约、解析器、renderer 和局部测试保留为不可信插件兼容轨道；官方 `anPdfsolver` 不再通过该轨道承载界面：
 
-- ✅ 插件 manifest 的 UI 声明已映射到 `UiIrPermissionPolicy`：v2 平面清单的 `contributes.uiIr` 经 `MycPluginContributions.ui_ir` 透传到安装清单面（`plugin.list`）。
-- ✅ 官方 `myc.pdf-canvas-agent@0.4.0` 声明 `agent.review` 插槽贡献；`AgentReviewPanel.vue` 用 `permissionPolicyForContributions` + `parseUiIR` 校验，由 `UiIRRenderer` 渲染，`review.accept/review.reject` 动作解析到宿主原生审阅处理器。
-- 尚未接线：第三方插件的 Host 注入、`UiIrActionRequest` 到统一 Host SDK envelope 的自动映射、BlobRef/分页 binding、安装/启用生命周期的解析审计钩子。
+- ✅ Host 物理 Slot Catalog 由 Host 自动枚举，`ResearchWorkspaceApp` 通过 `v-for` 和 `PluginContributionSlot` 渲染用户已启用插件的贡献。
+- ✅ `anPdfsolver` manifest 使用 `frontend:{ mode:"trusted-module", entry:"dist/frontend.mjs", framework:"vue3", apiVersion:"1" }` 与 `contributes.ui[{ id, slotId, export, order?, when? }]`，插件前端拥有上传、批量、SSE、错误和 review UI。
+- ✅ Host 不再导入 PDF agent 专属上传、审阅或 host-slot renderer；文件选择、设置、worker、GraphPatch 和 slots 能力通过 `PluginContext` 暴露，`PluginContext` 不暴露 raw Host SDK。
+- ✅ UI IR 仍可用于不可信插件的声明式界面，但不得用于描述 `anPdfsolver` 当前路径。
 
 ## References
 

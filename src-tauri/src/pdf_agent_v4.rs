@@ -395,8 +395,14 @@ fn bus_json(response: crate::kernel_commands::HostCallResponse) -> Result<Value,
     if let Some(error) = value.get("error") {
         return Err(format!(
             "host bus call failed: {} ({})",
-            error.get("message").and_then(Value::as_str).unwrap_or("unknown error"),
-            error.get("code").and_then(Value::as_str).unwrap_or("HOST_ERROR"),
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error"),
+            error
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("HOST_ERROR"),
         ));
     }
     value
@@ -428,8 +434,10 @@ pub(crate) async fn run_v4_pipeline(
     let bounded_text = PdfPipeline::bounded_llm_context(&extracted.full_text);
     let document_json = serde_json::to_string(doc).map_err(|error| error.to_string())?;
     let public_progress_protocol = if runtime.public_progress
-        && matches!(&runtime.backend, crate::native_plugins::pdf_canvas_agent::Backend::KimiK26(_))
-    {
+        && matches!(
+            &runtime.backend,
+            crate::native_plugins::pdf_canvas_agent::Backend::KimiK26(_)
+        ) {
         r#"PUBLIC PROGRESS PROTOCOL (optional progress, required final frame):
 You may emit at most 6 short user-visible events before the result. Each event must be one line:
 <myc_progress>{"stage":"short-stable-stage","summary":"concise public status","evidenceCount":0,"warningCount":0}</myc_progress>
@@ -464,6 +472,7 @@ Do not emit anything after </myc_result>."#
 
     // ── Pass B: one myc.llm.v4 fragment per section ──
     let mut fragments: Vec<V4Fragment> = Vec::new();
+    let mut section_failure: Option<String> = None;
     for section in &doc.sections {
         progress.begin_reasoning_pass("pass-b-v4", "Extracting myc.llm.v4 entities")?;
         let text = section_text(
@@ -483,7 +492,63 @@ Do not emit anything after </myc_result>."#
             ("section_title", section.title.clone()),
             ("section_text", text),
         ]);
-        let raw = chat_with(&prompts.fragment, &vars, provider).await?;
+        let raw = match chat_with(&prompts.fragment, &vars, provider).await {
+            Ok(raw) => raw,
+            Err(error) => {
+                section_failure = Some(error);
+                break;
+            }
+        };
+        progress.record_reasoning_chunk(raw.len())?;
+        match parse_pass::<V4Fragment>(
+            &raw,
+            "B",
+            "myc.llm.v4 fragment: evidence[], variables[], contexts[], axiom_sets[], experiments[], operator_candidates[], abstraction_candidates[]",
+            recovery,
+            progress,
+        )
+        .await
+        {
+            Ok(mut fragment) => {
+                fragment.section_id = Some(section.id.clone());
+                fragments.push(fragment);
+            }
+            Err(error) => {
+                section_failure = Some(error);
+                break;
+            }
+        }
+    }
+
+    if let Some(section_error) = section_failure {
+        // 韧性回退:逐章节流式调用数量放大后,单个被截断的流不应让整个 job
+        // 失败——丢弃部分片段,对全文做一次有界单调用抽取(旧设计的语义)。
+        // Resilience fallback: per-section streaming multiplies the number of
+        // provider streams; one cut stream must not fail the whole job.
+        // Discard partial fragments and extract one bounded full-text
+        // fragment in a single call.
+        fragments.clear();
+        progress.begin_reasoning_pass(
+            "pass-b-v4-fallback",
+            "Extracting myc.llm.v4 entities (single pass)",
+        )?;
+        let vars = BTreeMap::from([
+            (
+                "public_progress_protocol",
+                public_progress_protocol.to_string(),
+            ),
+            ("document_structure", document_json.clone()),
+            ("section_title", "Full document".to_string()),
+            (
+                "section_text",
+                PdfPipeline::bounded_llm_context(&extracted.full_text),
+            ),
+        ]);
+        let raw = chat_with(&prompts.fragment, &vars, provider).await.map_err(|error| {
+            format!(
+                "Pass B failed ({section_error}); the single-call full-text fallback also failed: {error}"
+            )
+        })?;
         progress.record_reasoning_chunk(raw.len())?;
         let mut fragment: V4Fragment = parse_pass(
             &raw,
@@ -492,15 +557,19 @@ Do not emit anything after </myc_result>."#
             recovery,
             progress,
         )
-        .await?;
-        fragment.section_id = Some(section.id.clone());
+        .await
+        .map_err(|error| {
+            format!(
+                "Pass B failed ({section_error}); the single-call full-text fallback parse also failed: {error}"
+            )
+        })?;
+        fragment.section_id = None;
         fragments.push(fragment);
     }
     if fragments.is_empty() {
         return Err("Pass B produced no fragments".to_string());
     }
-    let fragments_json =
-        serde_json::to_string(&fragments).map_err(|error| error.to_string())?;
+    let fragments_json = serde_json::to_string(&fragments).map_err(|error| error.to_string())?;
 
     // ── Pass E: complete ExtractionV3 root ──
     progress.begin_reasoning_pass("pass-e-v4", "Synthesizing the myc.llm.v4 root")?;
@@ -512,7 +581,10 @@ Do not emit anything after </myc_result>."#
         ),
         (
             "title",
-            structure.title.clone().unwrap_or_else(|| "Untitled".to_string()),
+            structure
+                .title
+                .clone()
+                .unwrap_or_else(|| "Untitled".to_string()),
         ),
         ("authors", structure.authors.join(", ")),
         ("pass_a_structure_json", pass_a_json),
@@ -680,8 +752,7 @@ pub fn canvas_to_graph_patch(canvas: &CanvasIRV3, source: &str, job_id: &str) ->
     for operator in &canvas.operators {
         for (index, input_ref) in operator.input_refs.iter().enumerate() {
             for output_ref in &operator.output_refs {
-                let edge_id = if operator.input_refs.len() == 1 && operator.output_refs.len() == 1
-                {
+                let edge_id = if operator.input_refs.len() == 1 && operator.output_refs.len() == 1 {
                     operator.id.clone()
                 } else {
                     format!("{}-{}-{}", operator.id, index, output_ref)
@@ -735,10 +806,7 @@ mod tests {
     fn template_renderer_substitutes_every_placeholder() {
         let rendered = render_template(
             "Hello {who}, {count} items.",
-            &BTreeMap::from([
-                ("who", "canvas".to_string()),
-                ("count", "5".to_string()),
-            ]),
+            &BTreeMap::from([("who", "canvas".to_string()), ("count", "5".to_string())]),
         )
         .expect("renders");
         assert_eq!(rendered, "Hello canvas, 5 items.");
@@ -793,7 +861,10 @@ mod tests {
 
         let patch = canvas_to_graph_patch(&canvas, "myc.pdf-canvas-agent", "job-1");
         assert_eq!(patch["reviewRequired"], true);
-        assert_eq!(patch["apiVersion"], "researchcanvas.dev/graph-patch/v1alpha1");
+        assert_eq!(
+            patch["apiVersion"],
+            "researchcanvas.dev/graph-patch/v1alpha1"
+        );
         assert_eq!(patch["source"]["pluginId"], "myc.pdf-canvas-agent");
         let operations = patch["operations"].as_array().expect("operations");
         assert_eq!(operations.len(), 3);
@@ -812,7 +883,7 @@ mod tests {
     // ── 端到端:mock LLM → Pass A/B/E → host bus → GraphPatch ──
 
     struct MockProvider {
-        responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+        responses: std::sync::Mutex<std::collections::VecDeque<Result<String, String>>>,
     }
 
     #[async_trait::async_trait]
@@ -822,7 +893,7 @@ mod tests {
                 .lock()
                 .expect("mock lock")
                 .pop_front()
-                .ok_or_else(|| "mock provider exhausted".to_string())
+                .ok_or_else(|| "mock provider exhausted".to_string())?
         }
 
         fn name(&self) -> &str {
@@ -897,19 +968,42 @@ mod tests {
         .to_string()
     }
 
-    #[test]
-    fn end_to_end_pipeline_compiles_persists_and_emits_a_review_gated_patch() {
-        use crate::agent_commands::PdfAgentRuntimeConfig;
-        use crate::agent_host::{AgentHost, DocumentFormat, JobState};
-        use crate::kernel_commands::{create_kernel_state, CapabilityPolicyState};
-        use crate::llm_client::{ApiFormat, PdfAgentLlmConfig, PdfAgentTransport};
-        use crate::pdf_pipeline::{
-            DocumentMap, ExtractedText, PageText, StructureParagraph, StructureSection,
-            StructuredDocument,
-        };
-        use std::collections::VecDeque;
+    fn pass_a_response() -> String {
+        json!({
+            "title": "Test Paper",
+            "authors": ["A. Author"],
+            "year": 2024,
+            "abstractText": null,
+            "sections": [{"id": "s1", "title": "Method", "level": 1}],
+            "references": []
+        })
+        .to_string()
+    }
 
-        // ── 状态:kernel 平面 + policy + 一个推进到语义阶段的 job ──
+    use crate::agent_commands::PdfAgentRuntimeConfig;
+    use crate::agent_host::{AgentHost, DocumentFormat, JobState};
+    use crate::kernel_commands::{create_kernel_state, CapabilityPolicyState};
+    use crate::llm_client::{ApiFormat, PdfAgentLlmConfig, PdfAgentTransport};
+    use crate::pdf_pipeline::{
+        DocumentMap, ExtractedText, PageText, StructureParagraph, StructureSection,
+        StructuredDocument,
+    };
+    use std::collections::VecDeque;
+
+    struct V4Fixture {
+        kernel: KernelState,
+        policy: CapabilityPolicyState,
+        hosts: std::sync::Mutex<AgentHost>,
+        job_id: String,
+        doc: StructuredDocument,
+        extracted: ExtractedText,
+        runtime: PdfAgentRuntimeConfig,
+    }
+
+    /// 共享离线夹具:kernel 平面 + policy + 推进到语义阶段的 job + 单章节文档。
+    /// Shared offline fixture: kernel planes + policy + a job advanced to the
+    /// semantics stage + a single-section document.
+    fn v4_fixture() -> V4Fixture {
         let kernel = create_kernel_state().expect("kernel state");
         let policy = CapabilityPolicyState::default();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -937,9 +1031,7 @@ mod tests {
             }
             id
         };
-        let progress = ImportProgressAdapter::new(&hosts, &job_id);
 
-        // ── 文档夹具:一个覆盖全文的章节 ──
         let full_text = "We introduce Fourier features and show they improve accuracy.".to_string();
         let pages = vec![PageText {
             page_number: 1,
@@ -992,22 +1084,30 @@ mod tests {
             credential_env_var: "MOCK_KEY".to_string(),
         };
 
+        V4Fixture {
+            kernel,
+            policy,
+            hosts,
+            job_id,
+            doc,
+            extracted,
+            runtime,
+        }
+    }
+
+    #[test]
+    fn end_to_end_pipeline_compiles_persists_and_emits_a_review_gated_patch() {
+        let fixture = v4_fixture();
+        let progress = ImportProgressAdapter::new(&fixture.hosts, &fixture.job_id);
+
         let provider = MockProvider {
             responses: std::sync::Mutex::new(VecDeque::from([
                 // Pass A
-                json!({
-                    "title": "Test Paper",
-                    "authors": ["A. Author"],
-                    "year": 2024,
-                    "abstractText": null,
-                    "sections": [{"id": "s1", "title": "Method", "level": 1}],
-                    "references": []
-                })
-                .to_string(),
+                Ok(pass_a_response()),
                 // Pass B fragment
-                fragment_response(),
+                Ok(fragment_response()),
                 // Pass E root
-                root_response(),
+                Ok(root_response()),
             ])),
         };
         let recovery = MockProvider {
@@ -1016,12 +1116,12 @@ mod tests {
 
         let patch = tauri::async_runtime::block_on(run_v4_pipeline(
             None,
-            &kernel,
-            &policy,
-            &doc,
-            &extracted,
-            &runtime,
-            &job_id,
+            &fixture.kernel,
+            &fixture.policy,
+            &fixture.doc,
+            &fixture.extracted,
+            &fixture.runtime,
+            &fixture.job_id,
             DocumentFormat::Pdf,
             &progress,
             &provider,
@@ -1031,7 +1131,10 @@ mod tests {
 
         // ── GraphPatch 契约 ──
         assert_eq!(patch["reviewRequired"], true);
-        assert_eq!(patch["apiVersion"], "researchcanvas.dev/graph-patch/v1alpha1");
+        assert_eq!(
+            patch["apiVersion"],
+            "researchcanvas.dev/graph-patch/v1alpha1"
+        );
         assert_eq!(patch["source"]["pluginId"], "myc.pdf-canvas-agent");
         let operations = patch["operations"].as_array().expect("operations");
         assert!(
@@ -1044,24 +1147,118 @@ mod tests {
         );
 
         // ── host bus 审计轨迹 ──
-        let audit = kernel.audit().read().expect("audit lock");
+        let audit = fixture.kernel.audit().read().expect("audit lock");
         for operation in ["graph.ir.compile", "graph.storage.put", "event.publish"] {
             assert!(
                 audit.query(0, 1024).iter().any(|entry| {
                     entry.operation == operation
-                        && entry.principal.as_str() == crate::kernel::policy::NATIVE_UI_PRINCIPAL_NAME
+                        && entry.principal.as_str()
+                            == crate::kernel::policy::NATIVE_UI_PRINCIPAL_NAME
                 }),
                 "{operation} must be audited through the native chain"
             );
         }
 
         // ── 持久化的画布内容 ──
-        let storage = kernel.graph_storage().read().expect("storage lock");
+        let storage = fixture.kernel.graph_storage().read().expect("storage lock");
         assert!(storage.block_count() >= 1, "the canvas must be persisted");
         drop(storage);
 
         // ── job 停在持久化阶段,等待宿主生成审阅补丁 ──
-        let host = hosts.lock().expect("host lock");
-        assert_eq!(host.get_job(&job_id).expect("job").state, JobState::PersistingCanvas);
+        let host = fixture.hosts.lock().expect("host lock");
+        assert_eq!(
+            host.get_job(&fixture.job_id).expect("job").state,
+            JobState::PersistingCanvas
+        );
+    }
+
+    #[test]
+    fn pass_b_section_failure_falls_back_to_a_single_full_text_call() {
+        let fixture = v4_fixture();
+        let progress = ImportProgressAdapter::new(&fixture.hosts, &fixture.job_id);
+
+        let provider = MockProvider {
+            responses: std::sync::Mutex::new(VecDeque::from([
+                // Pass A
+                Ok(pass_a_response()),
+                // Pass B per-section call: a cut provider stream.
+                Err("Kimi SSE ended before the [DONE] marker".to_string()),
+                // Pass B full-text fallback call.
+                Ok(fragment_response()),
+                // Pass E root
+                Ok(root_response()),
+            ])),
+        };
+        let recovery = MockProvider {
+            responses: std::sync::Mutex::new(VecDeque::new()),
+        };
+
+        let patch = tauri::async_runtime::block_on(run_v4_pipeline(
+            None,
+            &fixture.kernel,
+            &fixture.policy,
+            &fixture.doc,
+            &fixture.extracted,
+            &fixture.runtime,
+            &fixture.job_id,
+            DocumentFormat::Pdf,
+            &progress,
+            &provider,
+            &recovery,
+        ))
+        .expect("the fallback keeps the pipeline alive");
+
+        assert_eq!(patch["reviewRequired"], true);
+        let operations = patch["operations"].as_array().expect("operations");
+        assert!(
+            operations.iter().any(|operation| {
+                operation["node"]["id"] == "block_var_var_001"
+                    && operation["node"]["type"] == "variable"
+            }),
+            "the fallback fragment must still reach the patch: {operations:?}"
+        );
+
+        let host = fixture.hosts.lock().expect("host lock");
+        assert_eq!(
+            host.get_job(&fixture.job_id).expect("job").state,
+            JobState::PersistingCanvas
+        );
+    }
+
+    #[test]
+    fn pass_b_failure_propagates_when_the_fallback_also_fails() {
+        let fixture = v4_fixture();
+        let progress = ImportProgressAdapter::new(&fixture.hosts, &fixture.job_id);
+
+        let provider = MockProvider {
+            responses: std::sync::Mutex::new(VecDeque::from([
+                Ok(pass_a_response()),
+                Err("Kimi SSE ended before the [DONE] marker".to_string()),
+                Err("Kimi SSE ended before the [DONE] marker".to_string()),
+            ])),
+        };
+        let recovery = MockProvider {
+            responses: std::sync::Mutex::new(VecDeque::new()),
+        };
+
+        let error = tauri::async_runtime::block_on(run_v4_pipeline(
+            None,
+            &fixture.kernel,
+            &fixture.policy,
+            &fixture.doc,
+            &fixture.extracted,
+            &fixture.runtime,
+            &fixture.job_id,
+            DocumentFormat::Pdf,
+            &progress,
+            &provider,
+            &recovery,
+        ))
+        .expect_err("both Pass B attempts failed");
+
+        assert!(
+            error.contains("fallback also failed"),
+            "the chained error must surface both failures: {error}"
+        );
     }
 }

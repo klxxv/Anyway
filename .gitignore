@@ -35,6 +35,12 @@
 /plugins/installed/*
 !/plugins/installed/.gitkeep
 
+# separated local plugin packages and generated runtimes
+/my-third-plugins/
+my-plugins/*/dist/
+/.plugin-runtime/
+/plugin-runtime/
+
 # secrets — the app generates Ed25519 keys; never commit them
 .env
 .env.*

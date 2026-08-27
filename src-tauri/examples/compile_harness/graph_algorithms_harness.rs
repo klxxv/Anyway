@@ -65,7 +65,9 @@ pub fn resolve_edges(project: &Value, scenario_id: Option<&str>) -> Vec<Value> {
             let id = str_of(edge, "id").unwrap_or_default();
             let source = str_of(edge, "source").unwrap_or_default();
             let target = str_of(edge, "target").unwrap_or_default();
-            !disabled_edges.contains(&id) && !disabled_nodes.contains(&source) && !disabled_nodes.contains(&target)
+            !disabled_edges.contains(&id)
+                && !disabled_nodes.contains(&source)
+                && !disabled_nodes.contains(&target)
         })
         .map(|edge| {
             let id = str_of(edge, "id").unwrap_or_default();
@@ -126,13 +128,10 @@ fn build_neighbor_index(
             return;
         }
         source_seen.insert(key);
-        index
-            .entry(source)
-            .or_default()
-            .push(TraversalNeighbor {
-                node_id: target,
-                edge_id,
-            });
+        index.entry(source).or_default().push(TraversalNeighbor {
+            node_id: target,
+            edge_id,
+        });
     };
 
     for edge in edges {
@@ -187,7 +186,10 @@ fn filtered_active_node_ids(
         .filter_map(|n| {
             let id = str_of(n, "id")?;
             let keep = resolved.contains(&id)
-                && (id == start_id || str_of(n, "type").map(|t| types.contains(&t)).unwrap_or(false));
+                && (id == start_id
+                    || str_of(n, "type")
+                        .map(|t| types.contains(&t))
+                        .unwrap_or(false));
             if keep {
                 Some(id)
             } else {
@@ -211,16 +213,21 @@ struct TraversalRequest {
 impl TraversalRequest {
     fn from_value(value: &Value) -> Self {
         let arr = |key: &str| {
-            value
-                .get(key)
-                .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            value.get(key).and_then(Value::as_array).map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
         };
         TraversalRequest {
             start_id: str_of(value, "startId").unwrap_or_default(),
             strategy: str_of(value, "strategy").unwrap_or_else(|| "bfs".to_string()),
             direction: str_of(value, "direction").unwrap_or_else(|| "out".to_string()),
-            max_depth: value.get("maxDepth").and_then(Value::as_i64).unwrap_or(i64::MAX),
+            max_depth: value
+                .get("maxDepth")
+                .and_then(Value::as_i64)
+                .unwrap_or(i64::MAX),
             edge_types: arr("edgeTypes"),
             node_types: arr("nodeTypes"),
             scenario_id: str_of(value, "scenarioId"),
@@ -268,7 +275,8 @@ pub fn traverse(project: &Value, request_value: &Value) -> Value {
         &start_node_id,
         request.scenario_id.as_deref(),
     );
-    let neighbors_by_node = build_neighbor_index(&edges, &request.direction, request.edge_types.as_ref());
+    let neighbors_by_node =
+        build_neighbor_index(&edges, &request.direction, request.edge_types.as_ref());
 
     let mut depth_map: HashMap<String, Value> = HashMap::new();
     let mut parent_map: HashMap<String, Value> = HashMap::new();
@@ -312,7 +320,10 @@ pub fn traverse(project: &Value, request_value: &Value) -> Value {
             let current_depth = depth_map.get(&current).and_then(Value::as_i64).unwrap_or(0);
             let neighbors = neighbors_of!(current);
             if current_depth >= max_depth {
-                if neighbors.iter().any(|item| !visited.contains(&item.node_id)) {
+                if neighbors
+                    .iter()
+                    .any(|item| !visited.contains(&item.node_id))
+                {
                     stopped_by_depth.push(current.clone());
                 }
                 continue;
@@ -369,7 +380,10 @@ pub fn traverse(project: &Value, request_value: &Value) -> Value {
                 .filter(|n| active_nodes.contains(&n.node_id))
                 .collect::<Vec<TraversalNeighbor>>();
             if current_depth >= max_depth {
-                if neighbors.iter().any(|item| colors.get(&item.node_id).is_none()) {
+                if neighbors
+                    .iter()
+                    .any(|item| colors.get(&item.node_id).is_none())
+                {
                     stopped_by_depth.push(current.to_string());
                 }
                 colors.insert(current.to_string(), 2);
@@ -387,9 +401,21 @@ pub fn traverse(project: &Value, request_value: &Value) -> Value {
                     tree_edge_ids.push(neighbor.edge_id.clone());
                     tree_edges.insert(neighbor.edge_id.clone());
                     visit(
-                        &neighbor.node_id, neighbors_by_node, active_nodes, colors, used_edges,
-                        tree_edges, depth_map, parent_map, order, edge_ids, tree_edge_ids,
-                        cross_edge_ids, back_edge_ids, stopped_by_depth, max_depth,
+                        &neighbor.node_id,
+                        neighbors_by_node,
+                        active_nodes,
+                        colors,
+                        used_edges,
+                        tree_edges,
+                        depth_map,
+                        parent_map,
+                        order,
+                        edge_ids,
+                        tree_edge_ids,
+                        cross_edge_ids,
+                        back_edge_ids,
+                        stopped_by_depth,
+                        max_depth,
                     );
                 } else if color == 1 {
                     back_edge_ids.push(neighbor.edge_id.clone());
@@ -401,9 +427,21 @@ pub fn traverse(project: &Value, request_value: &Value) -> Value {
         }
 
         visit(
-            &start_node_id, &neighbors_by_node, &active_nodes, &mut colors, &mut used_edges,
-            &mut tree_edges, &mut depth_map, &mut parent_map, &mut order, &mut edge_ids, &mut tree_edge_ids,
-            &mut cross_edge_ids, &mut back_edge_ids, &mut stopped_by_depth, max_depth,
+            &start_node_id,
+            &neighbors_by_node,
+            &active_nodes,
+            &mut colors,
+            &mut used_edges,
+            &mut tree_edges,
+            &mut depth_map,
+            &mut parent_map,
+            &mut order,
+            &mut edge_ids,
+            &mut tree_edge_ids,
+            &mut cross_edge_ids,
+            &mut back_edge_ids,
+            &mut stopped_by_depth,
+            max_depth,
         );
     }
 
@@ -429,7 +467,9 @@ pub fn detect_cycles(project: &Value, scenario_id: Option<&str>) -> Value {
         .into_iter()
         .filter(|e| bool_of(e, "directed"))
         .collect();
-    let mut node_ids: Vec<String> = resolved_node_ids(project, scenario_id).into_iter().collect();
+    let mut node_ids: Vec<String> = resolved_node_ids(project, scenario_id)
+        .into_iter()
+        .collect();
     node_ids.sort();
 
     let mut outgoing: HashMap<String, Vec<Value>> = HashMap::new();
@@ -511,7 +551,14 @@ pub fn detect_cycles(project: &Value, scenario_id: Option<&str>) -> Value {
 
     for node_id in node_ids {
         if *color.get(&node_id).unwrap_or(&0) == 0 {
-            visit_cycle(&node_id, &edges, &outgoing, &mut color, &mut stack, &mut cycles);
+            visit_cycle(
+                &node_id,
+                &edges,
+                &outgoing,
+                &mut color,
+                &mut stack,
+                &mut cycles,
+            );
         }
     }
 
@@ -527,7 +574,12 @@ pub fn detect_cycles(project: &Value, scenario_id: Option<&str>) -> Value {
 // ---------------------------------------------------------------------------
 
 /// `shortestPath`：通过 BFS parent 重建一条稳定最短路径。
-pub fn shortest_path(project: &Value, source: &str, target: &str, scenario_id: Option<&str>) -> Value {
+pub fn shortest_path(
+    project: &Value,
+    source: &str,
+    target: &str,
+    scenario_id: Option<&str>,
+) -> Value {
     let request = json!({
         "startId": source,
         "strategy": "bfs",
@@ -808,7 +860,10 @@ pub fn compute_logic_chain(project: &Value, mode: &str, target_id: Option<&str>)
         let base = experiment_count.max(edges.len());
         format!("{base} experiments or sources challenge the current explanation.")
     } else {
-        format!("{} supported relations form the currently reviewable evidence chain.", edges.len())
+        format!(
+            "{} supported relations form the currently reviewable evidence chain.",
+            edges.len()
+        )
     };
 
     json!({
@@ -851,7 +906,11 @@ fn edge_sign(edge: &Value) -> f64 {
 }
 
 /// `propagateInfluence`：固定轮数的可解释影响传播。
-pub fn propagate_influence(project: &Value, target_id: &str, max_iterations_opt: Option<i64>) -> Value {
+pub fn propagate_influence(
+    project: &Value,
+    target_id: &str,
+    max_iterations_opt: Option<i64>,
+) -> Value {
     let node_count = array_of(project, "nodes").len();
     let max_iterations = max_iterations_opt.unwrap_or_else(|| (node_count as i64).max(2));
 
@@ -871,8 +930,12 @@ pub fn propagate_influence(project: &Value, target_id: &str, max_iterations_opt:
     while iterations < max_iterations {
         let mut next: HashMap<String, f64> = HashMap::new();
         for edge in array_of(project, "edges") {
-            let downstream = frontier.get(&str_of(edge, "target").unwrap_or_default()).copied();
-            let Some(downstream) = downstream else { continue };
+            let downstream = frontier
+                .get(&str_of(edge, "target").unwrap_or_default())
+                .copied();
+            let Some(downstream) = downstream else {
+                continue;
+            };
             if downstream.abs() < 0.001 {
                 continue;
             }
@@ -885,7 +948,10 @@ pub fn propagate_influence(project: &Value, target_id: &str, max_iterations_opt:
             let id = str_of(edge, "id").unwrap_or_default();
             *next.entry(source.clone()).or_insert(0.0) += contribution;
             *raw.entry(source.clone()).or_insert(0.0) += contribution;
-            match edge_contributions.iter_mut().find(|(existing, _)| *existing == id) {
+            match edge_contributions
+                .iter_mut()
+                .find(|(existing, _)| *existing == id)
+            {
                 Some((_, value)) => *value += contribution,
                 None => edge_contributions.push((id, contribution)),
             }
@@ -898,7 +964,10 @@ pub fn propagate_influence(project: &Value, target_id: &str, max_iterations_opt:
         iterations += 1;
     }
 
-    let max_abs = raw.values().map(|v| v.abs()).fold(1.0_f64, |acc, v| acc.max(v));
+    let max_abs = raw
+        .values()
+        .map(|v| v.abs())
+        .fold(1.0_f64, |acc, v| acc.max(v));
     let scores: HashMap<String, f64> = raw
         .iter()
         .map(|(id, v)| (id.clone(), *v / max_abs))
@@ -906,7 +975,11 @@ pub fn propagate_influence(project: &Value, target_id: &str, max_iterations_opt:
 
     // 稳定排序：|contribution| 降序，相同则保持插入序（= ts 对 Object.entries 的稳定排序）。
     let mut strongest = edge_contributions.clone();
-    strongest.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap_or(std::cmp::Ordering::Equal));
+    strongest.sort_by(|a, b| {
+        b.1.abs()
+            .partial_cmp(&a.1.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let strongest_edge_ids: Vec<String> = strongest.into_iter().take(8).map(|(id, _)| id).collect();
 
     let contributions_obj: Map<String, Value> = edge_contributions
@@ -927,7 +1000,10 @@ pub fn propagate_influence(project: &Value, target_id: &str, max_iterations_opt:
 // 确定性布局：computeLayout
 // ---------------------------------------------------------------------------
 
-fn topological_depths(project: &Value, selected_edge_ids: Option<&HashSet<String>>) -> HashMap<String, i64> {
+fn topological_depths(
+    project: &Value,
+    selected_edge_ids: Option<&HashSet<String>>,
+) -> HashMap<String, i64> {
     let node_ids: Vec<String> = array_of(project, "nodes")
         .iter()
         .filter_map(|n| str_of(n, "id"))
@@ -940,7 +1016,9 @@ fn topological_depths(project: &Value, selected_edge_ids: Option<&HashSet<String
             let id = str_of(edge, "id").unwrap_or_default();
             node_ids.contains(&source)
                 && node_ids.contains(&target)
-                && selected_edge_ids.map(|ids| ids.contains(&id)).unwrap_or(true)
+                && selected_edge_ids
+                    .map(|ids| ids.contains(&id))
+                    .unwrap_or(true)
         })
         .cloned()
         .collect();
@@ -956,7 +1034,10 @@ fn topological_depths(project: &Value, selected_edge_ids: Option<&HashSet<String
         let source = str_of(edge, "source").unwrap_or_default();
         let target = str_of(edge, "target").unwrap_or_default();
         *incoming.entry(target.clone()).or_insert(0) += 1;
-        outgoing.entry(source.clone()).or_default().push(edge.clone());
+        outgoing
+            .entry(source.clone())
+            .or_default()
+            .push(edge.clone());
     }
 
     let mut queue: Vec<String> = node_ids
@@ -1079,16 +1160,22 @@ fn huffman_codes(project: &Value) -> HashMap<String, String> {
             codes,
         });
     }
-    queue.get(0).map(|item| item.codes.clone()).unwrap_or_default()
+    queue
+        .get(0)
+        .map(|item| item.codes.clone())
+        .unwrap_or_default()
 }
 
 /// `computeLayout`：仅展示坐标与注解，绝不修改保存的 placement。
 pub fn compute_layout(project: &Value, mode: &str, root_id_opt: Option<&str>) -> Value {
     let nodes = array_of(project, "nodes");
     let edges = array_of(project, "edges");
-    let root_id = root_id_opt
-        .map(str::to_string)
-        .unwrap_or_else(|| nodes.first().and_then(|n| str_of(n, "id")).unwrap_or_default());
+    let root_id = root_id_opt.map(str::to_string).unwrap_or_else(|| {
+        nodes
+            .first()
+            .and_then(|n| str_of(n, "id"))
+            .unwrap_or_default()
+    });
 
     let mut positions: Map<String, Value> = Map::new();
     let mut annotations: Map<String, Value> = Map::new();
@@ -1116,7 +1203,12 @@ pub fn compute_layout(project: &Value, mode: &str, root_id_opt: Option<&str>) ->
         node_ids = order
             .iter()
             .cloned()
-            .chain(node_ids.iter().filter(|id| !included.contains(*id)).cloned())
+            .chain(
+                node_ids
+                    .iter()
+                    .filter(|id| !included.contains(*id))
+                    .cloned(),
+            )
             .collect();
         edge_ids = traversal["treeEdgeIds"]
             .as_array()
@@ -1169,7 +1261,8 @@ pub fn compute_layout(project: &Value, mode: &str, root_id_opt: Option<&str>) ->
                             id.clone(),
                             json!({ "x": 70 + (column as i64) * 310, "y": 105 + row * 168 }),
                         );
-                        annotations.insert(id.clone(), json!(format!("{type_name} · row {}", row + 1)));
+                        annotations
+                            .insert(id.clone(), json!(format!("{type_name} · row {}", row + 1)));
                         row += 1;
                     }
                 }
@@ -1190,8 +1283,15 @@ pub fn compute_layout(project: &Value, mode: &str, root_id_opt: Option<&str>) ->
         for (id, code) in ordered {
             let depth = code.len() as i64;
             let row = rows_by_depth.get(&depth).copied().unwrap_or(0);
-            positions.insert(id.clone(), json!({ "x": 70 + depth * 320, "y": 80 + row * 172 }));
-            let prefix = if code.is_empty() { "0".to_string() } else { code.clone() };
+            positions.insert(
+                id.clone(),
+                json!({ "x": 70 + depth * 320, "y": 80 + row * 172 }),
+            );
+            let prefix = if code.is_empty() {
+                "0".to_string()
+            } else {
+                code.clone()
+            };
             annotations.insert(id.clone(), json!(format!("prefix {prefix}")));
             rows_by_depth.insert(depth, row + 1);
         }
@@ -1353,7 +1453,14 @@ mod tests {
     #[test]
     fn compute_layout_projects_deterministic_positions() {
         let project = sample_project();
-        for mode in ["tree", "table", "huffman", "evidence-chain", "refutation-chain", "neural-network"] {
+        for mode in [
+            "tree",
+            "table",
+            "huffman",
+            "evidence-chain",
+            "refutation-chain",
+            "neural-network",
+        ] {
             let layout = compute_layout(&project, mode, Some("a"));
             // refutation-chain 在无 contradicts 边的样例上允许为空；其余应有坐标。
             let need_positions = mode != "refutation-chain";

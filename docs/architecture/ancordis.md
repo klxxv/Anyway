@@ -10,7 +10,7 @@ AnCordis 是 Anyway 的官方 **非 Kernel Extension Host**。它把 Cordis 用�
 
 本设计保留现有插件的声明式和 WASM 能力，同时增加一种面向服务型插件的协议。原生 Anyway 数据交互和插件数据交互都使用同一套 Host SDK/RPC 语义，但每个请求仍携带独立的 `Principal`、Capability 和租约。
 
-本文件与 [`plugins/system/ancordis/protocol.ts`](../../plugins/system/ancordis/protocol.ts) 是协议草案，不代表基线已经接入新的运行时。当前实现仍以 [`plugins/README.md`](../../plugins/README.md) 描述的 MYC 包和 Rust WASM VM 为准。
+本文件与 [`my-plugins/ancordis/protocol.ts`](../../my-plugins/ancordis/protocol.ts) 是协议草案，不代表基线已经接入新的运行时。当前实现仍以 [`plugins/README.md`](../../plugins/README.md) 描述的 MYC 包和 Rust WASM VM 为准。
 
 > ⚠️ **安全边界：** Kernel 是唯一可信计算基。AnCordis 可以协调服务，不能替换 Kernel 的身份验证、Capability 授权、Blob 访问控制、进程监督、安装回滚或审计。
 
@@ -295,7 +295,7 @@ Blob 不自动授予调用权限。拥有一个 `BlobRef` 只表示“可以请�
 
 ## 🔌 AnCordis 官方系统插件
 
-AnCordis 的最小 manifest 和协议位于 [`plugins/system/ancordis/`](../../plugins/system/ancordis/)。Manifest 只描述设计期身份，不修改现有 `MycPluginManifest`；接入正式 SDK 前，Kernel 必须明确识别 `SystemExtension`，而不是让普通插件通过字段自称官方系统插件。
+AnCordis 的最小 manifest 和协议位于 [`my-plugins/ancordis/`](../../my-plugins/ancordis/)。Manifest 只描述设计期身份，不修改现有 `MycPluginManifest`；接入正式 SDK 前，Kernel 必须明确识别 `SystemExtension`，而不是让普通插件通过字段自称官方系统插件。
 
 ### Cordis 服务模型
 
@@ -421,8 +421,8 @@ flowchart LR
 
 ## 🔗 参考资料
 
-- [AnCordis protocol skeleton](../../plugins/system/ancordis/protocol.ts)
-- [AnCordis manifest example](../../plugins/system/ancordis/manifest.json)
+- [AnCordis protocol skeleton](../../my-plugins/ancordis/protocol.ts)
+- [AnCordis manifest example](../../my-plugins/ancordis/manifest.json)
 - [Current plugin packaging boundary](../../plugins/README.md)
 - [Current plugin contracts](../../app/plugins/contracts.ts)
 - [Current capability-free WASM VM](../../src-tauri/src/plugin_vm.rs)

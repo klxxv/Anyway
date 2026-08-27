@@ -9,7 +9,11 @@ plugins/
   sdk/python/research_canvas.py   reference lifecycle contract
   sdk/rust/                       Rust-to-WASM ABI example
   sdk/cpp/                        C++-to-WASM ABI example
-  sources/<plugin-id>/            source tree for one module
+  sources/<plugin-id>/            legacy/source trees not yet migrated
+
+my-plugins/                       version-controlled official plugin sources
+my-third-plugins/                 ignored local third-party package inbox
+.plugin-runtime/dev/              ignored generated desktop-dev runtime
 ```
 
 A `.myc` file is a ZIP archive with `plugin.json` and one kind-specific entry:
@@ -29,23 +33,37 @@ Build a package:
 ```bash
 # Canonical packager (deterministic STORE zip, optional Ed25519 signing):
 node scripts/pack-plugin.mjs \
-  plugins/sources/myc.onedarkpro \
-  plugins/packages/myc.onedarkpro@1.3.0.myc
+  my-plugins/anPdfsolver \
+  plugins/packages/myc.pdf-canvas-agent@0.4.0.myc
 
-# Python equivalent (deflated zip, same manifest contract):
-python scripts/build_myc_plugin.py \
-  plugins/sources/myc.onedarkpro \
-  plugins/packages/myc.onedarkpro@1.3.0.myc
 ```
 
-In development, the Tauri client scans `plugins/packages`, extracts verified
-packages into `plugins/installed/<id>@<version>`, and loads their manifests.
+In desktop development, `npm run plugins:stage-dev` materializes only the
+explicit official package list in `config/plugin-loading.json` into the ignored
+`.plugin-runtime/dev/packages` directory. Development sources under
+`my-plugins/` are staged only when their plugin id is explicitly enabled in the
+same config or passed to `scripts/stage-plugin-runtime.mjs` with
+`--with-dev-plugin <pluginId>`. The Rust loader should apply the same staged
+runtime boundary before extracting verified packages into
+`.plugin-runtime/dev/installed/<id>@<version>`. It never scans
+`my-third-plugins`, and the Japanese locale and One Dark Pro packages are not
+part of the default desktop-dev list.
 Release bundles embed the same packages under the Tauri resource directory and
 install each immutable `id@version` once into application data. Dropping a
 `.myc` file onto the Plugin Store invokes the same installer.
 Removing incompatible packages records an exact `id@version` tombstone, so an
 embedded package is not silently reinstalled on the next discovery pass.
 Explicitly installing that package again clears its tombstone.
+
+The staging script can also clean one exact generated version without touching
+source directories:
+
+```bash
+node scripts/stage-plugin-runtime.mjs dev --clean-plugin myc.pdf-canvas-agent@0.4.0
+```
+
+That command is intentionally narrow: it accepts an exact `pluginId@version`
+token and removes only matching generated paths under `.plugin-runtime/*`.
 
 VSIX theme import is a separate conversion step:
 

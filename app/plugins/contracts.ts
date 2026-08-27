@@ -3,7 +3,13 @@ import type {
   EdgeStyleManifest,
   ThemeManifest,
 } from "../lib/research-types";
-import type { UiIrSlotContribution } from "./ui-ir";
+import type {
+  PluginFrontendManifest,
+  PluginManifestWorker,
+  PluginNetworkDeclaration,
+  PluginUiContribution,
+} from "./plugin-frontend-contract";
+import type { UiIrSourceContribution, UiIrHydratedContribution } from "./ui-ir";
 
 /** 桌面安装器与前端共享的 `.myc` 清单版本 / Shared `.myc` manifest version for desktop installer and frontend. */
 export const MYC_API_VERSION = "researchcanvas.dev/v1alpha1";
@@ -81,7 +87,7 @@ export interface PluginSettingDefinition {
   /** Plugin-private i18n key; `label` remains the legacy fallback. */
   labelKey?: string;
   type: PluginSettingType;
-  /** Secret text is host-owned, write-only, and never exposed to plugins. */
+  /** Secret text is Host-owned and write-only in UI/RPC; a declared provider secret may be injected into the exact Worker process. */
   secret?: boolean;
   /** Whether the host must receive a value before enabling/executing the plugin. */
   required?: boolean;
@@ -149,14 +155,14 @@ export interface PluginConnectionDefinition {
   testAction?: PluginConnectionTestAction;
 }
 
-/** Agent model configuration is resolved by the host model gateway. */
+/** Agent model configuration is resolved by the Host; invocation ownership is declared by the plugin runtime. */
 export interface AgentModelConfiguration {
-  ownership: "host-managed";
-  invocation: "host-model-gateway";
+  ownership: "host-managed" | "host-secret-managed";
+  invocation: "host-model-gateway" | "plugin-direct-provider";
   settingIds: string[];
   secretSettingIds: string[];
   agentReceives: string[];
-  agentReceivesPlaintextSecrets: false;
+  agentReceivesPlaintextSecrets: boolean;
   credentialPolicy?: string;
 }
 
@@ -263,6 +269,12 @@ export interface MycPluginSpec {
   language?: "rust" | "cpp" | "other";
   capabilities: string[];
   permissions: string[];
+  /** New trusted frontend entry. Kept here for legacy spec-scoped manifests. */
+  frontend?: PluginFrontendManifest;
+  /** New language-worker declarations. Kept here for legacy spec-scoped manifests. */
+  workers?: readonly PluginManifestWorker[];
+  /** Plugin-owned networking declaration. */
+  network?: PluginNetworkDeclaration;
   contributes?: MycPluginContributions;
   settings?: PluginSettingDefinition[];
   connections?: PluginConnectionDefinition[];
@@ -288,8 +300,10 @@ export interface MycPluginContributions {
   contextMenus?: PluginContextMenuContribution[];
   locales?: PluginLocaleContribution[];
   commands?: PluginCommandContribution[];
+  /** Trusted module Vue contributions mounted into physical Host slots. */
+  ui?: readonly PluginUiContribution[];
   /** 宿主渲染的声明式 UI 插槽 / Host-rendered declarative UI slots. */
-  uiIr?: readonly UiIrSlotContribution[];
+  uiIr?: readonly UiIrSourceContribution[];
 }
 
 /** 语言包是声明式数据，只能覆盖已知宿主消息键 / Locale bundles are declarative overlays for known host keys. */
@@ -357,6 +371,23 @@ export interface WorkspacePluginDescriptor {
   };
 }
 
+/** Installed, Host-validated external worker execution contract. */
+export interface PluginWorkerDescriptor {
+  language: "python";
+  entrypoint: string;
+  transport: "stdio-framed-json-v1";
+  hostMediated: true;
+  operations: string[];
+  hostOperations: string[];
+  providerEgress?: Array<{
+    providerId: string;
+    connectionId: string;
+    domains: string[];
+    purpose: string;
+    secretEnv: `ANYWAY_PLUGIN_SECRET_${string}`;
+  }>;
+}
+
 /**
  * 可安装包的最小声明式清单；可执行插件仍须经过更严格的权限模型。
  * Minimal declarative install manifest; executable plugins require a stricter permission model.
@@ -366,6 +397,16 @@ export interface MycPluginManifest {
   kind: MycPluginKind;
   metadata: MycPluginMetadata;
   spec: MycPluginSpec;
+  /** Canonical v2 trusted frontend entry. */
+  frontend?: PluginFrontendManifest;
+  /** Canonical v2 worker declarations. */
+  workers?: readonly PluginManifestWorker[];
+  /** Canonical v2 networking declaration. */
+  network?: PluginNetworkDeclaration;
+  /** Hydrated from engines.worker; authority still comes from the Rust installer/session. */
+  worker?: PluginWorkerDescriptor;
+  /** Generic Host selection metadata; no feature-specific branching is implied. */
+  provides?: { services?: string[]; entries?: string[] };
   /** 包内载荷文件的 sha256(构建期注入;签名经此覆盖全部载荷)/ Build-injected payload sha256 map; signatures cover payloads through it. */
   payloads?: Record<string, string>;
   /** 发布者签名(覆盖含 payloads 的清单 JSON)/ Publisher signature over the manifest JSON including payloads. */
@@ -410,6 +451,10 @@ export interface AgentPluginDescriptor {
   capabilities?: string[];
   securityBoundary?: Record<string, boolean | string>;
   modelConfiguration?: AgentModelConfiguration;
+  worker?: Omit<PluginWorkerDescriptor, "hostMediated"> & {
+    principalBinding?: "host-session";
+    credentials?: "host-only";
+  };
   pipeline?: Record<string, unknown>;
 }
 
@@ -425,6 +470,8 @@ export interface InstalledMycPlugin {
   workspace?: WorkspacePluginDescriptor;
   provider?: ProviderDescriptor;
   agent?: AgentPluginDescriptor;
+  /** Rust installer output: artifact parsed and validated; never a source ref. */
+  uiIrContributions?: readonly UiIrHydratedContribution[];
 }
 
 export interface MycPluginRuntime {

@@ -10,7 +10,8 @@ use serde::Deserialize;
 use crate::plugins::{
     MycPluginContributions, MycPluginManifest, MycPluginMetadata, MycPluginSpec,
     PluginCommandContribution, PluginConnectionDefinition, PluginContextMenuContribution,
-    PluginLocaleContribution, PluginSettingDefinition,
+    PluginFrontendDescriptor, PluginLocaleContribution, PluginNetworkDescriptor,
+    PluginSettingDefinition, PluginUiContribution, PluginWorkerDescriptor,
 };
 
 /// The flat manifest accepted by the kernel (VSCode + Cordis style).
@@ -42,10 +43,12 @@ pub struct ManifestV2 {
     #[serde(default)]
     pub official: bool,
     #[serde(default)]
-    pub engines: Option<serde_json::Value>,
+    pub engines: Option<EnginesV2>,
     /// Entry payload (former `spec.entry`).
     #[serde(default)]
     pub main: Option<String>,
+    #[serde(default)]
+    pub frontend: Option<PluginFrontendDescriptor>,
     /// Guest language for `AnalysisPlugin` payloads (former `spec.language`;
     /// informational — the VM validates the wasm bytes, not the source language).
     #[serde(default)]
@@ -61,6 +64,10 @@ pub struct ManifestV2 {
     #[serde(default)]
     pub lifecycle: Option<CordisLifecycle>,
     #[serde(default)]
+    pub workers: Option<Vec<PluginWorkerDescriptor>>,
+    #[serde(default)]
+    pub network: Option<PluginNetworkDescriptor>,
+    #[serde(default)]
     pub capabilities: Vec<String>,
     #[serde(default)]
     pub permissions: Vec<String>,
@@ -68,6 +75,15 @@ pub struct ManifestV2 {
     pub payloads: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub signature: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnginesV2 {
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default)]
+    pub worker: Option<PluginWorkerDescriptor>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -85,6 +101,8 @@ pub struct ContributesV2 {
     pub views: Option<serde_json::Value>,
     #[serde(default)]
     pub ui_ir: Option<serde_json::Value>,
+    #[serde(default)]
+    pub ui: Option<Vec<PluginUiContribution>>,
     #[serde(default)]
     pub locales: Option<Vec<PluginLocaleContribution>>,
 }
@@ -149,9 +167,23 @@ fn infer_kind(categories: &[String], main: Option<&str>) -> String {
     }
 }
 
+fn infer_engine(kind: &str, engines: Option<&EnginesV2>) -> String {
+    let engine = engines.and_then(|engines| engines.engine.clone());
+    match (kind, engine.as_deref()) {
+        ("AgentPlugin", Some("trusted-plugin")) => "host-mediated".to_string(),
+        (_, Some(engine)) => engine.to_string(),
+        _ => "declarative".to_string(),
+    }
+}
+
 impl From<ManifestV2> for MycPluginManifest {
     fn from(value: ManifestV2) -> Self {
         let kind = infer_kind(&value.categories, value.main.as_deref());
+        let engine = infer_engine(&kind, value.engines.as_ref());
+        let legacy_worker = value
+            .engines
+            .as_ref()
+            .and_then(|engines| engines.worker.clone());
         let (contributes, settings, connections) = match value.contributes {
             Some(c) => {
                 let (settings, connections) = c
@@ -163,6 +195,7 @@ impl From<ManifestV2> for MycPluginManifest {
                         context_menus: c.menus,
                         locales: c.locales,
                         commands: c.commands,
+                        ui: c.ui,
                         ui_ir: c.ui_ir,
                     }),
                     settings,
@@ -189,15 +222,7 @@ impl From<ManifestV2> for MycPluginManifest {
                 update: None,
             },
             spec: MycPluginSpec {
-                engine: value
-                    .engines
-                    .and_then(|engines| {
-                        engines
-                            .get("engine")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_string)
-                    })
-                    .unwrap_or_else(|| "declarative".to_string()),
+                engine,
                 entry: value.main.unwrap_or_default(),
                 language: value.language,
                 capabilities: value.capabilities,
@@ -206,6 +231,11 @@ impl From<ManifestV2> for MycPluginManifest {
                 settings,
                 connections,
             },
+            frontend: value.frontend,
+            worker: legacy_worker,
+            workers: value.workers,
+            network: value.network,
+            provides: None,
             payloads: value.payloads,
             signature: value.signature,
         }
@@ -215,14 +245,12 @@ impl From<ManifestV2> for MycPluginManifest {
 /// Parse a plugin manifest, accepting either the legacy nested v1 format or the
 /// flat v2 format, and return the internal representation.
 pub fn parse_plugin_manifest(text: &str) -> Result<MycPluginManifest, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
     // v1 nested manifests carry a `metadata` object; v2 flat manifests carry `name`.
     if value.get("metadata").is_some() {
         serde_json::from_value::<MycPluginManifest>(value).map_err(|error| error.to_string())
     } else {
-        let v2: ManifestV2 =
-            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        let v2: ManifestV2 = serde_json::from_value(value).map_err(|error| error.to_string())?;
         Ok(MycPluginManifest::from(v2))
     }
 }
@@ -242,6 +270,10 @@ mod tests {
             "description": "Scans folders",
             "categories": ["WorkspacePlugin"],
             "main": "workspace-plugin.json",
+            "network": {
+                "mode": "direct",
+                "declaredDomains": ["api.moonshot.cn", "api.moonshot.ai"]
+            },
             "capabilities": ["project.folder"],
             "contributes": {
                 "commands": [{
@@ -261,6 +293,13 @@ mod tests {
         assert_eq!(manifest.metadata.name, "Folder Workspaces");
         assert_eq!(manifest.spec.entry, "workspace-plugin.json");
         assert_eq!(manifest.spec.capabilities, vec!["project.folder"]);
+        assert_eq!(
+            manifest
+                .network
+                .as_ref()
+                .map(|network| network.declared_domains.as_slice()),
+            Some(["api.moonshot.cn".to_string(), "api.moonshot.ai".to_string()].as_slice())
+        );
         assert_eq!(
             manifest
                 .spec
@@ -306,6 +345,40 @@ mod tests {
         let manifest = parse_plugin_manifest(&text).expect("parses v2");
         assert!(manifest.metadata.official);
         assert_eq!(manifest.metadata.publisher, "ResearchCanvas");
+    }
+
+    #[test]
+    fn v2_trusted_agent_engine_maps_to_internal_host_mediated_contract() {
+        let text = json!({
+            "name": "myc.pdf-canvas-agent",
+            "version": "0.5.0",
+            "publisher": "ResearchCanvas",
+            "official": true,
+            "categories": ["AgentPlugin"],
+            "main": "agent-manifest.json",
+            "engines": {"engine": "trusted-plugin"},
+            "frontend": {
+                "mode": "trusted-module",
+                "entry": "dist/frontend.mjs",
+                "framework": "vue3",
+                "apiVersion": "1"
+            },
+            "network": {
+                "mode": "direct",
+                "declaredDomains": ["api.moonshot.cn"]
+            }
+        })
+        .to_string();
+
+        let manifest = parse_plugin_manifest(&text).expect("parses v2");
+        assert_eq!(manifest.spec.engine, "host-mediated");
+        assert_eq!(
+            manifest
+                .network
+                .expect("network descriptor")
+                .declared_domains,
+            vec!["api.moonshot.cn"]
+        );
     }
 
     #[test]

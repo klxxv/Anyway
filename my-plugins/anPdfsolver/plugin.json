@@ -1,0 +1,213 @@
+{
+  "name": "myc.pdf-canvas-agent",
+  "version": "0.5.0",
+  "publisher": "ResearchCanvas",
+  "developer": "Agent Platform Team",
+  "developerId": "8bca4aed-e0ab-43c5-89ee-e2bcaf7f0e31",
+  "official": true,
+  "displayName": "anPdfsolver",
+  "description": "Trusted Vue plugin frontend plus Rust-supervised Python worker for PDF analysis. The plugin owns PDF/Kimi/SSE UI and direct provider networking; Rust owns worker lifecycle, Blob authorization, and canonical GraphPatch review/commit.",
+  "license": "MIT",
+  "categories": ["AgentPlugin"],
+  "main": "agent-manifest.json",
+  "frontend": {
+    "mode": "trusted-module",
+    "entry": "dist/frontend.mjs",
+    "framework": "vue3",
+    "apiVersion": "1"
+  },
+  "contributes": {
+    "ui": [
+      {
+        "id": "anpdfsolver.toolbar",
+        "slotId": "workspace.toolbar.actions",
+        "export": "AnPdfsolverToolbarButton",
+        "order": 40,
+        "when": "workspace.active"
+      },
+      {
+        "id": "anpdfsolver.dialog",
+        "slotId": "workspace.dialogs",
+        "export": "AnPdfsolverDialog",
+        "order": 40,
+        "when": "workspace.active"
+      }
+    ],
+    "configuration": {
+      "settings": [
+        {
+          "id": "api-key",
+          "label": "API key",
+          "labelKey": "settings.apiKey.label",
+          "description": "Provider token for this trusted plugin. Rust injects it only into this plugin worker when the worker is started.",
+          "descriptionKey": "settings.apiKey.description",
+          "type": "text",
+          "secret": true,
+          "required": false,
+          "placeholder": "Paste your API key",
+          "placeholderKey": "settings.apiKey.placeholder",
+          "group": "model"
+        },
+        {
+          "id": "api-url",
+          "label": "API URL",
+          "labelKey": "settings.apiUrl.label",
+          "description": "Moonshot base URL used by the plugin-owned provider client.",
+          "descriptionKey": "settings.apiUrl.description",
+          "type": "text",
+          "required": true,
+          "default": "https://api.moonshot.cn/v1",
+          "placeholder": "https://api.moonshot.cn/v1",
+          "placeholderKey": "settings.apiUrl.placeholder",
+          "group": "connection"
+        },
+        {
+          "id": "api-format",
+          "label": "Parser backend",
+          "labelKey": "settings.apiFormat.label",
+          "description": "Select the request protocol and SSE parser.",
+          "descriptionKey": "settings.apiFormat.description",
+          "type": "select",
+          "required": true,
+          "default": "openai",
+          "group": "connection",
+          "options": [
+            { "value": "openai", "label": "OpenAI-compatible", "labelKey": "settings.apiFormat.options.openai" },
+            { "value": "anthropic", "label": "Anthropic-compatible", "labelKey": "settings.apiFormat.options.anthropic" }
+          ]
+        },
+        {
+          "id": "pdf-transport",
+          "label": "PDF extraction",
+          "labelKey": "settings.pdfTransport.label",
+          "description": "Local extraction keeps the PDF on this device. Kimi Files uploads it to Moonshot.",
+          "descriptionKey": "settings.pdfTransport.description",
+          "type": "select",
+          "required": true,
+          "default": "local-text",
+          "group": "connection",
+          "options": [
+            { "value": "local-text", "label": "Extract text on this device", "labelKey": "settings.pdfTransport.options.localText" },
+            { "value": "kimi-file-extract", "label": "Use Kimi Files", "labelKey": "settings.pdfTransport.options.kimiFiles" }
+          ]
+        },
+        {
+          "id": "model",
+          "label": "Model",
+          "labelKey": "settings.model.label",
+          "description": "Model used by the plugin-owned provider client.",
+          "descriptionKey": "settings.model.description",
+          "type": "text",
+          "required": true,
+          "default": "kimi-k2.6",
+          "placeholder": "kimi-k2.6",
+          "placeholderKey": "settings.model.placeholder",
+          "group": "model"
+        },
+        {
+          "id": "thinking",
+          "label": "Thinking mode",
+          "labelKey": "settings.thinking.label",
+          "description": "Kimi thinking mode passed through by the plugin.",
+          "descriptionKey": "settings.thinking.description",
+          "type": "select",
+          "required": true,
+          "default": "enabled",
+          "group": "model",
+          "options": [
+            { "value": "enabled", "label": "Enabled", "labelKey": "settings.thinking.options.enabled" },
+            { "value": "disabled", "label": "Disabled", "labelKey": "settings.thinking.options.disabled" }
+          ]
+        },
+        {
+          "id": "public-progress",
+          "label": "Public analysis progress",
+          "labelKey": "settings.publicProgress.label",
+          "description": "Ask the model to emit short user-visible progress frames.",
+          "descriptionKey": "settings.publicProgress.description",
+          "type": "select",
+          "required": true,
+          "default": "disabled",
+          "group": "advanced",
+          "options": [
+            { "value": "disabled", "label": "Disabled", "labelKey": "settings.publicProgress.options.disabled" },
+            { "value": "enabled", "label": "Enabled", "labelKey": "settings.publicProgress.options.enabled" }
+          ]
+        }
+      ],
+      "connections": [
+        {
+          "id": "kimi",
+          "label": "Kimi provider",
+          "labelKey": "connections.kimi.label",
+          "description": "Direct provider network is owned by the trusted plugin frontend/worker.",
+          "descriptionKey": "connections.kimi.description",
+          "urlSettingId": "api-url",
+          "formatSettingId": "api-format",
+          "modelSettingId": "model",
+          "apiKey": {
+            "source": "host-secret",
+            "settingId": "api-key",
+            "secretEnv": "ANYWAY_PLUGIN_SECRET_PROVIDER_API_KEY"
+          }
+        }
+      ]
+    }
+  },
+  "workers": [
+    {
+      "id": "python-analyzer",
+      "language": "python",
+      "entrypoint": "src/anpdfsolver/worker.py",
+      "transport": "stdio-framed-json-v1",
+      "operations": ["ping", "health", "anpdfsolver.analyze"],
+      "hostOperations": ["blob.read"],
+      "providerEgress": [
+        {
+          "providerId": "kimi",
+          "connectionId": "kimi",
+          "domains": ["api.moonshot.cn", "api.moonshot.ai"],
+          "purpose": "PDF upload and typed NDJSON response streaming",
+          "secretEnv": "ANYWAY_PLUGIN_SECRET_PROVIDER_API_KEY"
+        }
+      ]
+    }
+  ],
+  "network": {
+    "mode": "direct",
+    "declaredDomains": ["api.moonshot.cn", "api.moonshot.ai"]
+  },
+  "capabilities": [
+    "plugin.files.pick",
+    "plugin.worker.open",
+    "plugin.worker.call",
+    "plugin.worker.cancel",
+    "plugin.worker.close",
+    "graph.patch.propose",
+    "graph.patch.get",
+    "graph.patch.review"
+  ],
+  "engines": {
+    "engine": "trusted-plugin",
+    "worker": {
+      "language": "python",
+      "entrypoint": "src/anpdfsolver/worker.py",
+      "transport": "stdio-framed-json-v1",
+      "hostMediated": true,
+      "operations": ["ping", "health", "anpdfsolver.analyze"],
+      "hostOperations": ["blob.read"]
+    }
+  },
+  "compatibility": {
+    "legacyManifestFields": ["engines.worker"],
+    "removedFields": ["contributes.uiIr", "provides", "inject", "lifecycle", "pdf.job.*", "surface.*"],
+    "notes": "Legacy worker metadata remains as a read-only compatibility alias. Runtime must prefer frontend, contributes.ui, workers, network and capabilities."
+  },
+  "privateI18n": {
+    "defaultLocale": "en",
+    "locales": {
+      "en": "locales/en.json",
+      "zh-CN": "locales/zh-CN.json"
+    }
+  }
+}

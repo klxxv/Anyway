@@ -29,8 +29,11 @@ spec:
         path: locales/ja-JP.json
 ```
 
-The reference package is `plugins/sources/myc.i18n-ja`. A partial
-community catalog is valid: unresolved keys deliberately fall back to English.
+The optional Japanese package is kept outside the development source tree as
+`my-third-plugins/myc.i18n-ja@1.0.1.myc`. That directory is ignored and is never
+loaded by desktop development unless the user explicitly installs the package.
+A partial community catalog is valid: unresolved keys deliberately fall back
+to English.
 
 Project content and plugin-authored metadata are never translated implicitly.
 Application chrome, commands, settings, store controls, node-kind labels, link

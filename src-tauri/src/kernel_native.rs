@@ -45,18 +45,22 @@ fn dispatch_kernel_plane(
         "audit.read" => crate::host_bus::audit::dispatch_audit_read(request, kernel.audit()),
         "blob.list" => crate::host_bus::blob::dispatch_blob_list(kernel.blobs()),
         "blob.release" => crate::host_bus::blob::dispatch_blob_release(request, kernel.blobs()),
-        "lease.renew" => crate::host_bus::lease::dispatch_lease_renew(
-            request,
-            policy.policy(),
-            policy.now_ms(),
-        ),
+        "lease.renew" => {
+            crate::host_bus::lease::dispatch_lease_renew(request, policy.policy(), policy.now_ms())
+        }
         "event.subscribe" => {
             crate::host_bus::events::dispatch_event_subscribe(request, kernel.events())
         }
-        "event.publish" => crate::host_bus::events::dispatch_event_publish(request, kernel.events()),
+        "event.publish" => {
+            crate::host_bus::events::dispatch_event_publish(request, kernel.events())
+        }
         "event.poll" => crate::host_bus::events::dispatch_event_poll(request, kernel.events()),
-        "worker.spawn" => crate::host_bus::workers::dispatch_worker_spawn(request, kernel.supervisor()),
-        "worker.stop" => crate::host_bus::workers::dispatch_worker_stop(request, kernel.supervisor()),
+        "worker.spawn" => {
+            crate::host_bus::workers::dispatch_worker_spawn(request, kernel.supervisor())
+        }
+        "worker.stop" => {
+            crate::host_bus::workers::dispatch_worker_stop(request, kernel.supervisor())
+        }
         "graph.storage.put" => {
             crate::host_bus::storage::dispatch_graph_storage_put(request, kernel.graph_storage())
         }
@@ -112,8 +116,7 @@ pub fn kernel_bus_call(
             ))
         }
     };
-    let lease = match authorize_for_bus(policy, &request, &principal, &selected_lease_ids, now_ms)
-    {
+    let lease = match authorize_for_bus(policy, &request, &principal, &selected_lease_ids, now_ms) {
         Ok(lease) => lease,
         Err(error) => {
             record_audit(
@@ -301,8 +304,7 @@ mod tests {
         let response = kernel_bus_call(&kernel, &policy, request).expect("envelope stays Ok");
         let value = serde_json::to_value(&response).expect("serializable response");
         assert_eq!(
-            value["error"]["code"],
-            "HOST_HANDLER_FAILED",
+            value["error"]["code"], "HOST_HANDLER_FAILED",
             "invalid payloads must surface a structured handler failure: {value}"
         );
     }

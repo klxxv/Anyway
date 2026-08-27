@@ -1,0 +1,31 @@
+version: 2
+defaultLocale: en
+schema: typed-ndjson-v1
+mode: incremental-frames
+primaryPrompt: typed-ndjson-v1.yaml
+description:
+  en: Small typed NDJSON frames for deterministic plugin-side GraphPatch assembly.
+frameTypes:
+  - progress
+  - evidence
+  - entity
+  - relation
+  - operator
+  - warning
+  - error
+  - end
+limits:
+  maxFrameBytes: 8192
+  maxFrames: 512
+forbiddenOutput:
+  - aggregate-document-json
+  - hidden-reasoning
+  - credentials
+  - headers
+  - local-paths
+legacyPrompts:
+  status: retained-for-reference
+  files:
+    - pass-a-structure.yaml
+    - pass-b-v4.yaml
+    - pass-e-v4.yaml

@@ -31,7 +31,13 @@ const MAX_ARCHIVE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 128;
 const MAX_ICON_THEME_ASSET_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_UI_IR_SOURCE_BYTES: u64 = 512 * 1024;
+const MAX_UI_IR_ARTIFACT_BYTES: u64 = 256 * 1024;
 const REMOVED_PLUGINS_FILE: &str = "removed-plugins.json";
+const PLUGIN_LOADING_CONFIG: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../config/plugin-loading.json"
+));
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -231,10 +237,27 @@ pub struct PluginCommandContribution {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginUiContribution {
+    pub id: String,
+    pub slot_id: String,
+    #[serde(rename = "export")]
+    pub export_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MycPluginContributions {
     pub context_menus: Option<Vec<PluginContextMenuContribution>>,
     pub locales: Option<Vec<PluginLocaleContribution>>,
     pub commands: Option<Vec<PluginCommandContribution>>,
+    /// Trusted dynamic frontend placements. These are physical Host slots,
+    /// not nested plugin UI controls such as file pickers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<Vec<PluginUiContribution>>,
     /// 声明式 Vue UI IR 贡献(v2 平面清单的 contributes.uiIr 透传)。
     /// Declarative Vue UI IR contributions (v2 `contributes.uiIr` passthrough).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -256,6 +279,153 @@ pub struct MycPluginSpec {
     pub connections: Option<Vec<PluginConnectionDefinition>>,
 }
 
+fn default_frontend_api_version() -> String {
+    "1".to_string()
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginFrontendDescriptor {
+    pub mode: String,
+    pub entry: String,
+    pub framework: String,
+    #[serde(default = "default_frontend_api_version")]
+    pub api_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginNetworkDescriptor {
+    pub mode: String,
+    #[serde(default)]
+    pub declared_domains: Vec<String>,
+}
+
+fn default_worker_id() -> String {
+    "default".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Host-mediated external worker descriptor. This is an execution contract,
+/// not a permission grant: the installed manifest remains the source of the
+/// executable path and operation allowlist.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginWorkerDescriptor {
+    #[serde(default = "default_worker_id")]
+    pub id: String,
+    pub language: String,
+    pub entrypoint: String,
+    pub transport: String,
+    #[serde(default = "default_true")]
+    pub host_mediated: bool,
+    #[serde(default)]
+    pub operations: Vec<String>,
+    #[serde(default)]
+    pub host_operations: Vec<String>,
+    /// Direct provider network declarations. These are validated policy
+    /// metadata and credential-routing inputs; OS egress enforcement is not
+    /// implemented by the process launcher yet.
+    #[serde(default)]
+    pub provider_egress: Vec<PluginProviderEgress>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginProviderEgress {
+    pub provider_id: String,
+    pub connection_id: String,
+    pub domains: Vec<String>,
+    pub purpose: String,
+    pub secret_env: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentManifestDescriptorV1 {
+    schema_version: u64,
+    mode: String,
+    #[serde(default)]
+    agent_type: Option<String>,
+    review_gated: bool,
+    #[serde(default)]
+    maintainer: Option<String>,
+    #[serde(default)]
+    extraction_schema: Option<String>,
+    #[serde(default)]
+    compiled_schema: Option<String>,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    #[serde(default)]
+    security_boundary: Option<serde_json::Value>,
+    #[serde(default)]
+    model_configuration: Option<serde_json::Value>,
+    #[serde(default)]
+    pipeline: Option<serde_json::Value>,
+    #[serde(default)]
+    worker: Option<PluginWorkerDescriptor>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentManifestDescriptorV2 {
+    schema_version: u64,
+    mode: String,
+    plugin_id: String,
+    plugin_version: String,
+    #[serde(default)]
+    agent_type: Option<String>,
+    review_gated: bool,
+    frontend: AgentFrontendContract,
+    worker: AgentWorkerContract,
+    #[serde(default)]
+    frontend_context_required: Option<serde_json::Value>,
+    #[serde(default)]
+    model_configuration: Option<serde_json::Value>,
+    #[serde(default)]
+    pipeline: Option<serde_json::Value>,
+    #[serde(default)]
+    security_boundary: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentFrontendContract {
+    mode: String,
+    entry: String,
+    framework: String,
+    #[serde(default = "default_frontend_api_version")]
+    api_version: String,
+    exports: Vec<String>,
+    ui_contributions: Vec<AgentUiContributionContract>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentUiContributionContract {
+    id: String,
+    slot_id: String,
+    #[serde(rename = "export")]
+    export_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentWorkerContract {
+    id: String,
+    language: String,
+    entrypoint: String,
+    transport: String,
+    opened_by: String,
+    operations: Vec<String>,
+    host_operations: Vec<String>,
+    forbidden_host_operations: Vec<String>,
+    credentials: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginPrivateI18nDefinition {
@@ -270,6 +440,16 @@ pub struct MycPluginManifest {
     pub kind: String,
     pub metadata: MycPluginMetadata,
     pub spec: MycPluginSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontend: Option<PluginFrontendDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<PluginWorkerDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<Vec<PluginWorkerDescriptor>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<PluginNetworkDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provides: Option<PluginProvides>,
     /// 包内每个载荷文件(plugin.json 除外)的 sha256:相对路径 → 64 位小写十六进制。
     /// 签名覆盖清单 JSON,清单携带 payloads 后签名即覆盖全部载荷。
     /// sha256 of every payload file in the package (except plugin.json itself):
@@ -282,6 +462,15 @@ pub struct MycPluginManifest {
     /// Ed25519 signature (base64) over SHA-256 of the JSON-serialized manifest without this field.
     #[serde(default)]
     pub signature: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginProvides {
+    #[serde(default)]
+    pub services: Vec<String>,
+    #[serde(default)]
+    pub entries: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -327,11 +516,13 @@ pub struct InstalledMycPlugin {
     pub(crate) icon_theme: Option<IconThemeManifest>,
     pub(crate) edge_style: Option<serde_json::Value>,
     pub(crate) runtime: Option<MycPluginRuntime>,
+    pub(crate) frontend: Option<InstalledPluginFrontend>,
     pub(crate) locales: Option<Vec<InstalledPluginLocale>>,
     pub(crate) private_i18n: Option<InstalledPluginPrivateI18n>,
     pub(crate) workspace: Option<serde_json::Value>,
     pub provider: Option<ProviderDescriptor>,
     pub(crate) agent: Option<serde_json::Value>,
+    pub(crate) ui_ir_contributions: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -358,6 +549,17 @@ pub struct MycPluginRuntime {
     entry_sha256: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledPluginFrontend {
+    mode: String,
+    framework: String,
+    api_version: String,
+    entry: String,
+    installed_entry_path: String,
+    entry_sha256: String,
+}
+
 pub(crate) fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     {
@@ -365,7 +567,7 @@ pub(crate) fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
         let repository = manifest_directory
             .parent()
             .ok_or_else(|| "Could not resolve repository root".to_string())?;
-        return Ok(repository.join("plugins"));
+        return Ok(repository.join(".plugin-runtime/dev"));
     }
 
     #[cfg(not(debug_assertions))]
@@ -375,6 +577,86 @@ pub(crate) fn plugin_base(_app: &AppHandle) -> Result<PathBuf, String> {
             .map(|path| path.join("plugins"))
             .map_err(|error| error.to_string())
     }
+}
+
+pub(crate) fn resolve_plugin_frontend_source(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+    requested_entry: &str,
+    requested_framework: &str,
+    requested_api_version: &str,
+) -> Result<serde_json::Value, String> {
+    let (_directory, installed) =
+        read_installed_plugin_by_identity(app, plugin_id, plugin_version)?;
+    let frontend = installed
+        .frontend
+        .as_ref()
+        .ok_or_else(|| format!("Plugin {plugin_id}@{plugin_version} has no trusted frontend"))?;
+    if frontend.mode != "trusted-module"
+        || frontend.entry != requested_entry
+        || frontend.framework != requested_framework
+        || frontend.api_version != requested_api_version
+    {
+        return Err(
+            "Requested frontend descriptor does not match the installed manifest".to_string(),
+        );
+    }
+    let bytes = fs::read(&frontend.installed_entry_path)
+        .map_err(|error| format!("Could not read installed frontend entry: {error}"))?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err("Installed frontend module exceeds the 8 MB source limit".to_string());
+    }
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    if digest != frontend.entry_sha256 {
+        return Err(
+            "Installed frontend module digest no longer matches installation metadata".to_string(),
+        );
+    }
+    let source = String::from_utf8(bytes)
+        .map_err(|_| "Installed frontend module must be UTF-8 JavaScript".to_string())?;
+    Ok(serde_json::json!({
+        "kind": "source",
+        "source": source,
+        "contentType": "text/javascript",
+        "revision": frontend.entry_sha256,
+    }))
+}
+
+pub(crate) fn trusted_plugin_frontend_settings(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+) -> Result<serde_json::Value, String> {
+    let (_directory, installed) =
+        read_installed_plugin_by_identity(app, plugin_id, plugin_version)?;
+    if installed
+        .frontend
+        .as_ref()
+        .is_none_or(|frontend| frontend.mode != "trusted-module")
+    {
+        return Err(
+            "Only an installed trusted-module frontend may read plugin-owned settings".to_string(),
+        );
+    }
+    let snapshot =
+        crate::plugin_settings::get_snapshot(app, &installed.manifest, plugin_id, plugin_version)?;
+    let mut values = snapshot.effective_values.clone();
+    for definition in &snapshot.definitions {
+        if !definition.secret {
+            continue;
+        }
+        if let Some(secret) =
+            crate::plugin_settings::resolve_host_secret(plugin_id, plugin_version, &definition.id)?
+        {
+            values.insert(definition.id.clone(), serde_json::Value::String(secret));
+        }
+    }
+    Ok(serde_json::json!({
+        "pluginId": plugin_id,
+        "pluginVersion": plugin_version,
+        "values": values,
+    }))
 }
 
 fn plugin_version_key(plugin_id: &str, plugin_version: &str) -> String {
@@ -502,6 +784,142 @@ fn validate_plugin_update(update: Option<&PluginUpdateInfo>) -> Result<(), Strin
     Ok(())
 }
 
+fn validate_relative_plugin_path(value: &str, label: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    let unsafe_segment = value
+        .split('/')
+        .any(|segment| segment.is_empty() || matches!(segment, "." | ".."));
+    if value.is_empty()
+        || value.len() > 240
+        || path.is_absolute()
+        || value.contains('\\')
+        || unsafe_segment
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("{label} must be a relative path without traversal"));
+    }
+    Ok(())
+}
+
+fn validate_wire_identifier(value: &str, label: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 160
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b'_' | b'-' | b':')
+        })
+    {
+        return Err(format!("Invalid {label}: {value}"));
+    }
+    Ok(())
+}
+
+fn validate_export_name(value: &str) -> Result<(), String> {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err("UI contribution export must not be empty".to_string());
+    };
+    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        return Err(format!("Invalid UI contribution export: {value}"));
+    }
+    if value.len() > 96
+        || chars.any(|character| {
+            !(character == '_' || character == '$' || character.is_ascii_alphanumeric())
+        })
+    {
+        return Err(format!("Invalid UI contribution export: {value}"));
+    }
+    Ok(())
+}
+
+fn validate_frontend_descriptor(frontend: &PluginFrontendDescriptor) -> Result<(), String> {
+    if frontend.mode != "trusted-module" {
+        return Err("Plugin frontend mode must be trusted-module".to_string());
+    }
+    if frontend.framework != "vue3" {
+        return Err("Plugin frontend framework must be vue3".to_string());
+    }
+    if frontend.api_version != "1" {
+        return Err("Plugin frontend apiVersion must be 1".to_string());
+    }
+    validate_relative_plugin_path(&frontend.entry, "Plugin frontend entry")?;
+    if !frontend.entry.ends_with(".mjs") {
+        return Err("Plugin trusted-module frontend entry must be an .mjs file".to_string());
+    }
+    Ok(())
+}
+
+fn validate_network_descriptor(network: &PluginNetworkDescriptor) -> Result<(), String> {
+    if network.mode != "direct" {
+        return Err("Plugin network mode must be direct".to_string());
+    }
+    if network.declared_domains.len() > 32 {
+        return Err("Plugin network may declare at most 32 domains".to_string());
+    }
+    let mut domains = HashSet::new();
+    for domain in &network.declared_domains {
+        validate_declared_domain(domain, "Plugin network declared domain")?;
+        if !domains.insert(domain) {
+            return Err("Plugin network declared domains must be unique".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_declared_domain(domain: &str, label: &str) -> Result<(), String> {
+    if domain.is_empty()
+        || domain.len() > 253
+        || domain != domain.to_ascii_lowercase()
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+        || domain.contains(['/', '\\', ':'])
+        || domain.split('.').count() < 2
+        || !domain
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-'))
+        || domain.split('.').any(|part| {
+            part.is_empty() || part.len() > 63 || part.starts_with('-') || part.ends_with('-')
+        })
+    {
+        return Err(format!("{label} must be an exact lowercase DNS name"));
+    }
+    Ok(())
+}
+
+fn validate_ui_contributions(items: &[PluginUiContribution]) -> Result<(), String> {
+    if items.is_empty() || items.len() > 64 {
+        return Err("Plugin contributes.ui must contain 1 to 64 contributions".to_string());
+    }
+    let mut ids = HashSet::new();
+    for item in items {
+        validate_wire_identifier(&item.id, "UI contribution id")?;
+        validate_wire_identifier(&item.slot_id, "UI slot id")?;
+        validate_export_name(&item.export_name)?;
+        if !ids.insert(item.id.as_str()) {
+            return Err(format!("Duplicate UI contribution id: {}", item.id));
+        }
+        if item.when.as_ref().is_some_and(|when| {
+            when.is_empty() || when.len() > 240 || when.chars().any(char::is_control)
+        }) {
+            return Err(format!("Invalid UI contribution when clause: {}", item.id));
+        }
+    }
+    Ok(())
+}
+
+fn manifest_worker_descriptors(
+    manifest: &MycPluginManifest,
+) -> impl Iterator<Item = &PluginWorkerDescriptor> {
+    manifest
+        .worker
+        .iter()
+        .chain(manifest.workers.as_deref().unwrap_or_default().iter())
+}
+
 fn validate_locale_tag(locale: &str) -> Result<(), String> {
     if locale.is_empty()
         || locale.len() > 35
@@ -626,9 +1044,44 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
     }
     validate_plugin_update(manifest.metadata.update.as_ref())?;
     validate_plugin_settings(manifest)?;
+    if let Some(frontend) = manifest.frontend.as_ref() {
+        validate_frontend_descriptor(frontend)?;
+    }
+    if let Some(network) = manifest.network.as_ref() {
+        validate_network_descriptor(network)?;
+    }
+    if let Some(items) = manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.ui.as_ref())
+    {
+        validate_ui_contributions(items)?;
+    }
+    let mut worker_ids = HashSet::new();
+    for worker in manifest_worker_descriptors(manifest) {
+        validate_worker_descriptor(worker)?;
+        if !worker_ids.insert(worker.id.as_str()) {
+            return Err(format!("Duplicate worker id: {}", worker.id));
+        }
+    }
     if let Some(connections) = manifest.spec.connections.as_ref() {
         for connection in connections {
             validate_connection_test_actions(connection)?;
+        }
+    }
+    let connections = manifest.spec.connections.as_deref().unwrap_or_default();
+    for worker in manifest_worker_descriptors(manifest) {
+        for egress in &worker.provider_egress {
+            if !connections
+                .iter()
+                .any(|connection| connection.id == egress.connection_id)
+            {
+                return Err(format!(
+                    "Worker provider egress references an unknown connection: {}",
+                    egress.connection_id
+                ));
+            }
         }
     }
     if let Some(items) = manifest
@@ -895,6 +1348,24 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
                 );
             }
         }
+        "ExtensionPlugin" => {
+            if manifest.frontend.is_none() && manifest.workers.as_ref().is_none_or(Vec::is_empty) {
+                return Err(
+                    "ExtensionPlugin must declare a trusted frontend or at least one worker"
+                        .to_string(),
+                );
+            }
+            if manifest
+                .spec
+                .contributes
+                .as_ref()
+                .and_then(|contributions| contributions.ui.as_ref())
+                .is_some()
+                && manifest.frontend.is_none()
+            {
+                return Err("contributes.ui requires a trusted-module frontend".to_string());
+            }
+        }
         "AgentPlugin" => {
             if manifest.spec.engine != "host-mediated" {
                 return Err("AgentPlugin engine must be host-mediated".to_string());
@@ -905,23 +1376,32 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
             if manifest.spec.language.is_some() {
                 return Err("AgentPlugin must not declare a guest language".to_string());
             }
-            const AGENT_CAPABILITIES: [&str; 3] = [
+            const AGENT_CAPABILITIES: [&str; 5] = [
                 "agent.pdf.read",
                 "agent.graph.patch.propose",
                 "agent.review.request",
+                "agent.job.cancel",
+                "graph.patch.propose",
             ];
             // 官方 host-mediated agent 在清单中声明其 host-bus 数据契约;这些
             // 能力由宿主以 native principal 代持执行,绝不授予 agent 本体。
             // Official host-mediated agents declare their host-bus data
             // contract in the manifest; the host exercises these capabilities
             // as the native principal — they are never granted to the agent.
-            const HOST_BUS_CONTRACT_CAPABILITIES: [&str; 6] = [
+            const HOST_BUS_CONTRACT_CAPABILITIES: [&str; 13] = [
                 "graph.ir",
+                "graph.patch.get",
+                "graph.patch.review",
                 "graph.storage.read",
                 "graph.storage.write",
                 "host-bus.event",
                 "audit.read",
                 "blob.manage",
+                "plugin.files.pick",
+                "plugin.worker.open",
+                "plugin.worker.call",
+                "plugin.worker.cancel",
+                "plugin.worker.close",
             ];
             let has_agent_capability = manifest
                 .spec
@@ -934,14 +1414,14 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
             });
             if !has_agent_capability || !all_declared {
                 return Err(
-                    "AgentPlugin capabilities must include at least one of agent.pdf.read, agent.graph.patch.propose, agent.review.request, plus optional host-bus contract capabilities (graph.ir, graph.storage.read/write, host-bus.event, audit.read, blob.manage)"
+                    "AgentPlugin capabilities must include at least one agent capability (agent.pdf.read, agent.graph.patch.propose, graph.patch.propose, agent.review.request, or agent.job.cancel), plus optional host-bus contract capabilities"
                         .to_string(),
                 );
             }
         }
         _ => {
             return Err(
-                "Installer accepts ThemePlugin, IconThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, WorkspacePlugin, ProviderPlugin, and AgentPlugin packages"
+                "Installer accepts ThemePlugin, IconThemePlugin, EdgeStylePlugin, AnalysisPlugin, LocalePlugin, WorkspacePlugin, ProviderPlugin, AgentPlugin, and ExtensionPlugin packages"
                     .to_string(),
             );
         }
@@ -984,6 +1464,405 @@ fn validate_manifest(manifest: &MycPluginManifest) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn validate_worker_descriptor(worker: &PluginWorkerDescriptor) -> Result<(), String> {
+    validate_wire_identifier(&worker.id, "worker id")?;
+    validate_wire_identifier(&worker.language, "worker language")?;
+    if worker.transport != "stdio-framed-json-v1" {
+        return Err(format!(
+            "Unsupported worker transport: {}",
+            worker.transport
+        ));
+    }
+    if !worker.host_mediated {
+        return Err("External workers must be hostMediated".to_string());
+    }
+    validate_relative_plugin_path(&worker.entrypoint, "Worker entrypoint")?;
+    if worker.operations.is_empty() || worker.operations.len() > 128 {
+        return Err("Worker must declare 1 to 128 operations".to_string());
+    }
+    if worker.host_operations.len() > 64 {
+        return Err("Worker may declare at most 64 reverse Host Bus operations".to_string());
+    }
+    let mut unique = HashSet::new();
+    for operation in &worker.operations {
+        if !unique.insert(operation) {
+            return Err(format!(
+                "Invalid or duplicate worker operation: {operation}"
+            ));
+        }
+        validate_worker_operation_name(operation, "worker operation")?;
+    }
+    let mut host_operations = HashSet::new();
+    for operation in &worker.host_operations {
+        if !host_operations.insert(operation) {
+            return Err(format!(
+                "Invalid or duplicate worker Host Bus operation: {operation}"
+            ));
+        }
+        validate_worker_operation_name(operation, "worker Host Bus operation")?;
+    }
+    if worker.provider_egress.len() > 4 {
+        return Err("worker can declare at most four direct provider egress profiles".to_string());
+    }
+    let mut providers = HashSet::new();
+    for egress in &worker.provider_egress {
+        validate_slug(&egress.provider_id, "worker provider id")?;
+        validate_slug(&egress.connection_id, "worker provider connection id")?;
+        if !providers.insert(&egress.provider_id) {
+            return Err("worker provider egress ids must be unique".to_string());
+        }
+        if egress.domains.is_empty() || egress.domains.len() > 8 {
+            return Err("worker provider egress must declare one to eight domains".to_string());
+        }
+        for domain in &egress.domains {
+            validate_declared_domain(domain, "worker provider egress domain")?;
+        }
+        if egress.purpose.trim().is_empty() || egress.purpose.len() > 240 {
+            return Err("worker provider egress purpose must be bounded".to_string());
+        }
+        if egress.secret_env.len() > 96
+            || !egress.secret_env.starts_with("ANYWAY_PLUGIN_SECRET_")
+            || !egress.secret_env.chars().all(|character| {
+                character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+            })
+        {
+            return Err(
+                "worker provider secret env must use the ANYWAY_PLUGIN_SECRET_ prefix".to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_worker_operation_name(operation: &str, label: &str) -> Result<(), String> {
+    if operation.is_empty()
+        || operation.len() > 160
+        || !operation.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+    {
+        return Err(format!("Invalid {label}: {operation}"));
+    }
+    Ok(())
+}
+
+fn validate_worker_entrypoint(
+    directory: &Path,
+    worker: &PluginWorkerDescriptor,
+) -> Result<PathBuf, String> {
+    let root = fs::canonicalize(directory)
+        .map_err(|error| format!("Could not canonicalize plugin root: {error}"))?;
+    let entry = directory.join(&worker.entrypoint);
+    let canonical = fs::canonicalize(&entry).map_err(|error| {
+        format!(
+            "Could not resolve worker entrypoint {}: {error}",
+            worker.entrypoint
+        )
+    })?;
+    if !canonical.starts_with(&root) || !canonical.is_file() {
+        return Err("Worker entrypoint escapes the installed plugin root".to_string());
+    }
+    Ok(canonical)
+}
+
+fn validate_agent_manifest_descriptor(
+    descriptor: &serde_json::Value,
+    manifest: &mut MycPluginManifest,
+    directory: &Path,
+) -> Result<(), String> {
+    match descriptor
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+    {
+        Some(1) => validate_agent_manifest_descriptor_v1(descriptor, manifest, directory),
+        Some(2) => validate_agent_manifest_descriptor_v2(descriptor, manifest, directory),
+        _ => {
+            Err("Invalid agent-manifest.json descriptor: requires schemaVersion 1 or 2".to_string())
+        }
+    }
+}
+
+fn validate_agent_manifest_descriptor_v1(
+    descriptor: &serde_json::Value,
+    manifest: &mut MycPluginManifest,
+    directory: &Path,
+) -> Result<(), String> {
+    let descriptor: AgentManifestDescriptorV1 = serde_json::from_value(descriptor.clone())
+        .map_err(|error| format!("Invalid agent-manifest.json descriptor: {error}"))?;
+    if descriptor.schema_version != 1
+        || descriptor.mode != "agent"
+        || !descriptor.review_gated
+        || descriptor
+            .agent_type
+            .as_deref()
+            .is_some_and(|agent_type| agent_type.trim().is_empty() || agent_type.len() > 80)
+    {
+        return Err(
+            "Invalid agent-manifest.json descriptor: requires schemaVersion 1, mode \"agent\", and reviewGated true"
+                .to_string(),
+        );
+    }
+    for (label, value) in [
+        ("maintainer", descriptor.maintainer.as_deref()),
+        ("extractionSchema", descriptor.extraction_schema.as_deref()),
+        ("compiledSchema", descriptor.compiled_schema.as_deref()),
+    ] {
+        if value.is_some_and(|value| {
+            value.trim().is_empty() || value.len() > 160 || value.chars().any(char::is_control)
+        }) {
+            return Err(format!(
+                "Invalid agent-manifest.json v1 {label}: value must be bounded text"
+            ));
+        }
+    }
+    if descriptor.capabilities.len() > 128 {
+        return Err(
+            "Invalid agent-manifest.json v1 capabilities: at most 128 entries are allowed"
+                .to_string(),
+        );
+    }
+    let mut capabilities = HashSet::new();
+    for capability in &descriptor.capabilities {
+        if !capabilities.insert(capability.as_str())
+            || !manifest
+                .spec
+                .capabilities
+                .iter()
+                .any(|declared| declared == capability)
+        {
+            return Err(format!(
+                "Invalid agent-manifest.json v1 capability: {capability}"
+            ));
+        }
+    }
+    for (label, section) in [
+        ("securityBoundary", descriptor.security_boundary.as_ref()),
+        ("modelConfiguration", descriptor.model_configuration.as_ref()),
+        ("pipeline", descriptor.pipeline.as_ref()),
+    ] {
+        if section.is_some_and(|section| !section.is_object()) {
+            return Err(format!(
+                "Invalid agent-manifest.json v1 {label}: expected an object"
+            ));
+        }
+    }
+    if manifest.worker.is_none() {
+        manifest.worker = descriptor.worker;
+    }
+    if let Some(worker) = manifest.worker.as_ref() {
+        validate_worker_descriptor(worker)?;
+        validate_worker_entrypoint(directory, worker)?;
+    }
+    Ok(())
+}
+
+fn validate_agent_manifest_descriptor_v2(
+    descriptor: &serde_json::Value,
+    manifest: &MycPluginManifest,
+    directory: &Path,
+) -> Result<(), String> {
+    let descriptor: AgentManifestDescriptorV2 = serde_json::from_value(descriptor.clone())
+        .map_err(|error| format!("Invalid agent-manifest.json v2 descriptor: {error}"))?;
+    if descriptor.schema_version != 2
+        || descriptor.mode != "trusted-plugin"
+        || !descriptor.review_gated
+    {
+        return Err(
+            "Invalid agent-manifest.json v2 descriptor: requires schemaVersion 2, mode \"trusted-plugin\", and reviewGated true"
+                .to_string(),
+        );
+    }
+    if descriptor.plugin_id != manifest.metadata.id
+        || descriptor.plugin_version != manifest.metadata.version
+    {
+        return Err(
+            "agent-manifest.json v2 plugin identity must match the package manifest".to_string(),
+        );
+    }
+    if descriptor
+        .agent_type
+        .as_deref()
+        .is_some_and(|agent_type| agent_type.trim().is_empty() || agent_type.len() > 80)
+    {
+        return Err("agent-manifest.json v2 agentType must be bounded".to_string());
+    }
+    if descriptor.frontend_context_required.is_none()
+        || descriptor.model_configuration.is_none()
+        || descriptor.pipeline.is_none()
+        || descriptor.security_boundary.is_none()
+    {
+        return Err(
+            "agent-manifest.json v2 must declare frontend context, model, pipeline, and security boundary contracts"
+                .to_string(),
+        );
+    }
+    validate_agent_frontend_contract(&descriptor.frontend, manifest)?;
+    validate_agent_worker_contract(&descriptor.worker, manifest, directory)?;
+    Ok(())
+}
+
+fn validate_agent_frontend_contract(
+    frontend: &AgentFrontendContract,
+    manifest: &MycPluginManifest,
+) -> Result<(), String> {
+    if frontend.mode != "trusted-module" {
+        return Err("agent-manifest.json v2 frontend mode must be trusted-module".to_string());
+    }
+    if frontend.framework != "vue3" {
+        return Err("agent-manifest.json v2 frontend framework must be vue3".to_string());
+    }
+    validate_relative_plugin_path(&frontend.entry, "agent frontend entry")?;
+    if !frontend.entry.ends_with(".mjs") {
+        return Err("agent-manifest.json v2 frontend entry must be an .mjs file".to_string());
+    }
+    for export in &frontend.exports {
+        validate_export_name(export)?;
+    }
+    if frontend.exports.is_empty() || frontend.exports.len() > 64 {
+        return Err(
+            "agent-manifest.json v2 frontend exports must contain 1 to 64 names".to_string(),
+        );
+    }
+    let package_frontend = manifest.frontend.as_ref().ok_or_else(|| {
+        "agent-manifest.json v2 requires a package frontend descriptor".to_string()
+    })?;
+    if package_frontend.mode != frontend.mode
+        || package_frontend.entry != frontend.entry
+        || package_frontend.framework != frontend.framework
+        || package_frontend.api_version != frontend.api_version
+    {
+        return Err(
+            "agent-manifest.json v2 frontend contract must match the package manifest frontend"
+                .to_string(),
+        );
+    }
+    let package_ui = manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.ui.as_ref())
+        .ok_or_else(|| "agent-manifest.json v2 requires package contributes.ui".to_string())?;
+    if frontend.ui_contributions.len() != package_ui.len() {
+        return Err(
+            "agent-manifest.json v2 uiContributions must match package contributes.ui".to_string(),
+        );
+    }
+    for contribution in &frontend.ui_contributions {
+        validate_wire_identifier(&contribution.id, "agent UI contribution id")?;
+        validate_wire_identifier(&contribution.slot_id, "agent UI slot id")?;
+        validate_export_name(&contribution.export_name)?;
+        if !frontend
+            .exports
+            .iter()
+            .any(|export| export == &contribution.export_name)
+        {
+            return Err(
+                "agent-manifest.json v2 UI exports must be listed in frontend exports".to_string(),
+            );
+        }
+        let Some(package_contribution) = package_ui.iter().find(|item| item.id == contribution.id)
+        else {
+            return Err(
+                "agent-manifest.json v2 uiContributions must reference package contributes.ui ids"
+                    .to_string(),
+            );
+        };
+        if package_contribution.slot_id != contribution.slot_id
+            || package_contribution.export_name != contribution.export_name
+        {
+            return Err(
+                "agent-manifest.json v2 uiContributions must match package slot and export"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_agent_worker_contract(
+    worker: &AgentWorkerContract,
+    manifest: &MycPluginManifest,
+    directory: &Path,
+) -> Result<(), String> {
+    validate_wire_identifier(&worker.id, "agent worker id")?;
+    validate_wire_identifier(&worker.language, "agent worker language")?;
+    validate_relative_plugin_path(&worker.entrypoint, "agent worker entrypoint")?;
+    if worker.opened_by != "plugin.frontend" {
+        return Err("agent-manifest.json v2 worker must be openedBy plugin.frontend".to_string());
+    }
+    if worker.credentials != "host-secret-injected-to-exact-worker" {
+        return Err(
+            "agent-manifest.json v2 worker credentials contract is unsupported".to_string(),
+        );
+    }
+    if worker.forbidden_host_operations.is_empty() || worker.forbidden_host_operations.len() > 32 {
+        return Err(
+            "agent-manifest.json v2 worker must declare bounded forbiddenHostOperations"
+                .to_string(),
+        );
+    }
+    for operation in &worker.forbidden_host_operations {
+        validate_worker_operation_name(operation, "forbidden Host Bus operation")?;
+    }
+    let package_worker = manifest_worker_descriptors(manifest)
+        .find(|descriptor| descriptor.id == worker.id)
+        .ok_or_else(|| {
+            "agent-manifest.json v2 worker id must match a package worker".to_string()
+        })?;
+    if package_worker.language != worker.language
+        || package_worker.entrypoint != worker.entrypoint
+        || package_worker.transport != worker.transport
+        || package_worker.operations != worker.operations
+        || package_worker.host_operations != worker.host_operations
+    {
+        return Err(
+            "agent-manifest.json v2 worker contract must match the package worker descriptor"
+                .to_string(),
+        );
+    }
+    validate_worker_descriptor(package_worker)?;
+    validate_worker_entrypoint(directory, package_worker)?;
+    Ok(())
+}
+
+fn resolve_installed_relative_file(
+    directory: &Path,
+    relative_path: &str,
+    label: &str,
+) -> Result<PathBuf, String> {
+    validate_relative_plugin_path(relative_path, label)?;
+    let root = fs::canonicalize(directory)
+        .map_err(|error| format!("Could not canonicalize plugin root: {error}"))?;
+    let candidate = directory.join(relative_path);
+    let canonical = fs::canonicalize(&candidate)
+        .map_err(|error| format!("Could not resolve {label} {relative_path}: {error}"))?;
+    if !canonical.starts_with(&root) || !canonical.is_file() {
+        return Err(format!("{label} escapes the installed plugin root"));
+    }
+    Ok(canonical)
+}
+
+fn read_installed_frontend(
+    directory: &Path,
+    frontend: Option<&PluginFrontendDescriptor>,
+) -> Result<Option<InstalledPluginFrontend>, String> {
+    let Some(frontend) = frontend else {
+        return Ok(None);
+    };
+    let entry_path = resolve_installed_relative_file(directory, &frontend.entry, "frontend entry")?;
+    let bytes = fs::read(&entry_path)
+        .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+    let digest = Sha256::digest(&bytes);
+    Ok(Some(InstalledPluginFrontend {
+        mode: frontend.mode.clone(),
+        framework: frontend.framework.clone(),
+        api_version: frontend.api_version.clone(),
+        entry: frontend.entry.clone(),
+        installed_entry_path: entry_path.to_string_lossy().into_owned(),
+        entry_sha256: format!("{digest:x}"),
+    }))
 }
 
 fn read_locale_bundles(
@@ -1075,6 +1954,117 @@ fn parse_private_i18n_manifest(
         .map_err(|error| format!("Invalid privateI18n declaration: {error}"))
 }
 
+fn validate_ui_ir_reference_path(value: &str, suffix: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    if path.is_absolute()
+        || path.components().count() != 2
+        || path.parent() != Some(Path::new("ui"))
+        || !value.ends_with(suffix)
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_none_or(|name| name.is_empty())
+    {
+        return Err(format!("UI IR files must use ui/<name>{suffix}"));
+    }
+    Ok(())
+}
+
+fn read_ui_ir_contributions(
+    directory: &Path,
+    manifest: &MycPluginManifest,
+) -> Result<Option<Vec<serde_json::Value>>, String> {
+    let Some(raw) = manifest
+        .spec
+        .contributes
+        .as_ref()
+        .and_then(|contributions| contributions.ui_ir.as_ref())
+    else {
+        return Ok(None);
+    };
+    // Older tracked packages may still carry the removed inline shape. Keep
+    // installation compatibility, but never hydrate or expose that data.
+    let Some(references) = raw.as_array() else {
+        return Ok(None);
+    };
+    if references.iter().any(|reference| {
+        reference
+            .as_object()
+            .is_some_and(|object| object.contains_key("ir"))
+    }) {
+        // Legacy inline IR is deliberately ignored rather than exposed.
+        return Ok(None);
+    }
+    if references.len() > 16 {
+        return Err("A plugin can contribute at most 16 UI IR surfaces".to_string());
+    }
+    let mut hydrated = Vec::with_capacity(references.len());
+    for reference in references {
+        let object = reference
+            .as_object()
+            .ok_or_else(|| "UI IR contribution must be an object".to_string())?;
+        let allowed = ["slotId", "source", "artifact"];
+        if object.keys().any(|key| !allowed.contains(&key.as_str()))
+            || object.len() != allowed.len()
+        {
+            return Err(
+                "UI IR contribution must contain only slotId, source, and artifact".to_string(),
+            );
+        }
+        let slot_id = object
+            .get("slotId")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "UI IR slotId must be a string".to_string())?;
+        validate_slug(slot_id, "UI IR slot id")?;
+        let source = object
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "UI IR source must be a string".to_string())?;
+        let artifact = object
+            .get("artifact")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "UI IR artifact must be a string".to_string())?;
+        validate_ui_ir_reference_path(source, ".vue")?;
+        validate_ui_ir_reference_path(artifact, ".uiir.json")?;
+
+        let source_path = directory.join(source);
+        let artifact_path = directory.join(artifact);
+        let source_metadata = fs::metadata(&source_path)
+            .map_err(|error| format!("Could not read UI IR source {source}: {error}"))?;
+        if !source_metadata.is_file() || source_metadata.len() > MAX_UI_IR_SOURCE_BYTES {
+            return Err(format!(
+                "UI IR source exceeds {} bytes",
+                MAX_UI_IR_SOURCE_BYTES
+            ));
+        }
+        let artifact_metadata = fs::metadata(&artifact_path)
+            .map_err(|error| format!("Could not read UI IR artifact {artifact}: {error}"))?;
+        if !artifact_metadata.is_file() || artifact_metadata.len() > MAX_UI_IR_ARTIFACT_BYTES {
+            return Err(format!(
+                "UI IR artifact exceeds {} bytes",
+                MAX_UI_IR_ARTIFACT_BYTES
+            ));
+        }
+        let artifact_value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&artifact_path).map_err(|error| error.to_string())?)
+                .map_err(|error| format!("Invalid UI IR artifact {artifact}: {error}"))?;
+        if artifact_value
+            .get("apiVersion")
+            .and_then(serde_json::Value::as_str)
+            != Some("anyway.dev/ui-ir/v1")
+            || !artifact_value
+                .get("root")
+                .is_some_and(serde_json::Value::is_object)
+        {
+            return Err(format!(
+                "UI IR artifact {artifact} has an invalid document shape"
+            ));
+        }
+        hydrated.push(serde_json::json!({ "slotId": slot_id, "ir": artifact_value }));
+    }
+    Ok(Some(hydrated))
+}
+
 fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String> {
     {
         if let Ok(cache) = manifest_cache().lock() {
@@ -1087,119 +2077,109 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("Could not read {}: {error}", manifest_path.display()))?;
     let private_i18n = parse_private_i18n_manifest(&manifest_text)?;
-    let manifest: MycPluginManifest =
+    let mut manifest: MycPluginManifest =
         crate::plugin_manifest_v2::parse_plugin_manifest(&manifest_text)?;
     validate_manifest(&manifest)?;
     validate_private_i18n(private_i18n.as_ref())?;
+    let ui_ir_contributions = read_ui_ir_contributions(directory, &manifest)?;
+    let frontend = read_installed_frontend(directory, manifest.frontend.as_ref())?;
+    for worker in manifest_worker_descriptors(&manifest) {
+        validate_worker_entrypoint(directory, worker)?;
+    }
 
     let entry_path = directory.join(&manifest.spec.entry);
-    let (theme, icon_theme, edge_style, runtime, workspace, provider, agent) = match manifest
-        .kind
-        .as_str()
-    {
-        "ThemePlugin" => {
-            let entry_text = fs::read_to_string(&entry_path)
-                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-            let theme: ThemeManifest =
-                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
-            let edge_style = theme.edge_style.clone();
-            (Some(theme), None, edge_style, None, None, None, None)
-        }
-        "IconThemePlugin" => {
-            let entry_text = fs::read_to_string(&entry_path)
-                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-            let icon_theme: IconThemeManifest =
-                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
-            (None, Some(icon_theme), None, None, None, None, None)
-        }
-        "EdgeStylePlugin" => {
-            let entry_text = fs::read_to_string(&entry_path)
-                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-            (
-                None,
-                None,
-                Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
-                None,
-                None,
-                None,
-                None,
-            )
-        }
-        "AnalysisPlugin" => {
-            let bytes = fs::read(&entry_path)
-                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-            if !bytes.starts_with(b"\0asm") {
-                return Err("AnalysisPlugin entry is not a WebAssembly module".to_string());
+    let (theme, icon_theme, edge_style, runtime, workspace, provider, agent) =
+        match manifest.kind.as_str() {
+            "ThemePlugin" => {
+                let entry_text = fs::read_to_string(&entry_path)
+                    .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+                let theme: ThemeManifest =
+                    serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+                let edge_style = theme.edge_style.clone();
+                (Some(theme), None, edge_style, None, None, None, None)
             }
-            let digest = Sha256::digest(&bytes);
-            (
-                None,
-                None,
-                None,
-                Some(MycPluginRuntime {
-                    engine: "wasm32-myc".to_string(),
-                    language: manifest
-                        .spec
-                        .language
-                        .clone()
-                        .unwrap_or_else(|| "other".to_string()),
-                    entry_sha256: format!("{digest:x}"),
-                }),
-                None,
-                None,
-                None,
-            )
-        }
-        "WorkspacePlugin" => {
-            let entry_text = fs::read_to_string(&entry_path)
-                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-            let descriptor: serde_json::Value =
-                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
-            if descriptor
-                .get("schemaVersion")
-                .and_then(serde_json::Value::as_u64)
-                != Some(1)
-                || !matches!(
-                    descriptor.get("mode").and_then(serde_json::Value::as_str),
-                    Some("export" | "folder" | "git")
+            "IconThemePlugin" => {
+                let entry_text = fs::read_to_string(&entry_path)
+                    .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+                let icon_theme: IconThemeManifest =
+                    serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+                (None, Some(icon_theme), None, None, None, None, None)
+            }
+            "EdgeStylePlugin" => {
+                let entry_text = fs::read_to_string(&entry_path)
+                    .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+                (
+                    None,
+                    None,
+                    Some(serde_json::from_str(&entry_text).map_err(|error| error.to_string())?),
+                    None,
+                    None,
+                    None,
+                    None,
                 )
-            {
-                return Err("Invalid workspace-plugin.json descriptor".to_string());
             }
-            (None, None, None, None, Some(descriptor), None, None)
-        }
-        "ProviderPlugin" => {
-            let entry_text = fs::read_to_string(&entry_path)
-                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-            let descriptor: ProviderDescriptor =
-                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
-            llm_plugin::validate_provider_descriptor(&descriptor)?;
-            (None, None, None, None, None, Some(descriptor), None)
-        }
-        "AgentPlugin" => {
-            let entry_text = fs::read_to_string(&entry_path)
-                .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
-            let descriptor: serde_json::Value =
-                serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
-            if descriptor
-                .get("schemaVersion")
-                .and_then(serde_json::Value::as_u64)
-                != Some(1)
-                || descriptor.get("mode").and_then(serde_json::Value::as_str) != Some("agent")
-                || descriptor
-                    .get("reviewGated")
-                    .and_then(serde_json::Value::as_bool)
-                    != Some(true)
-            {
-                return Err(
-                    "Invalid agent-manifest.json descriptor: requires schemaVersion 1, mode \"agent\", and reviewGated true"
-                        .to_string(),
-                );
+            "AnalysisPlugin" => {
+                let bytes = fs::read(&entry_path)
+                    .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+                if !bytes.starts_with(b"\0asm") {
+                    return Err("AnalysisPlugin entry is not a WebAssembly module".to_string());
+                }
+                let digest = Sha256::digest(&bytes);
+                (
+                    None,
+                    None,
+                    None,
+                    Some(MycPluginRuntime {
+                        engine: "wasm32-myc".to_string(),
+                        language: manifest
+                            .spec
+                            .language
+                            .clone()
+                            .unwrap_or_else(|| "other".to_string()),
+                        entry_sha256: format!("{digest:x}"),
+                    }),
+                    None,
+                    None,
+                    None,
+                )
             }
-            (None, None, None, None, None, None, Some(descriptor))
-        }
-        _ => (None, None, None, None, None, None, None),
-    };
+            "WorkspacePlugin" => {
+                let entry_text = fs::read_to_string(&entry_path)
+                    .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+                let descriptor: serde_json::Value =
+                    serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+                if descriptor
+                    .get("schemaVersion")
+                    .and_then(serde_json::Value::as_u64)
+                    != Some(1)
+                    || !matches!(
+                        descriptor.get("mode").and_then(serde_json::Value::as_str),
+                        Some("export" | "folder" | "git")
+                    )
+                {
+                    return Err("Invalid workspace-plugin.json descriptor".to_string());
+                }
+                (None, None, None, None, Some(descriptor), None, None)
+            }
+            "ProviderPlugin" => {
+                let entry_text = fs::read_to_string(&entry_path)
+                    .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+                let descriptor: ProviderDescriptor =
+                    serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+                llm_plugin::validate_provider_descriptor(&descriptor)?;
+                (None, None, None, None, None, Some(descriptor), None)
+            }
+            "AgentPlugin" => {
+                let entry_text = fs::read_to_string(&entry_path)
+                    .map_err(|error| format!("Could not read {}: {error}", entry_path.display()))?;
+                let descriptor: serde_json::Value =
+                    serde_json::from_str(&entry_text).map_err(|error| error.to_string())?;
+                validate_agent_manifest_descriptor(&descriptor, &mut manifest, directory)?;
+                (None, None, None, None, None, None, Some(descriptor))
+            }
+            "ExtensionPlugin" => (None, None, None, None, None, None, None),
+            _ => (None, None, None, None, None, None, None),
+        };
     let locales = read_locale_bundles(directory, &manifest)?;
     let private_i18n = read_private_i18n_bundles(directory, &manifest, private_i18n.as_ref())?;
 
@@ -1210,11 +2190,13 @@ fn read_installed_plugin(directory: &Path) -> Result<InstalledMycPlugin, String>
         icon_theme,
         edge_style,
         runtime,
+        frontend,
         locales,
         private_i18n,
         workspace,
         provider,
         agent,
+        ui_ir_contributions,
     };
     if let Ok(mut cache) = manifest_cache().lock() {
         cache.insert(directory.to_path_buf(), installed.clone());
@@ -1272,9 +2254,7 @@ fn icon_theme_references_asset(icon_theme: &IconThemeManifest, asset_path: &str)
             .is_some_and(|sources| {
                 sources.iter().any(|source| {
                     source.as_str() == Some(asset_path)
-                        || source
-                            .get("path")
-                            .and_then(serde_json::Value::as_str)
+                        || source.get("path").and_then(serde_json::Value::as_str)
                             == Some(asset_path)
                 })
             })
@@ -1437,8 +2417,7 @@ fn read_archive_manifest_from_archive(
     entry
         .read_to_string(&mut text)
         .map_err(|error| error.to_string())?;
-    let manifest: MycPluginManifest =
-        crate::plugin_manifest_v2::parse_plugin_manifest(&text)?;
+    let manifest: MycPluginManifest = crate::plugin_manifest_v2::parse_plugin_manifest(&text)?;
     validate_manifest(&manifest)?;
 
     // --- Ed25519 签名验证 / Ed25519 signature verification ---
@@ -1598,15 +2577,33 @@ fn install_archive_into(base: &Path, archive_path: &Path) -> Result<InstalledMyc
     read_installed_plugin(&destination)
 }
 
+#[cfg(test)]
+pub(crate) fn install_archive_into_for_test(
+    base: &Path,
+    archive_path: &Path,
+) -> Result<InstalledMycPlugin, String> {
+    install_archive_into(base, archive_path)
+}
+
 fn install_archive(app: &AppHandle, archive_path: &Path) -> Result<InstalledMycPlugin, String> {
     let base = plugin_base(app)?;
     install_archive_into(&base, archive_path)
 }
 
+#[cfg(any(test, not(debug_assertions)))]
 fn install_pending_from(
     base: &Path,
     packages: &Path,
     removed: &HashSet<String>,
+) -> Result<(), String> {
+    install_pending_from_with_allowlist(base, packages, removed, None)
+}
+
+fn install_pending_from_with_allowlist(
+    base: &Path,
+    packages: &Path,
+    removed: &HashSet<String>,
+    allowed_plugin_ids: Option<&HashSet<String>>,
 ) -> Result<(), String> {
     if !packages.is_dir() {
         return Ok(());
@@ -1636,6 +2633,11 @@ fn install_pending_from(
             }
         };
         let directory_name = format!("{}@{}", manifest.metadata.id, manifest.metadata.version);
+        if let Some(allowed) = allowed_plugin_ids {
+            if !allowed.contains(&manifest.metadata.id) {
+                continue;
+            }
+        }
         let already_installed = base.join("installed").join(&directory_name).is_dir();
         let explicitly_removed = removed.contains(&directory_name);
         if !already_installed && !explicitly_removed {
@@ -1652,21 +2654,70 @@ fn install_pending_from(
     Ok(())
 }
 
+fn desktop_dev_allowlist() -> Result<HashSet<String>, String> {
+    let value: serde_json::Value = serde_json::from_str(PLUGIN_LOADING_CONFIG)
+        .map_err(|error| format!("Invalid plugin-loading.json: {error}"))?;
+    value
+        .pointer("/desktopDev/allowedPluginIds")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "plugin-loading.json is missing desktopDev.allowedPluginIds".to_string())?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| "desktopDev.allowedPluginIds must contain strings".to_string())
+        })
+        .collect()
+}
+
+fn staged_desktop_dev_allowlist(base: &Path) -> Result<HashSet<String>, String> {
+    let mut allowed = desktop_dev_allowlist()?;
+    let manifest_path = base.join("dev-manifest.json");
+    if !manifest_path.is_file() {
+        return Ok(allowed);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("Invalid staged dev-manifest.json: {error}"))?;
+    let fresh_builds = value
+        .get("freshBuilds")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "staged dev-manifest.json is missing freshBuilds".to_string())?;
+    for build in fresh_builds {
+        let plugin_id = build
+            .get("pluginId")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "staged dev-manifest freshBuilds require pluginId".to_string())?;
+        allowed.insert(plugin_id.to_string());
+    }
+    Ok(allowed)
+}
+
 pub(crate) fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     let base = plugin_base(app)?;
     let removed = read_removed_plugins(&base)?;
     #[cfg(debug_assertions)]
-    let package_roots = vec![base.join("packages")];
+    {
+        let allowlist = staged_desktop_dev_allowlist(&base)?;
+        install_pending_from_with_allowlist(
+            &base,
+            &base.join("packages"),
+            &removed,
+            Some(&allowlist),
+        )?;
+    }
     #[cfg(not(debug_assertions))]
-    let package_roots = vec![
-        base.join("packages"),
-        app.path()
+    {
+        install_pending_from(&base, &base.join("packages"), &removed)?;
+        let resources = app
+            .path()
             .resource_dir()
             .map_err(|error| error.to_string())?
-            .join("plugins/packages"),
-    ];
-    for packages in package_roots {
-        install_pending_from(&base, &packages, &removed)?;
+            .join("plugins/packages");
+        install_pending_from(&base, &resources, &removed)?;
     }
     Ok(())
 }
@@ -1702,6 +2753,105 @@ fn read_installed_plugin_by_identity(
         return Err("Installed plugin identity does not match its directory".to_string());
     }
     Ok((directory, installed))
+}
+
+pub(crate) fn plugin_worker_launch_plan(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+    worker_id: &str,
+) -> Result<crate::host_bus::workers::PluginWorkerLaunchPlan, String> {
+    let (directory, installed) = read_installed_plugin_by_identity(app, plugin_id, plugin_version)?;
+    let worker = manifest_worker_descriptors(&installed.manifest)
+        .find(|descriptor| descriptor.id == worker_id)
+        .ok_or_else(|| {
+            format!("Plugin {plugin_id}@{plugin_version} does not declare worker {worker_id}")
+        })?;
+    let entry = validate_worker_entrypoint(&directory, worker)?;
+    let entry_bytes = fs::read(&entry).map_err(|error| {
+        format!(
+            "Could not read worker entrypoint {}: {error}",
+            entry.display()
+        )
+    })?;
+    let fingerprint = crate::host_bus::workers::PluginWorkerLaunchPlan::fingerprint_for(
+        plugin_id,
+        plugin_version,
+        &worker.id,
+        &worker.language,
+        &worker.transport,
+        &worker.entrypoint,
+        &entry_bytes,
+    );
+    let command = if worker.language == "python" {
+        crate::host_bus::workers::PluginWorkerCommand {
+            executable: PathBuf::from("python"),
+            args: vec![entry.into_os_string()],
+            working_directory: Some(directory.clone()),
+        }
+    } else {
+        crate::host_bus::workers::PluginWorkerCommand {
+            executable: entry,
+            args: Vec::new(),
+            working_directory: Some(directory.clone()),
+        }
+    };
+    let mut secret_environment = crate::host_bus::workers::SecretEnv::default();
+    for egress in &worker.provider_egress {
+        let connection = installed
+            .manifest
+            .spec
+            .connections
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|connection| connection.id == egress.connection_id)
+            .ok_or_else(|| {
+                format!(
+                    "Worker provider {} references unknown connection {}",
+                    egress.provider_id, egress.connection_id
+                )
+            })?;
+        let secret = match &connection.api_key {
+            PluginApiKeySource::HostSecret { setting_id } => {
+                crate::plugin_settings::resolve_host_secret(plugin_id, plugin_version, setting_id)?
+            }
+            PluginApiKeySource::Environment {
+                name,
+                fallback_setting_id,
+            } => {
+                let environment = std::env::var(name)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty());
+                match (environment, fallback_setting_id.as_deref()) {
+                    (Some(value), _) => Some(value),
+                    (None, Some(setting_id)) => crate::plugin_settings::resolve_host_secret(
+                        plugin_id,
+                        plugin_version,
+                        setting_id,
+                    )?,
+                    (None, None) => None,
+                }
+            }
+        };
+        if let Some(secret) = secret {
+            secret_environment.insert(egress.secret_env.clone(), secret);
+        }
+    }
+    Ok(crate::host_bus::workers::PluginWorkerLaunchPlan {
+        plugin_id: plugin_id.to_string(),
+        plugin_version: plugin_version.to_string(),
+        worker_id: worker.id.clone(),
+        language: worker.language.clone(),
+        transport: worker.transport.clone(),
+        entrypoint: worker.entrypoint.clone(),
+        command,
+        allowed_operations: worker.operations.clone(),
+        host_operations: worker.host_operations.clone(),
+        fingerprint,
+        environment: BTreeMap::new(),
+        secret_environment,
+    })
 }
 
 /// 将用户传入的插件路径解析为允许的 packages 目录下的真实路径。
@@ -1847,9 +2997,7 @@ pub fn list_installed_plugins(app: AppHandle) -> Result<Vec<InstalledMycPlugin>,
 
 /// Read-only catalog query used after startup package discovery has completed.
 /// It never scans package candidates, creates directories, or activates code.
-pub(crate) fn query_installed_plugins(
-    app: &AppHandle,
-) -> Result<Vec<InstalledMycPlugin>, String> {
+pub(crate) fn query_installed_plugins(app: &AppHandle) -> Result<Vec<InstalledMycPlugin>, String> {
     let base = plugin_base(app)?;
     query_installed_plugins_from(&base)
 }
@@ -2276,6 +3424,74 @@ mod tests {
         )
     }
 
+    fn python_worker_descriptor(entrypoint: &str) -> PluginWorkerDescriptor {
+        PluginWorkerDescriptor {
+            id: "default".to_string(),
+            language: "python".to_string(),
+            entrypoint: entrypoint.to_string(),
+            transport: "stdio-framed-json-v1".to_string(),
+            host_mediated: true,
+            operations: vec![
+                "surface.state".to_string(),
+                "surface.action".to_string(),
+                "surface.host-action".to_string(),
+            ],
+            host_operations: vec!["blob.read".to_string(), "event.publish".to_string()],
+            provider_egress: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn worker_descriptor_rejects_path_and_allowlist_escalation() {
+        validate_worker_descriptor(&python_worker_descriptor("src/worker.py"))
+            .expect("canonical worker descriptor");
+        for entrypoint in [
+            "../worker.py",
+            "/tmp/worker.py",
+            "src\\worker.py",
+            "src/./worker.py",
+        ] {
+            assert!(
+                validate_worker_descriptor(&python_worker_descriptor(entrypoint)).is_err(),
+                "unsafe entrypoint must fail: {entrypoint}"
+            );
+        }
+        let mut duplicate = python_worker_descriptor("src/worker.py");
+        duplicate.operations.push("surface.state".to_string());
+        assert!(validate_worker_descriptor(&duplicate).is_err());
+        let mut invalid_host_operation = python_worker_descriptor("src/worker.py");
+        invalid_host_operation
+            .host_operations
+            .push("Principal.Inject".to_string());
+        assert!(validate_worker_descriptor(&invalid_host_operation).is_err());
+    }
+
+    #[test]
+    fn installed_worker_entrypoint_must_resolve_inside_plugin_root() {
+        let root = tempdir().expect("plugin root");
+        fs::create_dir_all(root.path().join("src")).expect("worker directory");
+        fs::write(root.path().join("src/worker.py"), b"print('ok')").expect("worker file");
+        validate_worker_entrypoint(root.path(), &python_worker_descriptor("src/worker.py"))
+            .expect("ordinary packaged worker entrypoint");
+
+        let outside = tempdir().expect("outside root");
+        let outside_worker = outside.path().join("worker.py");
+        fs::write(&outside_worker, b"print('escape')").expect("outside worker");
+        let link = root.path().join("src/linked.py");
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside_worker, &link).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&outside_worker, &link).is_ok();
+        if linked {
+            assert!(validate_worker_entrypoint(
+                root.path(),
+                &python_worker_descriptor("src/linked.py")
+            )
+            .expect_err("symlink escape must fail")
+            .contains("escapes"));
+        }
+    }
+
     #[test]
     fn parses_sdk_environment_api_key_source() {
         for source in ["environment", "Environment"] {
@@ -2321,6 +3537,7 @@ mod tests {
             }]),
             locales: None,
             commands: None,
+            ui: None,
             ui_ir: None,
         });
         InstalledMycPlugin {
@@ -2334,12 +3551,67 @@ mod tests {
                 language: "rust".to_string(),
                 entry_sha256: "0".repeat(64),
             }),
+            frontend: None,
             locales: None,
             private_i18n: None,
             workspace: None,
             provider: None,
             agent: None,
+            ui_ir_contributions: None,
         }
+    }
+
+    fn manifest_with_ui_reference(source: &str, artifact: &str) -> MycPluginManifest {
+        let mut manifest: MycPluginManifest =
+            serde_json::from_str(&runtime_manifest("rust")).expect("parse runtime manifest");
+        manifest.spec.contributes = Some(MycPluginContributions {
+            context_menus: None,
+            locales: None,
+            commands: None,
+            ui: None,
+            ui_ir: Some(json!([{
+                "slotId": "agent.review",
+                "source": source,
+                "artifact": artifact,
+            }])),
+        });
+        manifest
+    }
+
+    #[test]
+    fn ui_ir_installation_rejects_missing_tampered_escaping_and_oversized_artifacts() {
+        let root = tempdir().expect("ui ir root");
+        fs::create_dir_all(root.path().join("ui")).expect("ui directory");
+        fs::write(root.path().join("ui/Surface.vue"), "<template />").expect("source");
+
+        let missing = manifest_with_ui_reference("ui/Surface.vue", "ui/Missing.uiir.json");
+        assert!(read_ui_ir_contributions(root.path(), &missing)
+            .expect_err("missing artifact must fail")
+            .contains("Could not read UI IR artifact"));
+
+        let escaping = manifest_with_ui_reference("ui/../outside.vue", "ui/Surface.uiir.json");
+        assert!(read_ui_ir_contributions(root.path(), &escaping)
+            .expect_err("escaping source must fail")
+            .contains("ui/<name>.vue"));
+
+        fs::write(
+            root.path().join("ui/Surface.uiir.json"),
+            r#"{"apiVersion":"anyway.dev/ui-ir/v1","root":[]}"#,
+        )
+        .expect("tampered artifact");
+        let tampered = manifest_with_ui_reference("ui/Surface.vue", "ui/Surface.uiir.json");
+        assert!(read_ui_ir_contributions(root.path(), &tampered)
+            .expect_err("invalid document shape must fail")
+            .contains("invalid document shape"));
+
+        fs::write(
+            root.path().join("ui/Surface.uiir.json"),
+            vec![b' '; (MAX_UI_IR_ARTIFACT_BYTES + 1) as usize],
+        )
+        .expect("oversized artifact");
+        assert!(read_ui_ir_contributions(root.path(), &tampered)
+            .expect_err("oversized artifact must fail")
+            .contains("exceeds"));
     }
 
     #[test]
@@ -2549,6 +3821,7 @@ mod tests {
             }]),
             locales: None,
             commands: None,
+            ui: None,
             ui_ir: None,
         });
         assert!(validate_manifest(&manifest)
@@ -2569,7 +3842,9 @@ mod tests {
         let workspace_package = root.path().join("workspace.myc");
         let file = File::create(&workspace_package).expect("workspace archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.json", options).expect("manifest");
+        archive
+            .start_file("plugin.json", options)
+            .expect("manifest");
         archive
             .write_all(
                 br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"WorkspacePlugin","metadata":{"id":"myc.test-export","name":"Test Export","version":"1.0.0","publisher":"Research Canvas","developer":"Workspace Tests","description":"Test host mediated export capability."},"spec":{"engine":"host-mediated","entry":"workspace-plugin.json","capabilities":["project.export"],"permissions":[],"contributes":{"commands":[{"id":"export","label":"Export SVG","description":"Export the reviewed project.","category":"export","capability":"project.export","formats":["svg"]}]}}}"#,
@@ -2595,7 +3870,9 @@ mod tests {
         let locale_package = root.path().join("locale.myc");
         let file = File::create(&locale_package).expect("locale archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.json", options).expect("manifest");
+        archive
+            .start_file("plugin.json", options)
+            .expect("manifest");
         archive
             .write_all(
                 "{\"apiVersion\":\"researchcanvas.dev/v1alpha1\",\"kind\":\"LocalePlugin\",\"metadata\":{\"id\":\"myc.test-ja\",\"name\":\"Test Japanese\",\"version\":\"1.0.0\",\"publisher\":\"Research Canvas\",\"developer\":\"Locale Tests\",\"description\":\"Test declarative community language.\"},\"spec\":{\"engine\":\"declarative\",\"entry\":\"locales/ja-JP.json\",\"capabilities\":[\"i18n.register\"],\"permissions\":[],\"contributes\":{\"locales\":[{\"locale\":\"ja-JP\",\"name\":\"日本語\",\"path\":\"locales/ja-JP.json\"}]}}}"
@@ -2625,7 +3902,9 @@ mod tests {
         let agent_package = root.path().join("agent.myc");
         let file = File::create(&agent_package).expect("agent archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.json", options).expect("manifest");
+        archive
+            .start_file("plugin.json", options)
+            .expect("manifest");
         archive
             .write_all(
                 br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.test-agent","name":"Test Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Test host-mediated review-gated agent."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.pdf.read","agent.graph.patch.propose","agent.review.request"],"permissions":[]}}"#,
@@ -2651,7 +3930,9 @@ mod tests {
         let rogue_package = root.path().join("rogue-agent.myc");
         let file = File::create(&rogue_package).expect("rogue archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.json", options).expect("manifest");
+        archive
+            .start_file("plugin.json", options)
+            .expect("manifest");
         archive
             .write_all(
                 br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.rogue-agent","name":"Rogue Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Agent descriptor that is not review-gated."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.graph.patch.propose"],"permissions":[]}}"#,
@@ -2673,7 +3954,9 @@ mod tests {
         let unknown_package = root.path().join("unknown-agent.myc");
         let file = File::create(&unknown_package).expect("unknown archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.json", options).expect("manifest");
+        archive
+            .start_file("plugin.json", options)
+            .expect("manifest");
         archive
             .write_all(
                 br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.unknown-agent","name":"Unknown Capability Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Agent declaring an unknown capability."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.filesystem.write"],"permissions":[]}}"#,
@@ -2710,7 +3993,9 @@ mod tests {
         let valid_package = packages.join("zzz.renamed-file@9.9.9.myc");
         let file = File::create(&valid_package).expect("valid archive");
         let mut archive = ZipWriter::new(file);
-        archive.start_file("plugin.json", options).expect("manifest");
+        archive
+            .start_file("plugin.json", options)
+            .expect("manifest");
         archive
             .write_all(
                 br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"ThemePlugin","metadata":{"id":"myc.valid-theme","name":"Valid Theme","version":"1.0.0","publisher":"Research Canvas","developer":"Tests","description":"A valid theme package."},"spec":{"engine":"declarative","entry":"theme.json","capabilities":["theme.register"],"permissions":[]}}"#,
@@ -2814,8 +4099,7 @@ mod tests {
         });
         if let Some(sign) = sign_fn {
             // Signed manifests must declare payloads; the hash matches valid_theme_json().
-            manifest_value["payloads"] =
-                serde_json::json!({ "theme.json": theme_payload_hash() });
+            manifest_value["payloads"] = serde_json::json!({ "theme.json": theme_payload_hash() });
             // Signature covers the canonical (sorted-key, compact) JSON without
             // `signature` — the same bytes the verifier recomputes from the raw
             // archived manifest text.
@@ -3318,11 +4602,13 @@ mod tests {
             "capabilities": ["agent.pdf.read", "agent.graph.patch.propose", "agent.review.request"]
         })
         .to_string();
-        let manifest =
-            crate::plugin_manifest_v2::parse_plugin_manifest(&spoof).expect("parses v2");
-        let error = validate_manifest(&manifest)
-            .expect_err("a spoofed official flag must be rejected");
-        assert!(error.contains("ResearchCanvas"), "unexpected error: {error}");
+        let manifest = crate::plugin_manifest_v2::parse_plugin_manifest(&spoof).expect("parses v2");
+        let error =
+            validate_manifest(&manifest).expect_err("a spoofed official flag must be rejected");
+        assert!(
+            error.contains("ResearchCanvas"),
+            "unexpected error: {error}"
+        );
 
         let official = json!({
             "name": "myc.pdf-canvas-agent",
@@ -3340,13 +4626,28 @@ mod tests {
         validate_manifest(&manifest).expect("the official publisher is accepted");
     }
 
-    /// 仓库内每一个跟踪的 .myc 包都必须走完整的 v2 安装管线:
+    #[test]
+    fn desktop_dev_allowlist_is_explicit_and_excludes_local_third_party_packages() {
+        let allowlist = desktop_dev_allowlist().expect("tracked plugin-loading config");
+        assert_eq!(allowlist.len(), 4);
+        assert!(allowlist.contains("myc.circuit-orthogonal"));
+        assert!(allowlist.contains("myc.export-suite"));
+        assert!(allowlist.contains("myc.folder-workspaces"));
+        assert!(allowlist.contains("myc.git-workspace"));
+        assert!(!allowlist.contains("myc.pdf-canvas-agent"));
+        assert!(!allowlist.contains("myc.i18n-ja"));
+        assert!(!allowlist.contains("myc.onedarkpro"));
+        assert!(!allowlist.contains("myc.runtime-smoke"));
+    }
+
+    /// 官方 release 包必须走完整的 v2 安装管线:
     /// JSON 清单解析 → 校验 → 解压 → payloads 哈希核验 → 身份比对。
-    /// Every tracked .myc package in the repository must pass the full v2
+    /// Every official release .myc package in the repository must pass the full v2
     /// install pipeline: JSON manifest parse → validation → extraction →
     /// payload hash verification → identity comparison.
     #[test]
-    fn tracked_packages_pass_the_full_v2_install_pipeline() {        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn tracked_packages_pass_the_full_v2_install_pipeline() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("repository root")
             .join("plugins/packages");
@@ -3358,8 +4659,8 @@ mod tests {
             .collect();
         packages.sort();
         assert!(
-            packages.len() >= 8,
-            "expected the tracked packages, found {}",
+            packages.len() >= 6,
+            "expected the official packages, found {}",
             packages.len()
         );
 

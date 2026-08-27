@@ -146,9 +146,9 @@ impl BlobScope {
         if value == "shared" {
             return Ok(Self::Shared);
         }
-        let (kind, subject) = value
-            .split_once(':')
-            .ok_or(BlobError::InvalidArgument("scope must be shared|workspace:id|private:id"))?;
+        let (kind, subject) = value.split_once(':').ok_or(BlobError::InvalidArgument(
+            "scope must be shared|workspace:id|private:id",
+        ))?;
         match kind {
             "workspace" => Self::workspace(subject),
             "private" => Self::private(subject),
@@ -740,8 +740,9 @@ impl BlobStore {
     /// `blob.release` — remove one stored blob by hex digest; returns freed
     /// bytes. Pinned blobs (open read leases) are not released.
     pub fn release_stored(&mut self, digest_hex: &str) -> Result<u64, BlobError> {
-        let bytes = decode_hex_digest(digest_hex)
-            .ok_or(BlobError::InvalidArgument("digest must be 64 lowercase hex chars"))?;
+        let bytes = decode_hex_digest(digest_hex).ok_or(BlobError::InvalidArgument(
+            "digest must be 64 lowercase hex chars",
+        ))?;
         let digest = BlobDigest::new(bytes);
         let pinned: BTreeSet<_> = self.reads.values().map(|lease| lease.digest).collect();
         if pinned.contains(&digest) {

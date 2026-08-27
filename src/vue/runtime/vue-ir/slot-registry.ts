@@ -1,17 +1,14 @@
 /**
- * Fixed host slot registry: known slot ids, their host permission policy,
- * and an optional native renderer. Native slot content is always a VNode
- * factory — never a raw HTML string.
+ * Legacy declarative UI registry. These identifiers are compatibility
+ * surfaces for host-rendered UI IR only; physical Host placement slots live in
+ * app/plugins/host-slot-registry.ts and are rendered by PluginContributionSlot.
  */
-import { h, inject, provide, type InjectionKey, type VNodeChild } from "vue";
+import { inject, provide, type InjectionKey } from "vue";
 import type { UiIrPermissionPolicy } from "../../../../app/plugins/ui-ir";
-
-export type UiIrSlotRenderer = () => VNodeChild;
 
 export type UiIrSlotDescriptor = {
   readonly slotId: string;
   readonly policy: UiIrPermissionPolicy;
-  readonly render?: UiIrSlotRenderer;
 };
 
 export type UiIrSlotRegistry = ReadonlyMap<string, UiIrSlotDescriptor>;
@@ -69,9 +66,6 @@ export function mergeUiIrPermissionPolicies(
   };
 }
 
-const nativeSlotRenderer = (slotId: string): UiIrSlotRenderer => () =>
-  h("div", { class: "ui-ir-native", "data-ui-ir-native": slotId }, `native:${slotId}`);
-
 /** The fixed host registry shipped with the renderer. */
 export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotDescriptor>([
   ["node-inspector", {
@@ -81,7 +75,6 @@ export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotD
       allowedCapabilities: ["analysis.run"],
       requireActionAllowlist: true,
     },
-    render: nativeSlotRenderer("node-inspector"),
   }],
   ["canvas-toolbar", {
     slotId: "canvas-toolbar",
@@ -90,7 +83,6 @@ export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotD
       allowedCapabilities: ["canvas.view"],
       requireActionAllowlist: true,
     },
-    render: nativeSlotRenderer("canvas-toolbar"),
   }],
   ["settings-panel", {
     slotId: "settings-panel",
@@ -99,7 +91,6 @@ export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotD
       allowedCapabilities: ["settings.write"],
       requireActionAllowlist: true,
     },
-    render: nativeSlotRenderer("settings-panel"),
   }],
   ["activity-sidebar", {
     slotId: "activity-sidebar",
@@ -108,7 +99,6 @@ export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotD
       allowedCapabilities: ["project.folder", "git.repository.read"],
       requireActionAllowlist: true,
     },
-    render: nativeSlotRenderer("activity-sidebar"),
   }],
   ["results-panel", {
     slotId: "results-panel",
@@ -117,16 +107,26 @@ export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotD
       allowedCapabilities: ["analysis.run", "graph.validate", "chain.score", "run.manifest", "run.result"],
       requireActionAllowlist: true,
     },
-    render: nativeSlotRenderer("results-panel"),
   }],
-  ["agent-review-panel", {
-    slotId: "agent-review-panel",
-    policy: {
-      allowedActions: ["agent-review.accept", "agent-review.reject"],
-      allowedCapabilities: ["agent.review.request", "agent.graph.patch.propose"],
-      requireActionAllowlist: true,
-    },
-    render: nativeSlotRenderer("agent-review-panel"),
+  ["surface.review", {
+    slotId: "surface.review",
+    policy: { allowedActions: [], allowedCapabilities: [], requireActionAllowlist: true },
+  }],
+  ["surface.upload", {
+    slotId: "surface.upload",
+    policy: { allowedActions: [], allowedCapabilities: [], requireActionAllowlist: true },
+  }],
+  ["surface.batch", {
+    slotId: "surface.batch",
+    policy: { allowedActions: [], allowedCapabilities: [], requireActionAllowlist: true },
+  }],
+  ["surface.stream", {
+    slotId: "surface.stream",
+    policy: { allowedActions: [], allowedCapabilities: [], requireActionAllowlist: true },
+  }],
+  ["surface.error", {
+    slotId: "surface.error",
+    policy: { allowedActions: [], allowedCapabilities: [], requireActionAllowlist: true },
   }],
   ["status-bar", {
     slotId: "status-bar",
@@ -135,6 +135,5 @@ export const DEFAULT_SLOT_REGISTRY: UiIrSlotRegistry = new Map<string, UiIrSlotD
       allowedCapabilities: ["git.autosave", "git.account.read"],
       requireActionAllowlist: true,
     },
-    render: nativeSlotRenderer("status-bar"),
   }],
 ]);

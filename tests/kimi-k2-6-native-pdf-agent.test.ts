@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const manifestPath = "plugins/sources/myc.pdf-canvas-agent/plugin.json";
-const descriptorPath = "plugins/sources/myc.pdf-canvas-agent/agent-manifest.json";
-const englishLocalePath = "plugins/sources/myc.pdf-canvas-agent/locales/en.json";
-const chineseLocalePath = "plugins/sources/myc.pdf-canvas-agent/locales/zh-CN.json";
+const manifestPath = "my-plugins/anPdfsolver/plugin.json";
+const descriptorPath = "my-plugins/anPdfsolver/agent-manifest.json";
+const englishLocalePath = "my-plugins/anPdfsolver/locales/en.json";
+const chineseLocalePath = "my-plugins/anPdfsolver/locales/zh-CN.json";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -41,14 +40,6 @@ function actionBlock(connection: Connection, id: string): TestAction {
   return action;
 }
 
-function collectFiles(root: string): string[] {
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(root, entry.name);
-    return entry.isDirectory() ? collectFiles(path) : [path];
-  });
-}
-
 test("Kimi K2.6 is the native PDF Agent model and requires a user-provided URL", () => {
   const apiUrl = settingBlock("api-url");
   assert.equal(apiUrl.required, true);
@@ -66,8 +57,8 @@ test("Kimi K2.6 is the native PDF Agent model and requires a user-provided URL",
   });
 });
 
-test("the plugin declares K2.6 request constraints and thinking translation", () => {
-  const pluginPipeline = read("plugins/sources/myc.pdf-canvas-agent/agent.yml");
+test("the plugin declares direct K2.6 egress, bounded SSE and typed frames", () => {
+  const pluginPipeline = read("my-plugins/anPdfsolver/agent.yml");
   const descriptor = JSON.parse(read(descriptorPath)) as {
     modelConfiguration?: { nativeProviderProfile?: { id?: string; declaration?: string } };
   };
@@ -79,6 +70,7 @@ test("the plugin declares K2.6 request constraints and thinking translation", ()
   );
   assert.match(pluginPipeline, /^nativeProvider:\r?$/m);
   assert.match(pluginPipeline, /^  id: kimi-k2\.6$/m);
+  assert.match(pluginPipeline, /^  executionOwner: plugin-worker$/m);
   assert.match(pluginPipeline, /^    formatSettingId: api-format$/m);
   assert.match(pluginPipeline, /^      openai:$/m);
   assert.match(pluginPipeline, /^        format: openai-compatible$/m);
@@ -86,20 +78,18 @@ test("the plugin declares K2.6 request constraints and thinking translation", ()
   assert.match(pluginPipeline, /^      anthropic:$/m);
   assert.match(pluginPipeline, /^        format: anthropic-compatible$/m);
   assert.match(pluginPipeline, /^        streamProtocol: anthropic-sse$/m);
-  assert.match(pluginPipeline, /^    baseUrlSource: plugin-setting$/m);
   assert.match(pluginPipeline, /^    baseUrlSettingId: api-url$/m);
   assert.match(pluginPipeline, /^          international: https:\/\/api\.moonshot\.ai\/v1$/m);
   assert.match(pluginPipeline, /^          international: https:\/\/api\.moonshot\.ai\/anthropic$/m);
   assert.match(pluginPipeline, /^    model: kimi-k2\.6$/m);
   assert.match(pluginPipeline, /^    apiFormat: openai$/m);
   assert.match(pluginPipeline, /^    thinking: enabled$/m);
-  assert.match(pluginPipeline, /^      settingId: thinking$/m);
-  assert.match(pluginPipeline, /^      requestPath: thinking\.type$/m);
-  assert.match(pluginPipeline, /^        enabled: enabled$/m);
-  assert.match(pluginPipeline, /^        disabled: disabled$/m);
-  assert.match(pluginPipeline, /^      mode: omit$/m);
-  assert.match(pluginPipeline, /^        - temperature$/m);
-  assert.match(pluginPipeline, /^      stream: true$/m);
+  assert.match(pluginPipeline, /^    hiddenReasoning: discard$/m);
+  assert.match(pluginPipeline, /^    stream: true$/m);
+  assert.match(pluginPipeline, /^  framing: ndjson$/m);
+  assert.match(pluginPipeline, /^  maxFrameBytes: 8192$/m);
+  assert.match(pluginPipeline, /^    - aggregate-document-json$/m);
+  assert.doesNotMatch(pluginPipeline, /graph\.storage\.put|host model gateway|noNetwork/);
 });
 
 test("the native settings contract exposes exactly two explicit connection tests", () => {
@@ -139,10 +129,10 @@ test("the native settings contract exposes exactly two explicit connection tests
   assert.ok(transportOptions.includes("local-text"));
   assert.ok(transportOptions.includes("kimi-file-extract"));
 
-  const pipeline = read("plugins/sources/myc.pdf-canvas-agent/agent.yml");
+  const pipeline = read("my-plugins/anPdfsolver/agent.yml");
   assert.match(
     pipeline,
-    /pdfInput:[\s\S]*?mode:\s+kimi-files[\s\S]*?purpose:\s+file-extract[\s\S]*?modelReceives:\s+extracted-text[\s\S]*?modelReceivesPdfBytes:\s+false/,
+    /pdfInput:[\s\S]*?remote:[\s\S]*?mode:\s+kimi-files[\s\S]*?purpose:\s+file-extract[\s\S]*?uploadPath:\s+\/v1\/files/,
   );
 });
 
@@ -156,30 +146,16 @@ test("private plugin i18n contains Kimi-specific English and Chinese copy", () =
   assert.match(chinese["settings.pdfTransport.description"] ?? "", /Kimi|Moonshot|上传/);
 });
 
-test("K2.6 provider logic lives under native_plugins, while generic Kimi Files guards remain allowed", () => {
-  const nativeRoot = "src-tauri/src/native_plugins";
-  const nativeFiles = collectFiles(nativeRoot).filter((path) => /\.(rs|toml)$/.test(path));
-  assert.ok(
-    nativeFiles.length > 0,
-    "provider-specific native Rust code must be placed under src-tauri/src/native_plugins",
-  );
-
-  const nativeSource = nativeFiles.map(read).join("\n");
-  assert.match(nativeSource, /Kimi|Moonshot/i);
-  assert.match(nativeSource, /kimi[-_. ]?k2\.6|K2\.6|temperature|thinking/i);
-
-  const genericLlmClient = read("src-tauri/src/llm_client.rs");
-  const forbiddenK26Markers = [
-    /kimi[-_. ]?k2\.6/i,
-    /KimiK26/i,
-    /k2_6/i,
-    /(?:if|else if|match|matches)[^\n]*(?:Kimi|Moonshot)[^\n]*(?:temperature|thinking)/i,
-  ];
-  for (const marker of forbiddenK26Markers) {
-    assert.doesNotMatch(
-      genericLlmClient,
-      marker,
-      "generic llm_client.rs may retain existing Kimi Files safeguards, but not new K2.6 provider branches",
-    );
-  }
+test("K2.6 provider logic is packaged with the Python Worker, not a Host model gateway", () => {
+  const client = read("my-plugins/anPdfsolver/src/anpdfsolver/kimi_client.py");
+  const frames = read("my-plugins/anPdfsolver/src/anpdfsolver/typed_frames.py");
+  assert.match(client, /class KimiClient/);
+  assert.match(client, /\/files/);
+  assert.match(client, /chat\/completions/);
+  assert.match(client, /v1\/messages/);
+  assert.match(client, /reasoning_content/);
+  assert.match(client, /thinking_delta/);
+  assert.match(frames, /class TypedFrameParser/);
+  assert.match(frames, /MAX_FRAME_BYTES = 8 \* 1024/);
+  assert.doesNotMatch(client + frames, /graph\.storage\.put/);
 });

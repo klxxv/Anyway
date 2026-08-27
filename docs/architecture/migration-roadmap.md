@@ -136,7 +136,7 @@ Performance acceptance for the first complete vertical slice:
 | Kernel identity and lifecycle | `src-tauri/src/kernel/identity.rs`, `lifecycle.rs`, `supervisor.rs` | Main branch integrator |
 | Blob and RPC | `src-tauri/src/kernel/blob.rs`, `rpc.rs` | Main branch integrator |
 | Vue UI IR | `app/plugins/ui-ir.ts`, `src/vue/runtime/vue-ir/` | Main branch integrator |
-| AnCordis | `plugins/system/ancordis/` | Main branch integrator |
-| AnMarket | `plugins/system/anmarket/` | Main branch integrator |
+| AnCordis | `my-plugins/ancordis/` | Main branch integrator |
+| AnMarket | `my-plugins/anmarket/` | Main branch integrator |
 
 The integration owner controls `src-tauri/src/kernel/mod.rs`, `src-tauri/src/lib.rs`, shared manifest types, Cargo dependencies, and generated SDK entry points so parallel workers cannot create conflicting roots.

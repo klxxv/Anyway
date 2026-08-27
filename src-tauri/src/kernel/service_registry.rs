@@ -144,13 +144,18 @@ impl ServiceDescriptor {
 pub enum ServiceRegistryError {
     DuplicateService(String),
     UnknownService(String),
-    UnknownMethod { service_id: String, method: String },
+    UnknownMethod {
+        service_id: String,
+        method: String,
+    },
     Expired {
         service_id: String,
         expired_at_ms: u64,
         now_ms: u64,
     },
-    TooManyServices { max_services: usize },
+    TooManyServices {
+        max_services: usize,
+    },
     Invalid(String),
 }
 
@@ -345,10 +350,7 @@ impl ServiceRegistry {
 
     /// Remove one registration for `service.unregister`; missing entries are
     /// an error so callers can tell "already gone" from "removed now".
-    pub fn unregister(
-        &mut self,
-        service_id: &str,
-    ) -> Result<(), ServiceRegistryError> {
+    pub fn unregister(&mut self, service_id: &str) -> Result<(), ServiceRegistryError> {
         self.services
             .remove(service_id)
             .map(|_| ())
@@ -357,9 +359,7 @@ impl ServiceRegistry {
 }
 
 fn valid_bounded_text(value: &str, max_chars: usize) -> bool {
-    !value.is_empty()
-        && value.chars().count() <= max_chars
-        && !value.chars().any(char::is_control)
+    !value.is_empty() && value.chars().count() <= max_chars && !value.chars().any(char::is_control)
 }
 
 fn valid_method_name(value: &str) -> bool {
@@ -420,7 +420,12 @@ mod tests {
         let mut registry = ServiceRegistry::new();
         registry.register(ping(), 1_000).expect("registers");
         let result = registry
-            .call("anyway.system.ping", "ping", json!({ "hello": "world" }), 1_500)
+            .call(
+                "anyway.system.ping",
+                "ping",
+                json!({ "hello": "world" }),
+                1_500,
+            )
             .expect("call");
         assert_eq!(
             result,
@@ -435,7 +440,9 @@ mod tests {
     #[test]
     fn duplicate_registration_is_rejected() {
         let mut registry = ServiceRegistry::new();
-        registry.register(ping(), 1_000).expect("first registration");
+        registry
+            .register(ping(), 1_000)
+            .expect("first registration");
         assert_eq!(
             registry.register(ping(), 2_000),
             Err(ServiceRegistryError::DuplicateService(
@@ -494,13 +501,25 @@ mod tests {
         registry.register(ping(), 1_000).expect("first service");
         registry
             .register(
-                ServiceDescriptor::new("anyway.system.echo", "1.0.0", "Echo", Vec::new(), Vec::new())
-                    .expect("second service"),
+                ServiceDescriptor::new(
+                    "anyway.system.echo",
+                    "1.0.0",
+                    "Echo",
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .expect("second service"),
                 1_000,
             )
             .expect("second service");
-        let third = ServiceDescriptor::new("anyway.system.third", "1.0.0", "Third", Vec::new(), Vec::new())
-            .expect("third service");
+        let third = ServiceDescriptor::new(
+            "anyway.system.third",
+            "1.0.0",
+            "Third",
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("third service");
         assert_eq!(
             registry.register(third, 1_000),
             Err(ServiceRegistryError::TooManyServices { max_services: 2 })
@@ -537,14 +556,8 @@ mod tests {
     #[test]
     fn valid_service_ids_with_separators_are_accepted() {
         for valid in ["anyway", "anyway.system.ping", "a.b-c_d/e9", "a1"] {
-            ServiceDescriptor::new(
-                valid,
-                "1.0.0",
-                "Ping",
-                Vec::new(),
-                Vec::new(),
-            )
-            .unwrap_or_else(|error| panic!("rejected valid service id {valid:?}: {error}"));
+            ServiceDescriptor::new(valid, "1.0.0", "Ping", Vec::new(), Vec::new())
+                .unwrap_or_else(|error| panic!("rejected valid service id {valid:?}: {error}"));
         }
     }
 
@@ -572,8 +585,8 @@ mod tests {
 
     #[test]
     fn registry_errors_stringify_for_transport_boundaries() {
-        let message = ServiceRegistryError::DuplicateService("anyway.system.ping".to_string())
-            .to_string();
+        let message =
+            ServiceRegistryError::DuplicateService("anyway.system.ping".to_string()).to_string();
         assert!(message.contains("already registered"), "message: {message}");
         let message = ServiceRegistryError::UnknownMethod {
             service_id: "anyway.system.ping".to_string(),

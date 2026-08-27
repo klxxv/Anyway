@@ -6,16 +6,11 @@ import {
   connectionTestActions,
   defaultPluginSettingsDraft,
   normalizePluginSettingDefinitions,
-  PLUGIN_TEST_ACTION_IDS,
   resolvePluginPrivateText,
   settingsWriteFromDraft,
   validatePluginSettingsDraft,
 } from "../src/vue/components/panel-types";
 import { normalizePluginSettings } from "../app/plugins/contracts";
-import {
-  isPublicProgressEnabled,
-  PUBLIC_PROGRESS_SETTING_ID,
-} from "../app/plugins/agent-contracts";
 
 test("shared settings contract canonicalizes legacy secret declarations", () => {
   const settings = normalizePluginSettings([
@@ -80,23 +75,20 @@ test("plugin-private i18n resolves before manifest fallback without using the ho
   );
 });
 
-test("connection test actions accept the new array and legacy singular declaration", () => {
+test("connection test actions are read from manifest declarations without provider presets", () => {
   const legacy = {
-    id: "provider",
-    label: "Provider",
-    urlSettingId: "api-url",
-    formatSettingId: "api-format",
-    apiKey: { source: "environment", name: "API_KEY" },
-    testAction: { id: PLUGIN_TEST_ACTION_IDS.connection, label: "Test connection" },
+    id: "custom-service",
+    label: "Custom service",
+    testAction: { id: "manifest-smoke", label: "Run manifest smoke test" },
   } as never;
   assert.deepEqual(connectionTestActions(legacy), [legacy.testAction]);
   const modern = { ...legacy, testAction: undefined, testActions: [
-    { id: PLUGIN_TEST_ACTION_IDS.connection, label: "Test AI connection" },
-    { id: PLUGIN_TEST_ACTION_IDS.pdfExtraction, label: "Test PDF parsing" },
+    { id: "manifest-connectivity", label: "Check connectivity" },
+    { id: "manifest-runtime", label: "Check runtime" },
   ] } as never;
   assert.deepEqual(connectionTestActions(modern).map((action) => action.id), [
-    PLUGIN_TEST_ACTION_IDS.connection,
-    PLUGIN_TEST_ACTION_IDS.pdfExtraction,
+    "manifest-connectivity",
+    "manifest-runtime",
   ]);
 });
 
@@ -148,9 +140,9 @@ test("host reads the native effectiveValues/secretConfigured snapshot without ex
   assert.equal(Object.prototype.hasOwnProperty.call(snapshot.values, "api-key"), false);
 });
 
-test("PDF Agent declares host-managed connection, credential, model, and thinking settings", () => {
+test("anPdfsolver manifest keeps plugin-owned settings, connection actions, and private locales parseable", () => {
   const manifest = JSON.parse(
-    readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.json", "utf8"),
+    readFileSync("my-plugins/anPdfsolver/plugin.json", "utf8"),
   ) as {
     contributes?: {
       configuration?: {
@@ -165,13 +157,22 @@ test("PDF Agent declares host-managed connection, credential, model, and thinkin
         }>;
         connections?: Array<{
           id: string;
-          credentialSourceSettingId: string;
-          testActions: Array<{ id: string }>;
-          apiKey: { source: string; name: string; fallbackSettingId: string };
+          urlSettingId?: string;
+          formatSettingId?: string;
+          modelSettingId?: string;
+          testActions?: Array<{ id: string }>;
+          apiKey: { source: string; settingId?: string; secretEnv?: string; name?: string; fallbackSettingId?: string };
         }>;
       };
     };
+    i18n?: {
+      defaultLocale?: string;
+      resources?: Record<string, Record<string, string>>;
+    };
   };
+  const privateZh = JSON.parse(
+    readFileSync("my-plugins/anPdfsolver/locales/zh-CN.json", "utf8"),
+  ) as Record<string, string>;
   const settings = manifest.contributes?.configuration?.settings ?? [];
   const byId = (id: string) => {
     const setting = settings.find((entry) => entry.id === id);
@@ -180,11 +181,10 @@ test("PDF Agent declares host-managed connection, credential, model, and thinkin
   };
   assert.equal(byId("api-key").type, "text");
   assert.equal(byId("api-key").secret, true);
+  assert.equal(normalizePluginSettingDefinitions(settings).find((setting) => setting.id === "api-key")?.type, "secret");
   assert.equal(byId("api-url").required, true);
   assert.equal(byId("api-url").placeholder, "https://api.moonshot.cn/v1");
   assert.equal(byId("api-format").default, "openai");
-  assert.equal(byId("credential-source").default, "host-secret");
-  assert.equal(byId("credential-env-var").default, "MOONSHOT_API_KEY");
   assert.deepEqual(
     (byId("pdf-transport").options ?? []).map((option) => option.value),
     ["local-text", "kimi-file-extract"],
@@ -197,30 +197,26 @@ test("PDF Agent declares host-managed connection, credential, model, and thinkin
   );
 
   const provider = (manifest.contributes?.configuration?.connections ?? []).find(
-    (connection) => connection.id === "provider",
+    (connection) => connection.id === "kimi",
   );
-  assert.ok(provider, "manifest must declare the provider connection");
-  assert.equal(provider.credentialSourceSettingId, "credential-source");
-  assert.deepEqual(
-    provider.testActions.map((action) => action.id),
-    ["test-connection", "test-pdf-extraction"],
-  );
+  assert.ok(provider, "manifest must declare the plugin-owned Kimi connection");
+  assert.equal(provider.urlSettingId, "api-url");
+  assert.equal(provider.formatSettingId, "api-format");
+  assert.equal(provider.modelSettingId, "model");
+  assert.deepEqual((provider.testActions ?? []).map((action) => action.id), []);
   assert.deepEqual(provider.apiKey, {
-    source: "environment",
-    name: "MOONSHOT_API_KEY",
-    fallbackSettingId: "api-key",
+    source: "host-secret",
+    settingId: "api-key",
+    secretEnv: "ANYWAY_PLUGIN_SECRET_PROVIDER_API_KEY",
   });
-
-  const descriptor = JSON.parse(
-    readFileSync("plugins/sources/myc.pdf-canvas-agent/agent-manifest.json", "utf8"),
-  ) as { modelConfiguration?: { ownership?: string; agentReceivesPlaintextSecrets?: boolean } };
-  assert.equal(descriptor.modelConfiguration?.ownership, "host-managed");
-  assert.equal(descriptor.modelConfiguration?.agentReceivesPlaintextSecrets, false);
+  assert.equal(privateZh["results.connection-succeeded"], "AI 连接成功。");
+  assert.equal(privateZh["settings.credentialSource.options.hostSecret"], "在此应用中填写 API 密钥");
+  assert.match(privateZh["settings.pdfTransport.options.kimiFiles"], /Kimi|文件解析|上传/);
 });
 
-test("public progress is an advanced host setting and is recognized by runtime contracts", () => {
+test("PluginSettingsDialog is generic and does not contain PDF or provider-specific branches", () => {
   const manifest = JSON.parse(
-    readFileSync("plugins/sources/myc.pdf-canvas-agent/plugin.json", "utf8"),
+    readFileSync("my-plugins/anPdfsolver/plugin.json", "utf8"),
   ) as {
     contributes?: {
       configuration?: {
@@ -229,22 +225,19 @@ test("public progress is an advanced host setting and is recognized by runtime c
     };
   };
   const dialog = readFileSync("src/vue/components/PluginSettingsDialog.vue", "utf8");
-  const runtime = readFileSync("src-tauri/src/agent_commands.rs", "utf8");
-  const pipeline = readFileSync("plugins/sources/myc.pdf-canvas-agent/agent.yml", "utf8");
 
   const publicProgress = (manifest.contributes?.configuration?.settings ?? []).find(
-    (setting) => setting.id === PUBLIC_PROGRESS_SETTING_ID,
+    (setting) => setting.id === "public-progress",
   );
   assert.ok(publicProgress, "manifest must declare the public-progress setting");
   assert.equal(publicProgress.default, "disabled");
   assert.equal(publicProgress.group, "advanced");
 
-  assert.equal(PUBLIC_PROGRESS_SETTING_ID, "public-progress");
-  assert.equal(isPublicProgressEnabled("enabled"), true);
-  assert.equal(isPublicProgressEnabled("disabled"), false);
   assert.match(dialog, /definition\.group === "advanced"/);
-  assert.match(runtime, /\["public-progress", "publicProgress", "public_progress"\]/);
-  assert.match(pipeline, /publicProgress:[\s\S]*?settingId:\s+public-progress[\s\S]*?source:\s+assistant-content/);
+  assert.match(dialog, /definition\.type === 'secret'/);
+  assert.match(dialog, /definition\.type === 'select'/);
+  assert.match(dialog, /connectionTestActions\(connection\)/);
+  assert.doesNotMatch(dialog, /Pdf|PDF|Kimi|Moonshot|provider presets|PLUGIN_TEST_ACTION_IDS/);
 });
 
 test("plugin store promotes the latest compatible version and keeps older packages removable", () => {
@@ -262,24 +255,21 @@ test("installed plugins expose an explicit native settings action", () => {
   assert.doesNotMatch(catalog, /id:\s*"pdf-canvas-agent"/);
 });
 
-test("host settings render and invoke declarative connection test actions", () => {
+test("host settings render and invoke manifest-declared connection test actions generically", () => {
   const dialog = readFileSync("src/vue/components/PluginSettingsDialog.vue", "utf8");
   const store = readFileSync("src/vue/components/PluginStoreDialog.vue", "utf8");
   const client = readFileSync("app/plugins/tauri-client.ts", "utf8");
-  const privateZh = JSON.parse(
-    readFileSync("plugins/sources/myc.pdf-canvas-agent/locales/zh-CN.json", "utf8"),
-  ) as Record<string, string>;
   assert.match(dialog, /connectionTestActions/);
   assert.match(dialog, /onTestConnection/);
   assert.match(dialog, /connectionTesting/);
-  assert.match(dialog, /PLUGIN_TEST_ACTION_IDS\.pdfExtraction/);
-  assert.match(dialog, /Test AI connection|plugins\.testAiConnection/);
-  assert.match(dialog, /No PDF is uploaded|plugins\.testAiConnectionHint/);
+  assert.match(dialog, /v-for="action in testActions"/);
+  assert.match(dialog, /callback\.length >= 3/);
+  assert.match(dialog, /connection\.id,\s*action\.id,\s*snapshot/);
   assert.match(dialog, /pluginText\(result\.code \? `results\.\$\{result\.code\}`/);
   assert.match(dialog, /labelFor\(definition\)/);
-  assert.equal(privateZh["results.connection-succeeded"], "AI 连接成功。");
-  assert.equal(privateZh["settings.credentialSource.options.hostSecret"], "在此应用中填写 API 密钥");
+  assert.match(dialog, /optionLabelFor\(definition, option\)/);
   assert.doesNotMatch(dialog, /secretKeep|secretReplace|secretClear/);
+  assert.doesNotMatch(dialog, /test-pdf-extraction|No PDF is uploaded|plugins\.testAiConnectionHint|Kimi|Moonshot/);
   assert.match(store, /pluginHost\.testPluginConnection/);
   assert.match(client, /plugin\.connection\.test/);
   assert.doesNotMatch(client, /console\.(log|debug|info).*secret/i);

@@ -3,7 +3,6 @@ import { computed, ref, watch } from "vue";
 import {
   clonePluginSettingsDraft,
   connectionTestActions,
-  PLUGIN_TEST_ACTION_IDS,
   resolvePluginPrivateText,
   type HostPluginSettingDefinition,
   type PluginConnectionTestAction,
@@ -16,6 +15,9 @@ import { usePanelI18n } from "./panel-types";
 
 const props = defineProps<PluginSettingsDialogProps>();
 const { locale, t } = usePanelI18n();
+const secretConfiguredText = "Configured";
+const changeSecretText = "Change secret";
+const deleteSecretText = "Delete secret";
 const draft = ref<PluginSettingsDraft>(clonePluginSettingsDraft(props.draft));
 const errors = ref<Record<string, string>>({});
 const connectionTests = ref<Record<string, { status: "running" | "success" | "error"; message: string }>>({});
@@ -33,8 +35,6 @@ watch(
   { deep: true },
 );
 
-const definitionsById = computed(() => new Map(props.target.definitions.map((definition) => [definition.id, definition])));
-const hasDefinition = (id: string): boolean => definitionsById.value.has(id);
 const valueFor = (id: string): unknown => draft.value[id];
 const stringValueFor = (id: string): string => {
   const value = valueFor(id);
@@ -47,58 +47,10 @@ function credentialSourceOf(sourceDraft: PluginSettingsDraft): string {
 }
 
 const credentialSource = computed(() => credentialSourceOf(draft.value));
-const isProviderSettings = computed(() => hasDefinition("api-url") && hasDefinition("api-format"));
-const isPdfAgent = computed(() => props.target.reference.id.toLowerCase().includes("pdf") || hasDefinition("pdf-transport"));
-
-const allProviderPresets = [
-  { id: "deepseek", labelKey: "plugins.providerDeepSeek", fallback: "DeepSeek", url: "https://api.deepseek.com/anthropic", format: "anthropic", model: "deepseek-v4-flash", credentialEnvVar: "DEEPSEEK_API_KEY", pdfNative: false },
-  { id: "kimi-cn", labelKey: "providers.kimiChina", fallback: "Kimi (China)", url: "https://api.moonshot.cn/v1", format: "openai", model: "kimi-k2.6", credentialEnvVar: "MOONSHOT_API_KEY", pdfNative: true },
-  { id: "kimi-global", labelKey: "providers.kimiInternational", fallback: "Kimi (International)", url: "https://api.moonshot.ai/v1", format: "openai", model: "kimi-k2.6", credentialEnvVar: "MOONSHOT_API_KEY", pdfNative: true },
-  { id: "anthropic", labelKey: "plugins.providerAnthropic", fallback: "Anthropic", url: "https://api.anthropic.com/v1/messages", format: "anthropic", model: "claude-3-5-sonnet-latest", credentialEnvVar: "ANTHROPIC_API_KEY", pdfNative: false },
-  { id: "custom", labelKey: "providers.custom", fallback: "Custom service", url: "", format: "", model: "", credentialEnvVar: "", pdfNative: true },
-] as const;
-
-type ProviderPresetId = (typeof allProviderPresets)[number]["id"];
-const providerPresets = computed(() => isPdfAgent.value
-  ? allProviderPresets.filter((preset) => preset.pdfNative)
-  : allProviderPresets);
-
-const inferProvider = (): ProviderPresetId => {
-  const url = stringValueFor("api-url").toLowerCase();
-  if (url.includes("deepseek")) return "deepseek";
-  if (url.includes("api.moonshot.cn")) return "kimi-cn";
-  if (url.includes("api.moonshot.ai")) return "kimi-global";
-  if (url.includes("anthropic")) return "anthropic";
-  return "custom";
-};
-const provider = ref<ProviderPresetId>(inferProvider());
-
-watch(
-  () => props.draft,
-  () => {
-    provider.value = inferProvider();
-  },
-  { deep: true },
-);
-
-const basicIds = new Set(["api-key", "model", "thinking", "pdf-transport"]);
-const advancedIds = new Set(["api-url", "api-format", "credential-source", "credential-env-var"]);
-const basicDefinitions = computed(() => {
-  if (!isProviderSettings.value) return props.target.definitions;
-  const order = isPdfAgent.value
-    ? ["api-key", "api-url", "model", "thinking", "pdf-transport"]
-    : ["api-key", "model", "thinking", "pdf-transport"];
-  return props.target.definitions
-    .filter((definition) => basicIds.has(definition.id) || (isPdfAgent.value && definition.id === "api-url"))
-    .sort((left, right) => order.indexOf(left.id) - order.indexOf(right.id));
-});
-const advancedDefinitions = computed(() => {
-  if (!isProviderSettings.value) return [];
-  return props.target.definitions.filter((definition) =>
-    (advancedIds.has(definition.id) || definition.group === "connection" || definition.group === "advanced")
-    && !basicIds.has(definition.id)
-    && !(isPdfAgent.value && definition.id === "api-url"));
-});
+const basicDefinitions = computed(() =>
+  props.target.definitions.filter((definition) => definition.group !== "advanced"));
+const advancedDefinitions = computed(() =>
+  props.target.definitions.filter((definition) => definition.group === "advanced"));
 
 const updateAvailable = computed(() => {
   const latest = props.target.update?.latestVersion;
@@ -110,7 +62,6 @@ const pluginText = (
   fallback: string,
   localI18n?: HostPluginSettingDefinition["i18n"],
 ): string => resolvePluginPrivateText(props.target, locale.value, key, fallback, localI18n);
-const hostText = (key: string): string => t(key);
 
 const labelFor = (definition: HostPluginSettingDefinition): string =>
   pluginText(definition.labelKey, definition.label, definition.i18n);
@@ -164,19 +115,6 @@ const deleteSecret = (id: string): void => {
   draft.value = { ...draft.value, [id]: { action: "clear", value: "" } };
 };
 
-const applyProvider = (providerId: string): void => {
-  const preset = providerPresets.value.find((candidate) => candidate.id === providerId);
-  if (!preset) return;
-  provider.value = preset.id;
-  if (preset.url && hasDefinition("api-url")) setValue("api-url", preset.url);
-  if (preset.format && hasDefinition("api-format")) setValue("api-format", preset.format);
-  if (preset.model && hasDefinition("model")) setValue("model", preset.model);
-  if (preset.credentialEnvVar && hasDefinition("credential-env-var")) {
-    setValue("credential-env-var", preset.credentialEnvVar);
-  }
-  if (preset.id === "custom") advancedOpen.value = true;
-};
-
 const setCredentialSource = (event: Event): void => {
   setValue("credential-source", (event.target as HTMLSelectElement).value);
   advancedOpen.value = true;
@@ -197,45 +135,22 @@ const reset = async (): Promise<void> => {
   await props.onReset();
 };
 
-type UiTestAction = PluginConnectionTestAction & { hostLabelKey?: string; hostDescriptionKey?: string };
-
-const providerConnection = computed(() => props.target.connections[0]);
-const testActions = computed<UiTestAction[]>(() => {
-  const connection = providerConnection.value;
-  if (!connection) return [];
-  const declared = connectionTestActions(connection);
-  if (!isPdfAgent.value) return declared;
-  const declaredById = new Map(declared.map((action) => [action.id, action]));
-  return [
-    {
-      ...(declaredById.get(PLUGIN_TEST_ACTION_IDS.connection) ?? { id: PLUGIN_TEST_ACTION_IDS.connection, label: "", description: "" }),
-      hostLabelKey: "plugins.testAiConnection",
-      hostDescriptionKey: "plugins.testAiConnectionHint",
-    },
-    {
-      ...(declaredById.get(PLUGIN_TEST_ACTION_IDS.pdfExtraction) ?? { id: PLUGIN_TEST_ACTION_IDS.pdfExtraction, label: "", description: "" }),
-      hostLabelKey: "plugins.testPdfExtraction",
-      hostDescriptionKey: "plugins.testPdfExtractionHint",
-    },
-  ];
+const primaryConnection = computed(() => props.target.connections[0]);
+const testActions = computed<PluginConnectionTestAction[]>(() => {
+  const connection = primaryConnection.value;
+  return connection ? connectionTestActions(connection) : [];
 });
 
-const testResultKey = (action: UiTestAction): string => `${providerConnection.value?.id ?? "provider"}:${action.id}`;
-const testActionLabel = (action: UiTestAction): string =>
-  pluginText(
-    action.labelKey,
-    action.hostLabelKey ? hostText(action.hostLabelKey) : action.label,
-  );
-const testActionDescription = (action: UiTestAction): string =>
-  pluginText(
-    action.descriptionKey,
-    action.hostDescriptionKey ? hostText(action.hostDescriptionKey) : action.description ?? "",
-  );
+const testResultKey = (action: PluginConnectionTestAction): string => `${primaryConnection.value?.id ?? "connection"}:${action.id}`;
+const testActionLabel = (action: PluginConnectionTestAction): string =>
+  pluginText(action.labelKey, action.label);
+const testActionDescription = (action: PluginConnectionTestAction): string =>
+  pluginText(action.descriptionKey, action.description ?? "");
 const testResultMessage = (result: { code?: string; message: string }): string =>
   pluginText(result.code ? `results.${result.code}` : undefined, result.message);
 
-const testConnection = async (action: UiTestAction): Promise<void> => {
-  const connection = providerConnection.value;
+const testConnection = async (action: PluginConnectionTestAction): Promise<void> => {
+  const connection = primaryConnection.value;
   if (!connection || !props.onTestConnection) return;
   if (!validate()) return;
   const key = testResultKey(action);
@@ -261,11 +176,17 @@ const testConnection = async (action: UiTestAction): Promise<void> => {
   }
 };
 
-const shouldShowAdvancedDefinition = (definition: HostPluginSettingDefinition): boolean => {
+const shouldShowDefinition = (definition: HostPluginSettingDefinition): boolean => {
   if (definition.id === "credential-env-var") return credentialSource.value === "environment";
-  if (definition.id === "api-format") return isPdfAgent.value || provider.value === "custom";
-  if (definition.id === "api-url") return provider.value === "custom";
   return true;
+};
+
+const changeDefinitionValue = (definition: HostPluginSettingDefinition, event: Event): void => {
+  if (definition.id === "credential-source") setCredentialSource(event);
+  else if (definition.type === "select") setSelectValue(definition.id, event);
+  else if (definition.type === "number") setNumberValue(definition.id, event);
+  else if (definition.type === "boolean") setValue(definition.id, (event.target as HTMLInputElement).checked);
+  else setTextValue(definition.id, event);
 };
 </script>
 
@@ -301,26 +222,16 @@ const shouldShowAdvancedDefinition = (definition: HostPluginSettingDefinition): 
         <div v-if="!target.definitions.length" class="mt-4 rounded-[5px] border border-ink/15 px-4 py-5 font-serif text-[10px] text-ink/50">{{ t('plugins.noSettings') }}</div>
 
         <template v-else>
-          <section v-if="isProviderSettings && !isPdfAgent" class="mt-4 space-y-3" aria-labelledby="plugin-connection-settings-title">
-            <h3 id="plugin-connection-settings-title" class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/50">{{ t('plugins.provider') }}</h3>
-            <div class="rounded-[6px] border border-ink/15 p-4">
-              <label for="plugin-provider" class="font-serif text-[12px] text-ink/85">{{ pluginText(providerConnection?.labelKey, providerConnection?.label ?? t('plugins.provider')) }}</label>
-              <select id="plugin-provider" class="mt-3 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="provider" @change="applyProvider(($event.target as HTMLSelectElement).value)">
-                <option v-for="preset in providerPresets" :key="preset.id" :value="preset.id">{{ pluginText(preset.labelKey, preset.labelKey.startsWith('plugins.') ? hostText(preset.labelKey) : preset.fallback) }}</option>
-              </select>
-            </div>
-          </section>
-
           <section class="mt-4 space-y-3" aria-labelledby="plugin-basic-settings-title">
-            <h3 id="plugin-basic-settings-title" class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/50">{{ isProviderSettings ? t('plugins.apiKey') : t('plugins.userSettings') }}</h3>
-            <div v-for="definition in basicDefinitions" :key="definition.id" v-show="definition.id !== 'api-key' || credentialSource !== 'environment'" class="rounded-[6px] border border-ink/15 p-4">
-              <template v-if="definition.id === 'api-key' && definition.type === 'secret'">
+            <h3 id="plugin-basic-settings-title" class="font-sans text-[8px] uppercase tracking-[0.16em] text-ink/50">{{ t('plugins.userSettings') }}</h3>
+            <div v-for="definition in basicDefinitions" :key="definition.id" v-show="shouldShowDefinition(definition)" class="rounded-[6px] border border-ink/15 p-4">
+              <template v-if="definition.type === 'secret'">
                 <div class="flex items-start justify-between gap-4">
                   <div class="min-w-0">
                     <label :for="`plugin-setting-${definition.id}`" class="font-serif text-[12px] text-ink/85">{{ labelFor(definition) }}</label>
-                    <p class="mt-1 font-serif text-[9px] leading-[1.45] text-ink/50">{{ descriptionFor(definition) || t('plugins.apiKeySessionNote') }}</p>
+                    <p class="mt-1 font-serif text-[9px] leading-[1.45] text-ink/50">{{ descriptionFor(definition) || t('plugins.settingsHostControlled') }}</p>
                   </div>
-                  <span v-if="secretConfigured(definition.id) && !secretEditing(definition.id)" class="rounded-full bg-emerald-500/10 px-2 py-1 font-sans text-[8px] text-emerald-700">{{ t('plugins.apiKeyConfigured') }}</span>
+                  <span v-if="secretConfigured(definition.id) && !secretEditing(definition.id)" class="rounded-full bg-emerald-500/10 px-2 py-1 font-sans text-[8px] text-emerald-700">{{ secretConfiguredText }}</span>
                 </div>
                 <div class="mt-3 flex flex-wrap items-center gap-2">
                   <input
@@ -330,11 +241,11 @@ const shouldShowAdvancedDefinition = (definition: HostPluginSettingDefinition): 
                     autocomplete="new-password"
                     class="min-w-[220px] flex-1 rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-mono text-[11px] outline-none focus:border-blue/60"
                     :value="secretFor(definition.id).value"
-                    :placeholder="placeholderFor(definition, t('plugins.apiKeyPlaceholder'))"
+                    :placeholder="placeholderFor(definition, '')"
                     @input="setSecretValue(definition.id, $event)"
                   >
-                  <button v-if="secretConfigured(definition.id) && !secretEditing(definition.id)" type="button" class="button-secondary px-3" @click="editSecret(definition.id)">{{ t('plugins.changeApiKey') }}</button>
-                  <button v-if="secretConfigured(definition.id)" type="button" class="button-secondary px-3 text-alert" @click="deleteSecret(definition.id)">{{ t('plugins.deleteApiKey') }}</button>
+                  <button v-if="secretConfigured(definition.id) && !secretEditing(definition.id)" type="button" class="button-secondary px-3" @click="editSecret(definition.id)">{{ changeSecretText }}</button>
+                  <button v-if="secretConfigured(definition.id)" type="button" class="button-secondary px-3 text-alert" @click="deleteSecret(definition.id)">{{ deleteSecretText }}</button>
                 </div>
               </template>
 
@@ -346,46 +257,62 @@ const shouldShowAdvancedDefinition = (definition: HostPluginSettingDefinition): 
                   </div>
                 </div>
                 <div class="mt-3">
-                  <select v-if="definition.id === 'pdf-transport'" :id="`plugin-setting-${definition.id}`" class="w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" @change="setSelectValue(definition.id, $event)">
-                    <option v-for="option in definition.options" :key="option.value" :value="option.value">{{ optionLabelFor(definition, option) }}</option>
-                  </select>
-                  <select v-else-if="definition.type === 'select'" :id="`plugin-setting-${definition.id}`" class="w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" @change="setSelectValue(definition.id, $event)">
+                  <select v-if="definition.type === 'select'" :id="`plugin-setting-${definition.id}`" class="w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" @change="changeDefinitionValue(definition, $event)">
                     <option v-for="option in definition.options" :key="option.value" :value="option.value">{{ optionLabelFor(definition, option) }}</option>
                   </select>
                   <input v-else-if="definition.type === 'number'" :id="`plugin-setting-${definition.id}`" type="number" class="w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-mono text-[11px] outline-none focus:border-blue/60" :value="typeof valueFor(definition.id) === 'number' && Number.isFinite(valueFor(definition.id)) ? valueFor(definition.id) : ''" :min="definition.min" :max="definition.max" :step="definition.step" @input="setNumberValue(definition.id, $event)">
                   <input v-else-if="definition.type === 'boolean'" :id="`plugin-setting-${definition.id}`" type="checkbox" class="h-4 w-4 accent-blue" :checked="valueFor(definition.id) === true" @change="setValue(definition.id, ($event.target as HTMLInputElement).checked)">
                   <input v-else :id="`plugin-setting-${definition.id}`" type="text" class="w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" :placeholder="placeholderFor(definition, '')" @input="setTextValue(definition.id, $event)">
-                  <p v-if="definition.id === 'pdf-transport'" class="mt-2 font-serif text-[9px] leading-[1.45] text-ink/50">{{ descriptionFor(definition) }}</p>
+                  <p v-if="definition.id === 'credential-env-var'" class="mt-2 rounded-[4px] border border-ink/10 bg-canvas px-3 py-2 font-serif text-[9px] text-ink/55" role="status">{{ t('plugins.environmentWillCheck') }}</p>
                   <p v-if="errors[definition.id]" class="mt-2 font-serif text-[9px] text-alert" role="alert">{{ errors[definition.id] }}</p>
                 </div>
               </template>
             </div>
           </section>
 
-          <details v-if="isProviderSettings" class="mt-4 rounded-[6px] border border-ink/15" :open="advancedOpen" @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open">
+          <details v-if="advancedDefinitions.length" class="mt-4 rounded-[6px] border border-ink/15" :open="advancedOpen" @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open">
             <summary class="cursor-pointer list-none px-4 py-3 font-serif text-[12px] text-ink/80">{{ t('plugins.advancedSettings') }}</summary>
             <div class="space-y-3 border-t border-ink/10 p-4">
-              <div v-for="definition in advancedDefinitions" :key="definition.id" v-show="shouldShowAdvancedDefinition(definition)" class="rounded-[5px] border border-ink/10 p-3">
-                <label :for="`plugin-setting-${definition.id}`" class="font-serif text-[11px] text-ink/85">{{ labelFor(definition) }}</label>
-                <p v-if="descriptionFor(definition)" class="mt-1 font-serif text-[9px] text-ink/50">{{ descriptionFor(definition) }}</p>
-                <select v-if="definition.id === 'credential-source' || definition.id === 'api-format' || definition.type === 'select'" :id="`plugin-setting-${definition.id}`" class="mt-2 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" @change="definition.id === 'credential-source' ? setCredentialSource($event) : setSelectValue(definition.id, $event)">
-                  <option v-for="option in definition.options" :key="option.value" :value="option.value">{{ optionLabelFor(definition, option) }}</option>
-                </select>
-                <input v-else :id="`plugin-setting-${definition.id}`" type="text" class="mt-2 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" :placeholder="placeholderFor(definition, '')" @input="setTextValue(definition.id, $event)">
-                <p v-if="definition.id === 'credential-env-var'" class="mt-2 rounded-[4px] border border-ink/10 bg-canvas px-3 py-2 font-serif text-[9px] text-ink/55" role="status">{{ t('plugins.environmentWillCheck') }}</p>
-                <p v-if="errors[definition.id]" class="mt-2 font-serif text-[9px] text-alert" role="alert">{{ errors[definition.id] }}</p>
+              <div v-for="definition in advancedDefinitions" :key="definition.id" v-show="shouldShowDefinition(definition)" class="rounded-[5px] border border-ink/10 p-3">
+                <template v-if="definition.type === 'secret'">
+                  <div class="flex items-start justify-between gap-4">
+                    <div class="min-w-0">
+                      <label :for="`plugin-setting-${definition.id}`" class="font-serif text-[11px] text-ink/85">{{ labelFor(definition) }}</label>
+                      <p class="mt-1 font-serif text-[9px] text-ink/50">{{ descriptionFor(definition) || t('plugins.settingsHostControlled') }}</p>
+                    </div>
+                    <span v-if="secretConfigured(definition.id) && !secretEditing(definition.id)" class="rounded-full bg-emerald-500/10 px-2 py-1 font-sans text-[8px] text-emerald-700">{{ secretConfiguredText }}</span>
+                  </div>
+                  <div class="mt-3 flex flex-wrap items-center gap-2">
+                    <input
+                      v-if="!secretConfigured(definition.id) || secretEditing(definition.id)"
+                      :id="`plugin-setting-${definition.id}`"
+                      type="password"
+                      autocomplete="new-password"
+                      class="min-w-[220px] flex-1 rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-mono text-[11px] outline-none focus:border-blue/60"
+                      :value="secretFor(definition.id).value"
+                      :placeholder="placeholderFor(definition, '')"
+                      @input="setSecretValue(definition.id, $event)"
+                    >
+                    <button v-if="secretConfigured(definition.id) && !secretEditing(definition.id)" type="button" class="button-secondary px-3" @click="editSecret(definition.id)">{{ changeSecretText }}</button>
+                    <button v-if="secretConfigured(definition.id)" type="button" class="button-secondary px-3 text-alert" @click="deleteSecret(definition.id)">{{ deleteSecretText }}</button>
+                  </div>
+                  <p v-if="errors[definition.id]" class="mt-2 font-serif text-[9px] text-alert" role="alert">{{ errors[definition.id] }}</p>
+                </template>
+                <template v-else>
+                  <label :for="`plugin-setting-${definition.id}`" class="font-serif text-[11px] text-ink/85">{{ labelFor(definition) }}</label>
+                  <p v-if="descriptionFor(definition)" class="mt-1 font-serif text-[9px] text-ink/50">{{ descriptionFor(definition) }}</p>
+                  <select v-if="definition.type === 'select'" :id="`plugin-setting-${definition.id}`" class="mt-2 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" @change="changeDefinitionValue(definition, $event)">
+                    <option v-for="option in definition.options" :key="option.value" :value="option.value">{{ optionLabelFor(definition, option) }}</option>
+                  </select>
+                  <input v-else-if="definition.type === 'number'" :id="`plugin-setting-${definition.id}`" type="number" class="mt-2 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-mono text-[11px] outline-none focus:border-blue/60" :value="typeof valueFor(definition.id) === 'number' && Number.isFinite(valueFor(definition.id)) ? valueFor(definition.id) : ''" :min="definition.min" :max="definition.max" :step="definition.step" @input="changeDefinitionValue(definition, $event)">
+                  <input v-else-if="definition.type === 'boolean'" :id="`plugin-setting-${definition.id}`" type="checkbox" class="mt-2 h-4 w-4 accent-blue" :checked="valueFor(definition.id) === true" @change="changeDefinitionValue(definition, $event)">
+                  <input v-else :id="`plugin-setting-${definition.id}`" type="text" class="mt-2 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" :placeholder="placeholderFor(definition, '')" @input="changeDefinitionValue(definition, $event)">
+                  <p v-if="definition.id === 'credential-env-var'" class="mt-2 rounded-[4px] border border-ink/10 bg-canvas px-3 py-2 font-serif text-[9px] text-ink/55" role="status">{{ t('plugins.environmentWillCheck') }}</p>
+                  <p v-if="errors[definition.id]" class="mt-2 font-serif text-[9px] text-alert" role="alert">{{ errors[definition.id] }}</p>
+                </template>
               </div>
             </div>
           </details>
-
-          <section v-if="!isProviderSettings && advancedDefinitions.length === 0" class="mt-4 space-y-3">
-            <div v-for="definition in target.definitions.filter((candidate) => !basicIds.has(candidate.id))" :key="definition.id" class="rounded-[6px] border border-ink/15 p-4">
-              <label :for="`plugin-setting-${definition.id}`" class="font-serif text-[12px] text-ink/85">{{ labelFor(definition) }}</label>
-              <p v-if="descriptionFor(definition)" class="mt-1 font-serif text-[9px] text-ink/50">{{ descriptionFor(definition) }}</p>
-              <input v-if="definition.type === 'text'" :id="`plugin-setting-${definition.id}`" type="text" class="mt-3 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" :placeholder="placeholderFor(definition, '')" @input="setTextValue(definition.id, $event)">
-              <select v-else-if="definition.type === 'select'" :id="`plugin-setting-${definition.id}`" class="mt-3 w-full rounded-[4px] border border-ink/20 bg-paper px-3 py-2 font-serif text-[11px] outline-none focus:border-blue/60" :value="stringValueFor(definition.id)" @change="setSelectValue(definition.id, $event)"><option v-for="option in definition.options" :key="option.value" :value="option.value">{{ optionLabelFor(definition, option) }}</option></select>
-            </div>
-          </section>
 
           <section v-if="testActions.length && props.onTestConnection" class="mt-5 rounded-[6px] border border-blue/20 bg-blue-soft/30 p-4" aria-labelledby="plugin-connection-actions-title">
             <h3 id="plugin-connection-actions-title" class="font-sans text-[8px] uppercase tracking-[0.16em] text-blue">{{ t('plugins.testActions') }}</h3>
@@ -393,7 +320,6 @@ const shouldShowAdvancedDefinition = (definition: HostPluginSettingDefinition): 
               <div v-for="action in testActions" :key="action.id" class="rounded-[5px] border border-blue/15 bg-paper px-3 py-3">
                 <p class="font-serif text-[11px] text-ink/80">{{ testActionLabel(action) }}</p>
                 <p class="mt-1 min-h-[28px] font-serif text-[9px] leading-[1.4] text-ink/50">{{ testActionDescription(action) }}</p>
-                <p v-if="action.id === PLUGIN_TEST_ACTION_IDS.pdfExtraction && stringValueFor('pdf-transport') === 'kimi-file-extract'" class="mt-2 font-serif text-[9px] text-amber-700">{{ t('plugins.testPdfRemoteWarning') }}</p>
                 <p v-if="connectionTests[testResultKey(action)]" class="mt-2 font-serif text-[9px]" :class="connectionTests[testResultKey(action)].status === 'error' ? 'text-alert' : connectionTests[testResultKey(action)].status === 'running' ? 'text-blue' : 'text-emerald-700'" role="status" aria-live="polite">{{ connectionTests[testResultKey(action)].message }}</p>
                 <button type="button" class="button-secondary mt-3 w-full px-3" :disabled="saving || loading || connectionTests[testResultKey(action)]?.status === 'running'" @click="void testConnection(action)">{{ connectionTests[testResultKey(action)]?.status === 'running' ? t('plugins.connectionTestingAction') : testActionLabel(action) }}</button>
               </div>

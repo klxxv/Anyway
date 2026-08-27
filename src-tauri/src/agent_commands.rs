@@ -87,7 +87,9 @@ impl AgentJobGate {
     /// behavior for tests and legacy construction paths.
     pub fn serial() -> Self {
         Self::new(
-            Arc::new(RwLock::new(Scheduler::with_default_quota(1).expect("quota one"))),
+            Arc::new(RwLock::new(
+                Scheduler::with_default_quota(1).expect("quota one"),
+            )),
             Arc::new(RwLock::new(Supervisor::default())),
             WorkerId::new("worker.agent-host.serial").expect("serial worker id"),
             PrincipalId::new(crate::kernel::policy::NATIVE_UI_PRINCIPAL_NAME)
@@ -113,10 +115,7 @@ impl AgentJobGate {
             .await
             .expect("agent gate semaphore is never closed");
         {
-            let mut scheduler = self
-                .scheduler
-                .write()
-                .expect("agent gate scheduler lock");
+            let mut scheduler = self.scheduler.write().expect("agent gate scheduler lock");
             scheduler
                 .acquire(&self.principal)
                 .expect("semaphore already bounds concurrency to the quota");
@@ -766,7 +765,10 @@ pub(crate) async fn run_document_batch(
     }
 }
 
-pub(crate) fn import_batch_status(host: &AgentHost, batch: &ImportBatch) -> Result<ImportBatchStatus, String> {
+pub(crate) fn import_batch_status(
+    host: &AgentHost,
+    batch: &ImportBatch,
+) -> Result<ImportBatchStatus, String> {
     let jobs = batch
         .job_ids
         .iter()
@@ -1055,7 +1057,11 @@ impl ImportProgressAdapter<'_> {
             )
     }
 
-    pub(crate) fn begin_reasoning_pass(&self, pass: &str, safe_summary: &str) -> Result<(), String> {
+    pub(crate) fn begin_reasoning_pass(
+        &self,
+        pass: &str,
+        safe_summary: &str,
+    ) -> Result<(), String> {
         self.hosts
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?
@@ -1354,7 +1360,6 @@ pub fn cancel_job(
     Ok(PdfJobStatus::from(job))
 }
 
-
 // ── GraphPatch 构建（语义提取） ──
 
 /// 从 StructuredDocument 构建 reviewRequired GraphPatch。
@@ -1595,8 +1600,7 @@ mod tests {
     #[test]
     fn agent_gate_admits_two_concurrent_batches_and_fails_closed_on_the_third() {
         let scheduler = Arc::new(RwLock::new(
-            crate::kernel::scheduler::Scheduler::with_default_quota(2)
-                .expect("quota two is valid"),
+            crate::kernel::scheduler::Scheduler::with_default_quota(2).expect("quota two is valid"),
         ));
         let supervisor = Arc::new(RwLock::new(Supervisor::default()));
         let gate = AgentJobGate::new(

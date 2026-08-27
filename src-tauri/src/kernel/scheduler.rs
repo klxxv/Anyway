@@ -206,7 +206,9 @@ mod tests {
         scheduler.acquire(&native).expect("second slot");
         scheduler.release(&native);
         assert_eq!(scheduler.inflight(&native), 1);
-        scheduler.acquire(&native).expect("slot returns after release");
+        scheduler
+            .acquire(&native)
+            .expect("slot returns after release");
         scheduler.release(&native);
         scheduler.release(&native);
         assert_eq!(scheduler.inflight(&native), 0);

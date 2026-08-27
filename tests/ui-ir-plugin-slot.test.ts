@@ -190,7 +190,7 @@ function findVNode(
 
 test("PluginSlot renders a known slot and returns Comment for an unknown slot", () => {
   const setup = PluginSlot.setup as unknown as (
-    props: { slotId: string; contributions?: readonly UiIrPluginContribution[] },
+    props: { slotId: string; contributions?: readonly UiIrPluginContribution[]; nativeSlotRenderers?: Readonly<Record<string, () => unknown>> },
     ctx: {
       slots: Record<string, unknown>;
       emit: () => void;
@@ -217,7 +217,11 @@ test("PluginSlot renders a known slot and returns Comment for an unknown slot", 
     { pluginId: "example.plugin", ir },
   ];
 
-  const renderKnown = setup({ slotId: "node-inspector", contributions }, {
+  const renderKnown = setup({
+    slotId: "node-inspector",
+    contributions,
+    nativeSlotRenderers: { "node-inspector": () => ({ type: "span", props: { "data-ui-ir-native": "node-inspector" } }) },
+  }, {
     slots: {},
     emit: () => undefined,
     attrs: {},

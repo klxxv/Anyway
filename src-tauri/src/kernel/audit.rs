@@ -152,7 +152,8 @@ impl AuditLedger {
             sequence,
             principal,
             operation: bound_chars(operation, MAX_AUDIT_OPERATION_CHARS),
-            trace_parent: trace_parent.map(|value| bound_chars(value, MAX_AUDIT_TRACE_PARENT_CHARS)),
+            trace_parent: trace_parent
+                .map(|value| bound_chars(value, MAX_AUDIT_TRACE_PARENT_CHARS)),
             timestamp_ms,
             outcome,
         });
@@ -198,11 +199,7 @@ mod tests {
         PrincipalId::new(name).expect("principal")
     }
 
-    fn record_one(
-        ledger: &mut AuditLedger,
-        sequence_label: u64,
-        outcome: AuditOutcome,
-    ) -> u64 {
+    fn record_one(ledger: &mut AuditLedger, sequence_label: u64, outcome: AuditOutcome) -> u64 {
         ledger.record(
             principal("native.ui"),
             format!("op.{sequence_label}"),
@@ -251,7 +248,10 @@ mod tests {
         assert_eq!(ledger.len(), 3);
         let events = ledger.query(1, 100);
         assert_eq!(
-            events.iter().map(|event| event.sequence).collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
             vec![3, 4, 5],
             "the oldest events must be evicted from the front"
         );
@@ -261,7 +261,10 @@ mod tests {
         assert_eq!(ledger.len(), 3);
         let events = ledger.query(1, 100);
         assert_eq!(
-            events.iter().map(|event| event.sequence).collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
             vec![4, 5, 6]
         );
     }
@@ -344,10 +347,7 @@ mod tests {
 
     #[test]
     fn config_rejects_zero_max_events_and_defaults_to_1024() {
-        assert!(matches!(
-            AuditConfig::new(0),
-            Err(AuditError::Invalid(_))
-        ));
+        assert!(matches!(AuditConfig::new(0), Err(AuditError::Invalid(_))));
         assert_eq!(
             AuditConfig::default(),
             AuditConfig {
@@ -366,7 +366,10 @@ mod tests {
     #[test]
     fn audit_errors_stringify_for_transport_boundaries() {
         let message = AuditError::Invalid("max_events must be non-zero".to_string()).to_string();
-        assert!(message.contains("invalid audit ledger input"), "message: {message}");
+        assert!(
+            message.contains("invalid audit ledger input"),
+            "message: {message}"
+        );
         assert!(message.contains("max_events"), "message: {message}");
     }
 }

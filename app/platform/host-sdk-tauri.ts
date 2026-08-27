@@ -5,12 +5,15 @@ import {
 } from "./host-sdk";
 
 export const KERNEL_HOST_CALL_COMMAND = "kernel_host_call" as const;
+export const KERNEL_HOST_CANCEL_COMMAND = "kernel_host_cancel" as const;
 export const TAURI_HOST_UNAVAILABLE_MESSAGE = "Anyway Host SDK requires a Tauri runtime";
 
 export type TauriInvokeAdapter = (
   command: typeof KERNEL_HOST_CALL_COMMAND,
   args: { request: HostCallRequest },
 ) => Promise<unknown>;
+
+export type TauriCancelAdapter = (requestId: string) => Promise<unknown>;
 
 export class TauriHostUnavailableError extends Error {
   readonly code = "TAURI_HOST_UNAVAILABLE";
@@ -39,6 +42,7 @@ function isTauriRuntime(): boolean {
 
 function invokeWithAbort<T>(
   invokeAdapter: TauriInvokeAdapter,
+  cancelAdapter: TauriCancelAdapter | undefined,
   request: HostCallRequest,
   signal?: AbortSignal,
 ): Promise<HostCallResponse<T>> {
@@ -51,7 +55,10 @@ function invokeWithAbort<T>(
 
   let removeAbortListener: () => void = () => undefined;
   const abortPromise = new Promise<never>((_, reject) => {
-    const onAbort = () => reject(abortError());
+    const onAbort = () => {
+      void cancelAdapter?.(request.requestId).catch(() => undefined);
+      reject(abortError());
+    };
     signal.addEventListener("abort", onAbort, { once: true });
     removeAbortListener = () => signal.removeEventListener("abort", onAbort);
   });
@@ -65,10 +72,10 @@ function invokeWithAbort<T>(
   return Promise.race([invokePromise, abortPromise]).finally(removeAbortListener);
 }
 
-export function createTauriHostSdkTransport(invokeAdapter: TauriInvokeAdapter): HostSdkTransport {
+export function createTauriHostSdkTransport(invokeAdapter: TauriInvokeAdapter, cancelAdapter?: TauriCancelAdapter): HostSdkTransport {
   return {
     invoke<T>(request: HostCallRequest, signal?: AbortSignal) {
-      return invokeWithAbort<T>(invokeAdapter, request, signal);
+      return invokeWithAbort<T>(invokeAdapter, cancelAdapter, request, signal);
     },
   };
 }
@@ -83,6 +90,12 @@ async function defaultInvokeAdapter<T>(
   return invoke<T>(command, args);
 }
 
+async function defaultCancelAdapter(requestId: string): Promise<unknown> {
+  if (!isTauriRuntime()) throw new TauriHostUnavailableError();
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke(KERNEL_HOST_CANCEL_COMMAND, { requestId });
+}
+
 export function createDefaultTauriHostSdkTransport(): HostSdkTransport {
-  return createTauriHostSdkTransport(defaultInvokeAdapter);
+  return createTauriHostSdkTransport(defaultInvokeAdapter, defaultCancelAdapter);
 }

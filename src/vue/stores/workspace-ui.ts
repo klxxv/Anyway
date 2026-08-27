@@ -8,7 +8,6 @@ import type {
   ComposerState,
   DiffFocus,
   DiffMode,
-  PdfCompileResult,
   WorkspaceNotice,
   WorkspacePreferences,
 } from "../components/workspace-shell-types";
@@ -42,11 +41,7 @@ export const useWorkspaceUiStore = defineStore("workspace-ui", () => {
   const notice = ref<WorkspaceNotice | null>(null);
   const noticeSequence = ref(0);
   const preferences = ref<WorkspacePreferences>({ ...defaultWorkspacePreferences });
-  const pdfDialogOpen = ref(false);
-  const reviewJobId = ref<string | null>(null);
   const highlightChain = ref<WorkspaceHighlightChain | null>(null);
-  const pdfCompileResult = ref<PdfCompileResult | null>(null);
-  const pdfCompileError = ref("");
   const diffOpen = ref(false);
   const diffMode = ref<DiffMode>("side-by-side");
   const diffBaseId = ref("current");
@@ -117,7 +112,6 @@ export const useWorkspaceUiStore = defineStore("workspace-ui", () => {
     settingsOpen.value = false;
     pluginStoreOpen.value = false;
     connectMode.value = false;
-    pdfDialogOpen.value = false;
   }
 
   function resetForProject() {
@@ -125,8 +119,6 @@ export const useWorkspaceUiStore = defineStore("workspace-ui", () => {
     linkFilter.value = null;
     notice.value = null;
     highlightChain.value = null;
-    pdfCompileResult.value = null;
-    pdfCompileError.value = "";
     menuOpen.value = false;
   }
 
@@ -145,11 +137,7 @@ export const useWorkspaceUiStore = defineStore("workspace-ui", () => {
     notice,
     noticeSequence,
     preferences,
-    pdfDialogOpen,
-    reviewJobId,
     highlightChain,
-    pdfCompileResult,
-    pdfCompileError,
     diffOpen,
     diffMode,
     diffBaseId,

@@ -1,5 +1,6 @@
 /**
- * PluginSlot: renders every plugin contribution bound to one host slot.
+ * PluginSlot: renders legacy declarative-ui contributions for one UI-IR surface.
+ * Physical Host placement slots are handled by PluginContributionSlot.vue.
  *
  * A `.vue`-free `defineComponent` that uses `h()` directly, matching the
  * allowlist renderer. It deliberately does not import Pinia: state, action
@@ -16,6 +17,7 @@ import {
 import {
   permissionPolicyForContributions,
   type UiIrDocument,
+  type UiIrActionDispatcher,
   type UiIrSlotContribution,
   type UiIrStateBinding,
 } from "../../../../app/plugins/ui-ir";
@@ -35,11 +37,15 @@ export type UiIrPluginContribution = {
   readonly ir: UiIrDocument;
 };
 
+export type UiIrNativeSlotRenderers = Readonly<Record<string, () => VNodeChild>>;
+
 export type PluginSlotProps = {
   readonly slotId: string;
   readonly contributions?: readonly UiIrPluginContribution[];
   readonly registry?: UiIrSlotRegistry;
   readonly hostSdk?: HostSdk;
+  readonly dispatchAction?: UiIrActionDispatcher;
+  readonly nativeSlotRenderers?: UiIrNativeSlotRenderers;
   readonly state?: UiIrState;
   readonly setState?: (binding: UiIrStateBinding, value: string) => void;
 };
@@ -87,13 +93,22 @@ function renderPluginSlot(
       state: props.state,
       setState: props.setState,
       allowedSlots: [...registry.keys()],
-      dispatchAction: props.hostSdk
+      slots: Object.fromEntries(
+        [...registry.entries()].map(([slotId, slot]) => [
+          slotId,
+          () => {
+            const rendered = props.nativeSlotRenderers?.[slotId]?.();
+            return rendered === undefined ? [] : [h("span", { class: "ui-ir-native-slot" }, rendered ?? "")];
+          },
+        ]),
+      ),
+      dispatchAction: props.dispatchAction ?? (props.hostSdk
         ? createUiIrActionDispatcher(props.hostSdk, contribution.pluginId, permissions)
-        : undefined,
+        : undefined),
     }));
   }
 
-  const native = descriptor.render?.();
+  const native = props.nativeSlotRenderers?.[props.slotId]?.();
   if (children.length === 0 && isEmptyVNodeChild(native)) {
     return h(Comment, `no UI IR contribution for slot '${props.slotId}'`);
   }
@@ -114,6 +129,8 @@ export const PluginSlot = defineComponent({
     },
     registry: { type: Object as PropType<UiIrSlotRegistry>, required: false },
     hostSdk: { type: Object as PropType<HostSdk>, required: false },
+    dispatchAction: { type: Function as PropType<PluginSlotProps["dispatchAction"]>, required: false },
+    nativeSlotRenderers: { type: Object as PropType<UiIrNativeSlotRenderers>, required: false },
     state: { type: Object as PropType<UiIrState>, required: false },
     setState: { type: Function as PropType<PluginSlotProps["setState"]>, required: false },
   },

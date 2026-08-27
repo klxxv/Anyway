@@ -131,11 +131,24 @@ export type UiIrActionRequest = {
   readonly parameters: UiIrJsonRecord;
 };
 
-/** One declarative UI contribution bound to a named host slot. */
-export type UiIrSlotContribution = {
+/**
+ * Manifest-only source/artifact reference for the legacy declarative-ui path.
+ * Trusted Vue frontends use `frontend + contributes.ui` instead.
+ */
+export type UiIrSourceContribution = {
+  readonly slotId: string;
+  readonly source: string;
+  readonly artifact: string;
+};
+
+/** Hydrated, host-validated contribution passed to PluginSlot. */
+export type UiIrHydratedContribution = {
   readonly slotId: string;
   readonly ir: UiIrDocument;
 };
+
+/** Compatibility name for existing runtime-only callers. */
+export type UiIrSlotContribution = UiIrHydratedContribution;
 
 export type UiIrActionDispatcher = (
   request: UiIrActionRequest,

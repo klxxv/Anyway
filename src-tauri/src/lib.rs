@@ -14,7 +14,6 @@ pub mod native_plugins;
 pub mod pdf_agent_v4;
 pub mod pdf_pipeline;
 pub mod plugin_manifest_v2;
-mod vsix_importer;
 mod plugin_settings;
 mod plugin_vm;
 mod plugins;
@@ -22,14 +21,15 @@ mod projects;
 mod signing;
 #[cfg(windows)]
 mod trackpad;
+mod vsix_importer;
 mod workspace_host;
 
 // ── PDF Agent 多阶段提取走 myc.llm.v4 抽取 + host bus 编译(见 pdf_agent_v4)──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let kernel_state = kernel_commands::create_kernel_state()
-        .expect("kernel Host Bus routes must be valid");
+    let kernel_state =
+        kernel_commands::create_kernel_state().expect("kernel Host Bus routes must be valid");
     let agent_gate = kernel_commands::agent_gate_for(&kernel_state);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -41,7 +41,8 @@ pub fn run() {
         .manage(llm_provider_registry::ProviderRegistryState::default())
         .manage(kernel_commands::CapabilityPolicyState::default())
         .invoke_handler(tauri::generate_handler![
-            kernel_commands::kernel_host_call
+            kernel_commands::kernel_host_call,
+            kernel_commands::kernel_host_cancel
         ])
         .setup(|app| {
             if let Err(error) = plugins::install_pending_packages(app.handle()) {

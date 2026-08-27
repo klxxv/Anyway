@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcanvas.dev/plugins/myc.pdf-canvas-agent/schemas/graph-patch.schema.json",
+  "title": "PDF Agent Review-Gated GraphPatch",
+  "description": "Final Pass F output aligned with graphpatch_gen::types::PluginGraphPatch.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "researchcanvas.dev/graph-patch/v1alpha1" },
+    "source": { "$ref": "#/$defs/patchSource" },
+    "title": { "type": "string" },
+    "summary": { "type": "string" },
+    "reviewRequired": { "const": true },
+    "operations": { "type": "array", "items": { "$ref": "#/$defs/operation" } }
+  },
+  "required": ["apiVersion", "source", "title", "summary", "reviewRequired", "operations"],
+  "$defs": {
+    "patchSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pluginId": { "const": "myc.pdf-canvas-agent" },
+        "pluginVersion": { "type": "string", "minLength": 1 },
+        "operation": { "type": "string", "minLength": 1 },
+        "externalId": { "type": ["string", "null"] },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "projectId": { "type": "string", "minLength": 1 },
+        "baseRevision": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["pluginId", "pluginVersion", "operation", "sessionId", "projectId", "baseRevision"]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": { "type": "string" },
+        "actorId": { "type": ["string", "null"] },
+        "modelId": { "type": ["string", "null"] },
+        "promptVersion": { "type": ["string", "null"] }
+      },
+      "required": ["origin"]
+    },
+    "graphNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "body": { "type": "string", "default": "" },
+        "tags": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "data": {},
+        "provenance": { "anyOf": [{ "$ref": "#/$defs/provenance" }, { "type": "null" }] }
+      },
+      "required": ["id", "type", "title", "data"]
+    },
+    "experimentData": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "metric": { "type": ["string", "null"] },
+        "baseline": { "type": ["number", "null"] },
+        "value": { "type": ["number", "null"] },
+        "delta": { "type": ["number", "null"] },
+        "outcome": { "type": "string", "default": "neutral" },
+        "status": { "type": "string", "default": "completed" }
+      },
+      "required": ["id", "label"]
+    },
+    "graphEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "note": { "type": ["string", "null"] },
+        "data": {},
+        "polarity": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "experiment": { "anyOf": [{ "$ref": "#/$defs/experimentData" }, { "type": "null" }] },
+        "provenance": { "anyOf": [{ "$ref": "#/$defs/provenance" }, { "type": "null" }] }
+      },
+      "required": ["id", "source", "target", "type", "data"]
+    },
+    "evidenceLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fileName": { "type": ["string", "null"] },
+        "page": { "type": ["integer", "null"], "minimum": 0 },
+        "section": { "type": ["string", "null"] },
+        "quote": { "type": ["string", "null"] },
+        "startOffset": { "type": ["integer", "null"], "minimum": 0 },
+        "endOffset": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "evidenceData": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sourceType": { "type": "string" },
+        "sourceId": { "type": "string" },
+        "title": { "type": "string" },
+        "authors": { "type": ["string", "null"] },
+        "year": { "type": ["integer", "null"], "minimum": 0 },
+        "doi": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "locator": { "anyOf": [{ "$ref": "#/$defs/evidenceLocator" }, { "type": "null" }] }
+      },
+      "required": ["id", "sourceType", "sourceId", "title"]
+    },
+    "operation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "op": { "const": "add-node" }, "node": { "$ref": "#/$defs/graphNode" } },
+          "required": ["op", "node"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "op": { "const": "add-edge" }, "edge": { "$ref": "#/$defs/graphEdge" } },
+          "required": ["op", "edge"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "op": { "const": "update-node" }, "nodeId": { "type": "string" }, "changes": {} },
+          "required": ["op", "nodeId", "changes"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "op": { "const": "update-edge" }, "edgeId": { "type": "string" }, "changes": {} },
+          "required": ["op", "edgeId", "changes"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "op": { "const": "add-evidence" }, "evidence": { "$ref": "#/$defs/evidenceData" } },
+          "required": ["op", "evidence"]
+        }
+      ]
+    }
+  }
+}

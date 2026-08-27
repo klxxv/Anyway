@@ -23,8 +23,10 @@
 pub mod audit;
 pub mod blob;
 pub mod events;
+pub mod graph_patch;
 pub mod ir;
 pub mod lease;
+pub mod python_worker;
 pub mod services;
 pub mod storage;
 pub mod workers;

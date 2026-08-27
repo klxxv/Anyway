@@ -823,10 +823,21 @@ fn upload_file_name(path: &Path) -> String {
 }
 
 fn is_retryable_transport_error(error: &LlmError) -> bool {
-    matches!(
-        error,
-        LlmError::RateLimited | LlmError::ServerError { .. } | LlmError::HttpError(_)
-    )
+    match error {
+        LlmError::RateLimited | LlmError::ServerError { .. } | LlmError::HttpError(_) => true,
+        // A stream that terminates before its completion marker (or never
+        // delivers content) is a provider-side transport anomaly: the partial
+        // response is discarded either way, so a bounded retry is safe and
+        // keeps per-section extraction from failing a whole job on one cut
+        // stream.
+        LlmError::ParseError(message) => {
+            message.starts_with("Kimi SSE ended before")
+                || message.starts_with("Kimi Anthropic SSE ended before")
+                || message.starts_with("Kimi SSE did not contain content deltas")
+                || message.starts_with("Kimi Anthropic SSE did not contain text deltas")
+        }
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1475,6 +1486,31 @@ mod tests {
             Some(ThinkingMode::Enabled)
         );
         assert!(matches!(normalized.backend, Backend::KimiK26(_)));
+    }
+
+    #[test]
+    fn stream_termination_errors_are_retryable_parse_failures() {
+        // 被截断的流是 provider 侧瞬态异常:重试安全。真正的事件级 JSON
+        // 解析失败仍不可重试(确定性)。
+        // Truncated streams are provider-side transients: retrying is safe.
+        // Genuine per-event JSON parse failures stay non-retryable.
+        for message in [
+            "Kimi SSE ended before the [DONE] marker",
+            "Kimi Anthropic SSE ended before message_stop",
+            "Kimi SSE did not contain content deltas",
+            "Kimi Anthropic SSE did not contain text deltas",
+        ] {
+            assert!(
+                is_retryable_transport_error(&LlmError::ParseError(message.to_string())),
+                "{message} must retry"
+            );
+        }
+        assert!(
+            !is_retryable_transport_error(&LlmError::ParseError(
+                "Kimi SSE event: expected ident".to_string()
+            )),
+            "event-level parse failures must stay non-retryable"
+        );
     }
 
     #[test]
