@@ -38,7 +38,7 @@ function isTouchDevice() {
   return window.matchMedia("(hover: none), (pointer: coarse)").matches;
 }
 
-const position = ref({ x: -100, y: -100 });
+const cursorLayer = ref<HTMLDivElement | null>(null);
 const hover = ref(false);
 const visible = ref(false);
 const longPress = ref(false);
@@ -55,7 +55,12 @@ function onMouseMove(event: MouseEvent) {
   visible.value = true;
   if (animationFrame) return;
   animationFrame = window.requestAnimationFrame(() => {
-    position.value = { x: targetX, y: targetY };
+    // Pointer coordinates are ephemeral rendering data. Writing them directly
+    // to one compositor layer avoids scheduling a Vue render and diff on every
+    // animation frame while keeping semantic cursor state reactive.
+    if (cursorLayer.value) {
+      cursorLayer.value.style.transform = `translate3d(${targetX}px, ${targetY}px, 0)`;
+    }
     animationFrame = 0;
   });
 }
@@ -114,20 +119,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <template v-if="enabled">
+  <div
+    v-if="enabled"
+    ref="cursorLayer"
+    class="custom-cursor-layer"
+    :style="{ opacity: visible ? 1 : 0 }"
+    aria-hidden="true"
+  >
     <div
       class="custom-cursor-ring"
       :class="{ 'is-hover': hover, 'is-longpress': longPress, 'is-selection': selectionMode }"
-      :style="{ translate: `${position.x}px ${position.y}px`, opacity: visible ? 1 : 0 }"
-      aria-hidden="true"
     />
     <div
       class="custom-cursor-dot"
       :class="{ 'is-longpress': longPress, 'is-selection': selectionMode }"
-      :style="{ transform: `translate(${position.x}px, ${position.y}px)`, opacity: visible ? 1 : 0 }"
-      aria-hidden="true"
     />
-  </template>
+  </div>
 </template>
 
 <style scoped>

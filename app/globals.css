@@ -484,13 +484,21 @@ html.custom-cursor-active * {
   cursor: none !important;
 }
 
-.custom-cursor-ring {
+.custom-cursor-layer {
   position: fixed;
   top: 0;
   left: 0;
   pointer-events: none;
   z-index: 9999;
-  will-change: translate, transform, opacity;
+  transform: translate3d(-100px, -100px, 0);
+  will-change: transform, opacity;
+  transition: opacity 0.3s ease;
+}
+
+.custom-cursor-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 36px;
   height: 36px;
   margin-left: -18px;
@@ -557,12 +565,11 @@ html.custom-cursor-active * {
 
 /* The central dot – marks absolute cursor position. */
 .custom-cursor-dot {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   pointer-events: none;
-  z-index: 9999;
-  will-change: transform, opacity, width, height, margin;
+  will-change: opacity, width, height, margin;
   width: 5px;
   height: 5px;
   margin-left: -2.5px;
@@ -598,6 +605,7 @@ html.custom-cursor-active * {
 
 /* Restore native cursor on touch / coarse-pointer devices. */
 @media (hover: none), (pointer: coarse) {
+  .custom-cursor-layer,
   .custom-cursor-ring,
   .custom-cursor-dot {
     display: none;
