@@ -12,6 +12,7 @@ directory, then Desktop installs from that staged package.
 | Official/development source | `my-plugins/<plugin-folder>/` | tracked | plugin developers | Editable plugin sources such as `anPdfsolver`, `ancordis`, and `anmarket`. These are not scanned by Desktop dev unless explicitly enabled. |
 | Third-party source/cache | `my-third-plugins/` | ignored | local user | Local marketplace downloads, imported packages, Japanese locale package, One Dark Pro package, or other external packages. Never auto-loaded by Desktop dev. |
 | Dev staged runtime | `.plugin-runtime/dev/` | ignored | staging script + Desktop dev | Generated runtime used by `npm run desktop dev`. Contains `packages/`, `installed/`, `quarantine/`, and `dev-manifest.json`. |
+| Test staged runtime | `.plugin-runtime/test/` | ignored | automated tests | Disposable runtime used by staging tests so test cleanup never mutates the developer's active runtime. |
 | Release staged runtime | `.plugin-runtime/release-staging/` | ignored | release packaging | Generated release resource input. The release bundle copies only explicit packages listed in `config/plugin-loading.json`. |
 | Formal installed state | Desktop-managed app data | outside repo | Desktop installer | Verified expanded packages and user install state. This location is not a development source root and is managed by the application. |
 
@@ -50,6 +51,12 @@ Stage release resources:
 
 ```bash
 node scripts/stage-plugin-runtime.mjs release
+```
+
+Stage an isolated disposable test runtime:
+
+```bash
+node scripts/stage-plugin-runtime.mjs test
 ```
 
 Pack a plugin source into a package:

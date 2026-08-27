@@ -6,6 +6,7 @@
   },
   "runtimeRoots": {
     "dev": ".plugin-runtime/dev",
+    "test": ".plugin-runtime/test",
     "release": ".plugin-runtime/release-staging"
   },
   "desktopDev": {

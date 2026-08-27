@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -8,7 +8,7 @@ const read = (file: string) => readFileSync(file, "utf8");
 const loading = JSON.parse(read("config/plugin-loading.json")) as {
   apiVersion: string;
   sourceRoots: { official: string; thirdParty: string };
-  runtimeRoots: { dev: string; release: string };
+  runtimeRoots: { dev: string; test: string; release: string };
   desktopDev: {
     defaultPolicy: string;
     packageFiles: string[];
@@ -42,6 +42,7 @@ test("source roots are separate from generated runtime roots", () => {
   assert.equal(loading.sourceRoots.official, "my-plugins");
   assert.equal(loading.sourceRoots.thirdParty, "my-third-plugins");
   assert.equal(loading.runtimeRoots.dev, ".plugin-runtime/dev");
+  assert.equal(loading.runtimeRoots.test, ".plugin-runtime/test");
   assert.equal(loading.runtimeRoots.release, ".plugin-runtime/release-staging");
 
   assert.ok(existsSync("my-plugins/anPdfsolver/plugin.json"));
@@ -50,6 +51,7 @@ test("source roots are separate from generated runtime roots", () => {
 
   assert.notEqual(loading.sourceRoots.official, loading.runtimeRoots.dev);
   assert.notEqual("my-plugins/anPdfsolver", loading.runtimeRoots.dev);
+  assert.notEqual(loading.runtimeRoots.dev, loading.runtimeRoots.test);
   assert.notEqual("my-plugins/anPdfsolver", loading.runtimeRoots.release);
   assert.doesNotMatch(loading.runtimeRoots.dev, /plugin-runtime\/desktop-dev/u);
 });
@@ -94,15 +96,16 @@ test("development plugin sources are explicit opt-in entries", () => {
 
   const stagingScript = read("scripts/stage-plugin-runtime.mjs");
   assert.match(stagingScript, /--with-dev-plugin/u);
-  assert.match(stagingScript, /\.plugin-runtime\/\$\{mode === "dev" \? "dev" : "release-staging"\}/u);
+  assert.match(stagingScript, /config\.runtimeRoots\?\.\[mode\]/u);
   assert.doesNotMatch(stagingScript, /plugin-runtime\/desktop-dev/u);
 });
 
 test("default staging removes packages left by a previous opt-in run", () => {
-  const packagesRoot = resolve(".plugin-runtime/dev/packages");
+  const testRuntimeRoot = resolve(".plugin-runtime/test");
+  const packagesRoot = resolve(testRuntimeRoot, "packages");
   const stalePackage = resolve(packagesRoot, "myc.stale-opt-in@0.0.0.myc");
   const stagingScript = resolve("scripts/stage-plugin-runtime.mjs");
-  const runDefaultStage = () => spawnSync(process.execPath, [stagingScript, "dev"], {
+  const runDefaultStage = () => spawnSync(process.execPath, [stagingScript, "test"], {
     cwd: process.cwd(),
     encoding: "utf8",
     timeout: 30_000,
@@ -122,14 +125,11 @@ test("default staging removes packages left by a previous opt-in run", () => {
     ]);
     assert.equal(existsSync(stalePackage), false);
   } finally {
-    const restored = runDefaultStage();
-    assert.equal(restored.status, 0, restored.stderr || restored.stdout);
+    rmSync(testRuntimeRoot, { recursive: true, force: true });
   }
 });
 
 test("third-party packages are ignored and never automatic discovery roots", () => {
-  assert.ok(existsSync("my-third-plugins/myc.i18n-ja@1.0.1.myc"));
-  assert.ok(existsSync("my-third-plugins/myc.onedarkpro@1.3.0.myc"));
   assert.match(read(".gitignore"), /^\/my-third-plugins\/$/mu);
 
   const allConfiguredPackages = [

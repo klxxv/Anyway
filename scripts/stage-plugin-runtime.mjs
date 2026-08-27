@@ -23,12 +23,14 @@ const repository = process.cwd();
 const args = process.argv.slice(2);
 const mode = args.shift();
 
-if (mode !== "dev" && mode !== "release") {
+if (mode !== "dev" && mode !== "test" && mode !== "release") {
   console.error(
-    "usage: node scripts/stage-plugin-runtime.mjs <dev|release> [--with-dev-plugin <pluginId>] [--clean-plugin <pluginId>@<version>]",
+    "usage: node scripts/stage-plugin-runtime.mjs <dev|test|release> [--with-dev-plugin <pluginId>] [--clean-plugin <pluginId>@<version>]",
   );
   process.exit(2);
 }
+
+const developmentMode = mode === "dev" || mode === "test";
 
 const cliDevPlugins = [];
 let cleanPluginVersion = null;
@@ -54,8 +56,8 @@ for (let index = 0; index < args.length; index += 1) {
 const configPath = path.join(repository, "config", "plugin-loading.json");
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 const runtimeRoot = resolveRepoPath(
-  config.runtimeRoots?.[mode === "dev" ? "dev" : "release"]
-    ?? `.plugin-runtime/${mode === "dev" ? "dev" : "release-staging"}`,
+  config.runtimeRoots?.[mode]
+    ?? `.plugin-runtime/${mode === "release" ? "release-staging" : mode}`,
   "runtime root",
 );
 const packagesRoot = path.join(runtimeRoot, "packages");
@@ -63,7 +65,7 @@ const installedRoot = path.join(runtimeRoot, "installed");
 const quarantineRoot = path.join(runtimeRoot, "quarantine");
 
 mkdirSync(packagesRoot, { recursive: true });
-if (mode === "dev") {
+if (developmentMode) {
   mkdirSync(installedRoot, { recursive: true });
   mkdirSync(quarantineRoot, { recursive: true });
 }
@@ -72,19 +74,19 @@ if (cleanPluginVersion) {
   cleanStagedPluginVersion(cleanPluginVersion);
 }
 
-const modeConfig = mode === "dev" ? config.desktopDev : config.release;
+const modeConfig = developmentMode ? config.desktopDev : config.release;
 const packageFiles = Array.isArray(modeConfig.packageFiles) ? modeConfig.packageFiles : [];
 const freshBuilds = resolveFreshBuilds(mode);
 const stagedPackages = [];
 
-if (mode === "dev") {
+if (developmentMode) {
   pruneDisabledInstalledPlugins(new Set([
     ...(modeConfig.allowedPluginIds ?? []),
     ...freshBuilds.map((build) => build.pluginId),
   ]));
 }
 
-if (mode === "dev") {
+if (developmentMode) {
   const removedPath = path.join(runtimeRoot, "removed-plugins.json");
   const legacyRemovedPath = path.join(repository, "plugins", "removed-plugins.json");
   let removed = readJsonArrayIfPresent(removedPath);
@@ -133,7 +135,7 @@ for (const relativeSource of packageFiles) {
 pruneUndeclaredPackages(new Set(stagedPackages));
 
 writeFileSync(
-  path.join(runtimeRoot, mode === "release" ? "release-manifest.json" : "dev-manifest.json"),
+  path.join(runtimeRoot, `${mode}-manifest.json`),
   `${JSON.stringify({
     apiVersion: config.apiVersion,
     mode,
@@ -148,7 +150,7 @@ console.log(`${mode} plugin runtime staged at ${runtimeRoot}`);
 
 function resolveFreshBuilds(stageMode) {
   const configured = Array.isArray(modeConfig.freshBuilds) ? modeConfig.freshBuilds : [];
-  if (stageMode !== "dev") return configured;
+  if (stageMode === "release") return configured;
 
   const declared = new Map((config.developmentPlugins ?? []).map((entry) => [entry.pluginId, entry]));
   const enabledIds = new Set([

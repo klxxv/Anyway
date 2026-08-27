@@ -14,6 +14,7 @@
     "start": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "desktop:dev": "npm run plugins:stage-dev && tauri dev",
     "plugins:stage-dev": "node scripts/stage-plugin-runtime.mjs dev",
+    "plugins:stage-test": "node scripts/stage-plugin-runtime.mjs test",
     "plugins:stage-release": "node scripts/stage-plugin-runtime.mjs release",
     "import:vsix": "python scripts/import_vscode_vsix.py",
     "tauri": "tauri",

@@ -14,6 +14,7 @@ plugins/
 my-plugins/                       version-controlled official plugin sources
 my-third-plugins/                 ignored local third-party package inbox
 .plugin-runtime/dev/              ignored generated desktop-dev runtime
+.plugin-runtime/test/             ignored disposable automated-test runtime
 ```
 
 A `.myc` file is a ZIP archive with `plugin.json` and one kind-specific entry:
@@ -34,7 +35,7 @@ Build a package:
 # Canonical packager (deterministic STORE zip, optional Ed25519 signing):
 node scripts/pack-plugin.mjs \
   my-plugins/anPdfsolver \
-  plugins/packages/myc.pdf-canvas-agent@0.4.0.myc
+  plugins/packages/myc.pdf-canvas-agent@0.5.0.myc
 
 ```
 
@@ -59,7 +60,7 @@ The staging script can also clean one exact generated version without touching
 source directories:
 
 ```bash
-node scripts/stage-plugin-runtime.mjs dev --clean-plugin myc.pdf-canvas-agent@0.4.0
+node scripts/stage-plugin-runtime.mjs dev --clean-plugin myc.pdf-canvas-agent@0.5.0
 ```
 
 That command is intentionally narrow: it accepts an exact `pluginId@version`

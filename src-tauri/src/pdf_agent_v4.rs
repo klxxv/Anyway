@@ -134,8 +134,6 @@ pub struct V4FragmentEvidence {
 }
 
 /// Locate the plugin prompt directory: repository sources in debug builds,
-/// installed package prompts otherwise (highest version first).
-/// Locate the plugin prompt directory: repository sources in debug builds,
 /// installed package prompts otherwise (highest version first). The app
 /// handle is optional so tests can run the pipeline against the repository
 /// prompts without a Tauri runtime.
@@ -143,7 +141,7 @@ fn resolve_prompts_dir(app: Option<&AppHandle>) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-        let source = repository.join("plugins/sources/myc.pdf-canvas-agent/prompts");
+        let source = repository.join("my-plugins/anPdfsolver/prompts");
         if source.join("manifest.yaml").is_file() {
             return Ok(source);
         }

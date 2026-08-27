@@ -51,7 +51,7 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 ```bash
 node scripts/pack-plugin.mjs \
   my-plugins/anPdfsolver \
-  plugins/packages/myc.pdf-canvas-agent@0.4.0.myc
+  plugins/packages/myc.pdf-canvas-agent@0.5.0.myc
 ```
 
 插件类型：
