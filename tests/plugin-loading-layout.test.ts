@@ -140,7 +140,7 @@ test("third-party packages are ignored and never automatic discovery roots", () 
   assert.doesNotMatch(read("scripts/stage-plugin-runtime.mjs"), /my-third-plugins/u);
 });
 
-test("release resources come from explicit release-staging entries", () => {
+test("release staging is explicit and the desktop bundle embeds no plugin packages", () => {
   assert.deepEqual(loading.release.freshBuilds, [
     { pluginId: "myc.pdf-canvas-agent", source: "my-plugins/anPdfsolver" },
   ]);
@@ -148,15 +148,10 @@ test("release resources come from explicit release-staging entries", () => {
   assert.ok(!loading.release.packageFiles.some((file) => file.includes("@0.4.0")));
 
   const tauri = JSON.parse(read("src-tauri/tauri.conf.json")) as {
-    bundle: { resources: Record<string, string> };
+    bundle: { resources?: Record<string, string> };
   };
-  const resourceSources = Object.keys(tauri.bundle.resources);
-  assert.equal(resourceSources.some((source) => source === "../plugins/packages/*.myc"), false);
-  assert.ok(resourceSources.every((source) => source.startsWith("../.plugin-runtime/release-staging/packages/")));
-  assert.deepEqual(
-    resourceSources.map((source) => source.split("/").at(-1)).sort(),
-    loading.release.packageFiles.map((file) => file.split("/").at(-1)).sort(),
-  );
+  assert.equal(tauri.bundle.resources, undefined);
+  assert.doesNotMatch(read("src-tauri/src/plugins.rs"), /resource_dir\(\)[\s\S]{0,200}plugins\/packages/u);
 });
 
 test("anPdfsolver manifest uses trusted frontend and direct-network worker contract", () => {

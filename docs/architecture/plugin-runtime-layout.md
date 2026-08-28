@@ -13,7 +13,7 @@ directory, then Desktop installs from that staged package.
 | Third-party source/cache | `my-third-plugins/` | ignored | local user | Local marketplace downloads, imported packages, Japanese locale package, One Dark Pro package, or other external packages. Never auto-loaded by Desktop dev. |
 | Dev staged runtime | `.plugin-runtime/dev/` | ignored | staging script + Desktop dev | Generated runtime used by `npm run desktop dev`. Contains `packages/`, `installed/`, `quarantine/`, and `dev-manifest.json`. |
 | Test staged runtime | `.plugin-runtime/test/` | ignored | automated tests | Disposable runtime used by staging tests so test cleanup never mutates the developer's active runtime. |
-| Release staged runtime | `.plugin-runtime/release-staging/` | ignored | release packaging | Generated release resource input. The release bundle copies only explicit packages listed in `config/plugin-loading.json`. |
+| Release staged runtime | `.plugin-runtime/release-staging/` | ignored | release verification and package publishing | Generated release artifact set. It contains only explicit packages listed in `config/plugin-loading.json`; packages are not embedded in the desktop application bundle. |
 | Formal installed state | Desktop-managed app data | outside repo | Desktop installer | Verified expanded packages and user install state. This location is not a development source root and is managed by the application. |
 
 ## Desktop Dev Policy
@@ -76,10 +76,11 @@ only matching paths inside the selected `.plugin-runtime/*` root.
 
 ## Desktop Wiring
 
-Desktop dev discovery, release resource staging, and Rust loader resolution are
-wired to the generated staging boundary: `.plugin-runtime/dev` for development
-and `.plugin-runtime/release-staging` for release resources. Formal installation
-continues to live in Desktop-managed application data, outside the repository.
+Desktop dev discovery uses `.plugin-runtime/dev`; release verification and
+package publication use `.plugin-runtime/release-staging`. The Tauri desktop
+bundle does not embed plugin archives, and the Rust loader does not install
+from application resources. Formal installation lives in Desktop-managed
+application data, outside the repository.
 
 The staged package for `anPdfsolver` contains a trusted frontend module:
 `frontend.mode="trusted-module"`, `frontend.entry="dist/frontend.mjs"`, and
