@@ -5966,27 +5966,16 @@ mod tests {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("repository root");
-        if std::process::Command::new("node")
+        if std::process::Command::new("python")
             .arg("--version")
             .output()
             .is_err()
-            || std::process::Command::new("python")
-                .arg("--version")
-                .output()
-                .is_err()
         {
             return;
         }
         let temporary = tempfile::tempdir().expect("temporary plugin runtime");
-        let archive = temporary.path().join("anPdfsolver.myc");
-        let pack = std::process::Command::new("node")
-            .arg(repository.join("scripts/pack-plugin.mjs"))
-            .arg(repository.join("my-plugins/anPdfsolver"))
-            .arg(&archive)
-            .current_dir(repository)
-            .status()
-            .expect("run plugin packer");
-        assert!(pack.success(), "plugin package must build");
+        let archive = repository.join("plugins/packages/myc.pdf-canvas-agent@0.5.3.myc");
+        assert!(archive.is_file(), "tracked plugin package must exist");
         let installed = crate::plugins::install_archive_into_for_test(temporary.path(), &archive)
             .expect("packaged plugin installs");
         let worker = installed
