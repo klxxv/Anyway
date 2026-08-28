@@ -189,11 +189,11 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Build One Dark Pro theme plugin
-        run: python scripts/build_myc_plugin.py plugins/sources/myc.onedarkpro plugins/packages/myc.onedarkpro@1.0.0.myc
+      - name: Stage release plugin runtime
+        run: npm run plugins:stage-release
 
-      - name: Verify .myc package exists
-        run: test -f plugins/packages/myc.onedarkpro@1.0.0.myc
+      - name: Verify release staging manifest exists
+        run: test -f .plugin-runtime/release-staging/release-manifest.json
 
   # ── Performance Smoke (main push only) ─────────────────────────────
   perf-smoke:
