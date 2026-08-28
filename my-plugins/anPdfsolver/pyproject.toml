@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anpdfsolver"
-version = "0.5.0"
+version = "0.5.3"
 description = "Plugin-owned direct-provider Python worker for anPdfsolver"
 requires-python = ">=3.11"
 dependencies = []

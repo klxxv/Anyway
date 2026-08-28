@@ -51,7 +51,7 @@ Build a plugin:
 ```bash
 node scripts/pack-plugin.mjs \
   my-plugins/anPdfsolver \
-  plugins/packages/myc.pdf-canvas-agent@0.5.0.myc
+  plugins/packages/myc.pdf-canvas-agent@0.5.3.myc
 ```
 
 Plugin kinds:

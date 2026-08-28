@@ -17,8 +17,9 @@ for directory in (
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
 
-from research_canvas import BlobRef, RemoteWorkerError, WORKER_RPC_API_VERSION, WorkerRuntime, encode_frame, read_frame
-from anpdfsolver.pdf_reader import MAX_PDF_BYTES, PdfReadError, parse_pdf, read_host_blob
+from research_canvas import BlobRef, MAX_HOST_CALLS_PER_REQUEST, RemoteWorkerError, WORKER_RPC_API_VERSION, WorkerRuntime, encode_frame, read_frame
+from anpdfsolver.kimi_client import MAX_UPLOAD_BYTES
+from anpdfsolver.pdf_reader import BLOB_CHUNK_BYTES, MAX_PDF_BYTES, PdfReadError, parse_pdf, read_host_blob
 from anpdfsolver import worker as worker_module
 from anpdfsolver.worker import OPERATIONS, analyze_pdf
 
@@ -107,6 +108,14 @@ class UnknownEvidenceKimiClient:
         )
 
 
+class CapturingKimiFilesClient(FakeKimiClient):
+    last_call: dict[str, object] | None = None
+
+    def analyze(self, **kwargs):
+        CapturingKimiFilesClient.last_call = kwargs
+        return super().analyze(**kwargs)
+
+
 class CorruptChunkHost(FakeHost):
     def __init__(self, blobs: dict[str, bytes], corruption: str):
         super().__init__(blobs)
@@ -151,7 +160,7 @@ class PdfReaderTests(unittest.TestCase):
             self.assertEqual(error.exception.code, code)
 
     def test_blob_reader_uses_bounded_chunks_and_verifies_digest(self):
-        content = minimal_pdf("x" * (20 * 1024))
+        content = minimal_pdf("chunked") + (b" " * (300 * 1024))
         reference = blob_ref(content, "chunked")
         host = FakeHost({reference.digest: content})
         self.assertEqual(read_host_blob(host, reference), content)
@@ -173,6 +182,50 @@ class PdfReaderTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "PDF_TOO_LARGE")
         self.assertIn("384", error.exception.message)
         self.assertEqual(host.calls, 0)
+
+    def test_kimi_files_bypasses_local_parser_limit_up_to_upload_limit(self):
+        prefix = minimal_pdf("Remote extraction").removesuffix(b"%%EOF")
+        content = prefix + (b" " * (MAX_PDF_BYTES + 1 - len(prefix) - len(b"%%EOF"))) + b"%%EOF"
+        reference = blob_ref(content, "kimi-files")
+        runtime_config = json.loads(json.dumps(RUNTIME_CONFIG))
+        runtime_config["providers"][0]["pdfTransport"] = "kimi-file-extract"
+        payload = {
+            "analysisSessionId": "analysis-kimi-files",
+            "requestId": "request-kimi-files",
+            "jobId": "job-kimi-files",
+            "projectId": "project-1",
+            "baseRevision": 1,
+            "runtimeConfig": runtime_config,
+            "file": {"label": "large.pdf", "blobRef": reference.to_mapping()},
+        }
+        CapturingKimiFilesClient.last_call = None
+        with patch("anpdfsolver.worker.KimiClient", CapturingKimiFilesClient):
+            result = analyze_pdf(payload, FakeHost({reference.digest: content}))
+        self.assertEqual(result["file"]["pageCount"], 0)
+        self.assertIsNotNone(CapturingKimiFilesClient.last_call)
+        self.assertEqual(CapturingKimiFilesClient.last_call["pdf_bytes"], content)
+        self.assertEqual(CapturingKimiFilesClient.last_call["local_text"], "")
+
+        owner = "plugin.test@1.0.0#provider-oversized"
+        oversized = BlobRef(
+            "sha256",
+            "a" * 64,
+            MAX_UPLOAD_BYTES + 1,
+            "application/pdf",
+            f"private:{owner}",
+            owner,
+            "session",
+        )
+        host = FakeHost({})
+        with self.assertRaises(PdfReadError) as error:
+            read_host_blob(host, oversized, max_bytes=MAX_UPLOAD_BYTES)
+        self.assertEqual(error.exception.code, "PDF_TOO_LARGE")
+        self.assertEqual(host.calls, 0)
+
+    def test_32_mib_upload_fits_blob_chunk_and_reverse_call_budgets(self):
+        required_calls = (MAX_UPLOAD_BYTES + BLOB_CHUNK_BYTES - 1) // BLOB_CHUNK_BYTES
+        self.assertEqual(required_calls, 128)
+        self.assertLessEqual(required_calls, MAX_HOST_CALLS_PER_REQUEST)
 
     def test_worker_analyze_reads_blob_and_returns_public_draft_patch(self):
         content = minimal_pdf("Worker analyze")

@@ -13,6 +13,14 @@ import type { UiIrSourceContribution, UiIrHydratedContribution } from "./ui-ir";
 
 /** 桌面安装器与前端共享的 `.myc` 清单版本 / Shared `.myc` manifest version for desktop installer and frontend. */
 export const MYC_API_VERSION = "researchcanvas.dev/v1alpha1";
+/** Flat MYC manifest version emitted by the v2 parser. */
+export const MYC_API_VERSION_V2 = "researchcanvas.dev/v2";
+export const SUPPORTED_MYC_API_VERSIONS = [MYC_API_VERSION, MYC_API_VERSION_V2] as const;
+export type MycApiVersion = (typeof SUPPORTED_MYC_API_VERSIONS)[number];
+
+export function isSupportedMycApiVersion(value: string): value is MycApiVersion {
+  return (SUPPORTED_MYC_API_VERSIONS as readonly string[]).includes(value);
+}
 export const PLUGIN_CALL_API_VERSION = "researchcanvas.dev/plugin-call/v1alpha1";
 
 export interface PluginReference {
@@ -393,7 +401,7 @@ export interface PluginWorkerDescriptor {
  * Minimal declarative install manifest; executable plugins require a stricter permission model.
  */
 export interface MycPluginManifest {
-  apiVersion: typeof MYC_API_VERSION;
+  apiVersion: MycApiVersion;
   kind: MycPluginKind;
   metadata: MycPluginMetadata;
   spec: MycPluginSpec;

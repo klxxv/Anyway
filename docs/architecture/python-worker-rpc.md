@@ -26,21 +26,24 @@ short grace period before the Host kills the process.
 
 The maximum frame is 1 MiB. Inline request, result, and event data is limited
 to 64 KiB, error text to 8 KiB, events to 64 per request, and reverse Host calls
-to 32 per request.
+to 128 per request. The sole operation-scoped exception is a successful
+`blob.read` Host response: it may contain at most 256 KiB of raw bytes encoded
+inside a JSON result no larger than 384 KiB. Other Host results retain the
+64 KiB inline limit.
 
-The first dependency-free PDF parser is deliberately an acceptance slice, not
-the final document transport: it reads at most 24 × 16 KiB Blob pages (384 KiB)
-and reports `PDF_TOO_LARGE` beyond that boundary. One surface request advances
-one batch job, consuming at most that job's bounded Blob reads and public event
-publishes. A Host-issued `surface.continue` cursor starts the next job under a
-fresh parent request while preserving a bounded total continuation budget.
-Production-size PDFs require a sustainable, leased Blob stream protocol; the
-384 KiB cap must not be raised until that protocol exists.
+The dependency-free local PDF parser remains a 384 KiB acceptance slice. The
+`kimi-file-extract` transport bypasses that parser and may read at most 32 MiB
+from the Host Blob store using 256 KiB chunks before uploading to Kimi Files.
+At the maximum supported size this consumes exactly 128 reverse Host calls and
+every base64-encoded response remains below the 1 MiB frame limit. Both paths
+inherit the same absolute parent deadline and re-hash the complete Blob before
+using it.
 
 ## BlobRef v1
 
-Large values use the Host wire shape below; extra fields such as `path` or
-`principal` are rejected.
+Large values use the Host wire shape below. Extra fields inside `blobRef`, such
+as `path` or `principal`, are rejected; a containing business object may carry
+bounded metadata such as a file label.
 
 ```json
 {

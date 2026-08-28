@@ -9,6 +9,7 @@ requests to the authoritative Rust Host over the worker's existing stdio link.
 
 from __future__ import annotations
 
+import base64
 import json
 import inspect
 import re
@@ -25,9 +26,12 @@ GRAPH_PATCH_API_VERSION = "researchcanvas.dev/graph-patch/v1alpha1"
 WORKER_RPC_API_VERSION = "researchcanvas.dev/worker-rpc/v1"
 MAX_FRAME_BYTES = 1024 * 1024
 MAX_INLINE_BYTES = 64 * 1024
+MAX_BLOB_READ_CHUNK_BYTES = 256 * 1024
+MAX_BLOB_READ_RESULT_BYTES = 384 * 1024
+MAX_BLOB_READ_BASE64_BYTES = ((MAX_BLOB_READ_CHUNK_BYTES + 2) // 3) * 4
 MAX_ERROR_MESSAGE_BYTES = 8 * 1024
 MAX_EVENTS_PER_REQUEST = 64
-MAX_HOST_CALLS_PER_REQUEST = 32
+MAX_HOST_CALLS_PER_REQUEST = 128
 _BLOB_REF_KEYS = frozenset((
     "algorithm", "digest", "size", "mediaType", "scope", "owner", "retentionClass",
 ))
@@ -169,14 +173,13 @@ def _bounded_error_message(value: Any) -> str:
 def _validate_blob_refs(value: Any) -> None:
     if isinstance(value, Mapping):
         if "blobRef" in value:
-            if set(value.keys()) != {"blobRef"}:
-                raise ProtocolError("BlobRef envelope contains unexpected fields")
             try:
                 BlobRef.from_mapping(value["blobRef"])
             except ValueError as error:
                 raise ProtocolError(str(error)) from error
-            return
-        for child in value.values():
+        for key, child in value.items():
+            if key == "blobRef":
+                continue
             _validate_blob_refs(child)
     elif isinstance(value, (list, tuple)):
         for child in value:
@@ -199,6 +202,34 @@ def _validate_inline_payload(value: Any) -> None:
         BlobRef.from_mapping(normalized["blobRef"])
     except ValueError as error:
         raise ProtocolError(str(error)) from error
+
+
+def _validate_host_result(operation: str, value: Any) -> None:
+    if operation != "blob.read":
+        _validate_inline_payload(value)
+        return
+    normalized = json.loads(_json_bytes(value).decode("utf-8"))
+    if _contains_authority_escape(normalized):
+        raise ProtocolError("principal and capability leases are Host-bound and forbidden in worker payloads")
+    _validate_blob_refs(normalized)
+    if not isinstance(normalized, Mapping):
+        raise ProtocolError("blob.read result must be an object")
+    content_base64 = normalized.get("contentBase64")
+    if not isinstance(content_base64, str):
+        raise ProtocolError("blob.read result must contain contentBase64")
+    encoded = _json_bytes(normalized)
+    try:
+        decoded = base64.b64decode(content_base64, validate=True)
+    except (ValueError, TypeError) as error:
+        raise ProtocolError("blob.read contentBase64 is invalid") from error
+    if (
+        len(content_base64) > MAX_BLOB_READ_BASE64_BYTES
+        or len(decoded) > MAX_BLOB_READ_CHUNK_BYTES
+        or len(encoded) > MAX_BLOB_READ_RESULT_BYTES
+    ):
+        raise InlinePayloadTooLargeError(
+            f"blob.read result is {len(encoded)} bytes; limit is {MAX_BLOB_READ_RESULT_BYTES}"
+        )
 
 
 def _validate_incoming_message(message: Mapping[str, Any]) -> None:
@@ -483,7 +514,7 @@ class HostBusClient:
         if response.get("parentRequestId") != self._parent_request_id or response.get("hostRequestId") != host_request_id:
             raise ProtocolError("Host Bus response correlation mismatch")
         if response.get("ok") is True:
-            _validate_inline_payload(response.get("result"))
+            _validate_host_result(operation, response.get("result"))
             return response.get("result")
         error = response.get("error") or {}
         raise RemoteWorkerError(str(error.get("code", "HOST_ERROR")), _bounded_error_message(error.get("message", "Host Bus call failed")))

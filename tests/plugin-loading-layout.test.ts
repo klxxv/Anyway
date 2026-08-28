@@ -144,7 +144,7 @@ test("release resources come from explicit release-staging entries", () => {
   assert.deepEqual(loading.release.freshBuilds, [
     { pluginId: "myc.pdf-canvas-agent", source: "my-plugins/anPdfsolver" },
   ]);
-  assert.ok(loading.release.packageFiles.includes("plugins/packages/myc.pdf-canvas-agent@0.5.0.myc"));
+  assert.ok(loading.release.packageFiles.includes("plugins/packages/myc.pdf-canvas-agent@0.5.3.myc"));
   assert.ok(!loading.release.packageFiles.some((file) => file.includes("@0.4.0")));
 
   const tauri = JSON.parse(read("src-tauri/tauri.conf.json")) as {
@@ -182,7 +182,7 @@ test("anPdfsolver manifest uses trusted frontend and direct-network worker contr
     engines?: { worker?: { entrypoint?: string; transport?: string; operations?: string[]; hostOperations?: string[] } };
   };
   assert.equal(manifest.name, "myc.pdf-canvas-agent");
-  assert.equal(manifest.version, "0.5.0");
+  assert.equal(manifest.version, "0.5.3");
   assert.deepEqual(manifest.frontend, {
     mode: "trusted-module",
     entry: "dist/frontend.mjs",
@@ -270,7 +270,7 @@ test("agent manifest aligns with plugin-owned UI and Rust canonical graph bounda
     securityBoundary: { directProviderEgress: boolean; noGraphStoreWrite: boolean; pythonSdkRole: string };
   };
 
-  assert.equal(agent.pluginVersion, "0.5.0");
+  assert.equal(agent.pluginVersion, "0.5.3");
   assert.equal(agent.frontend.entry, "dist/frontend.mjs");
   assert.deepEqual(agent.frontend.uiContributions.map((entry) => entry.slotId), [
     "workspace.toolbar.actions",

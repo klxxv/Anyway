@@ -61,11 +61,15 @@ struct PassPrompt {
 
 /// prompts/manifest.yaml.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PromptManifest {
     #[serde(default)]
     #[allow(dead_code)]
     default_locale: Option<String>,
+    #[serde(default)]
     passes: Vec<PassDecl>,
+    #[serde(default)]
+    legacy_prompts: Option<LegacyPromptDecl>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +79,12 @@ struct PassDecl {
     pass: Option<String>,
     name: String,
     file: String,
+}
+
+#[derive(Deserialize)]
+struct LegacyPromptDecl {
+    #[serde(default)]
+    files: Vec<String>,
 }
 
 /// Pass A output: paper-level structure (snake_case on the wire is not used
@@ -188,10 +198,32 @@ fn load_prompts(dir: &Path) -> Result<LoadedPrompts, String> {
         .map_err(|error| format!("invalid prompt manifest: {error}"))?;
 
     let locale = manifest.default_locale.as_deref().unwrap_or("en");
+    let mut passes = manifest.passes;
+    if passes.is_empty() {
+        passes = manifest
+            .legacy_prompts
+            .map(|legacy| legacy.files)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|file| {
+                let (pass, name) = match file.as_str() {
+                    "pass-a-structure.yaml" => ("A", "structure-extraction"),
+                    "pass-b-v4.yaml" => ("B", "entity-extraction-v4"),
+                    "pass-e-v4.yaml" => ("E", "synthesis-v4"),
+                    _ => return None,
+                };
+                Some(PassDecl {
+                    pass: Some(pass.to_string()),
+                    name: name.to_string(),
+                    file,
+                })
+            })
+            .collect();
+    }
     let mut structure = None;
     let mut fragment = None;
     let mut synthesis = None;
-    for pass in &manifest.passes {
+    for pass in &passes {
         let text = std::fs::read_to_string(dir.join(&pass.file))
             .map_err(|error| format!("cannot read prompt {}: {error}", pass.file))?;
         let prompt: PassPrompt = serde_yaml::from_str(&text)

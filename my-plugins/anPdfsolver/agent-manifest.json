@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "mode": "trusted-plugin",
   "pluginId": "myc.pdf-canvas-agent",
-  "pluginVersion": "0.5.0",
+  "pluginVersion": "0.5.3",
   "agentType": "pdf-canvas",
   "reviewGated": true,
   "frontend": {

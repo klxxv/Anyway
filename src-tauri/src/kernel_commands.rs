@@ -62,6 +62,7 @@ pub const HOST_SDK_API_VERSION: &str = "anyway.dev/host-rpc/v1alpha1";
 pub const MAX_HOST_DEADLINE_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_INLINE_PAYLOAD_BYTES: usize = 64 * 1_024;
 pub const MAX_BLOB_CHUNK_BYTES: usize = 16 * 1_024;
+pub const MAX_BLOB_READ_CHUNK_BYTES: usize = 256 * 1_024;
 const MAX_REQUEST_ID_BYTES: usize = 128;
 const MAX_OPERATION_BYTES: usize = 160;
 const MAX_LEASE_IDS: usize = 32;
@@ -2646,7 +2647,7 @@ fn dispatch_plugin_graph_patch_propose(
 ) -> Result<Value, String> {
     let request = inline_request::<PluginGraphPatchProposeRequest>(request)
         .map_err(|error| format!("invalid graph.patch.propose request: {error}"))?;
-    crate::plugins::require_plugin_capability(
+    crate::plugins::require_installed_plugin_capability(
         app,
         &request.plugin_id,
         &request.plugin_version,
@@ -2672,7 +2673,7 @@ fn dispatch_plugin_files_pick(
 ) -> Result<Value, String> {
     let request = inline_request::<PluginFilesPickRequest>(request)
         .map_err(|error| format!("invalid plugin.files.pick request: {error}"))?;
-    crate::plugins::require_plugin_capability(
+    crate::plugins::require_installed_plugin_capability(
         &app,
         &request.plugin_id,
         &request.plugin_version,
@@ -3375,10 +3376,10 @@ fn dispatch_blob_read_for_owner(
     if let Some(workspace) = workspace {
         validate_token_text(workspace, "blob.read workspace")?;
     }
-    let max_bytes = read_request.max_bytes.unwrap_or(MAX_BLOB_CHUNK_BYTES);
-    if max_bytes == 0 || max_bytes > MAX_BLOB_CHUNK_BYTES {
+    let max_bytes = read_request.max_bytes.unwrap_or(MAX_BLOB_READ_CHUNK_BYTES);
+    if max_bytes == 0 || max_bytes > MAX_BLOB_READ_CHUNK_BYTES {
         return Err(format!(
-            "blob.read maxBytes must be between 1 and {MAX_BLOB_CHUNK_BYTES}"
+            "blob.read maxBytes must be between 1 and {MAX_BLOB_READ_CHUNK_BYTES}"
         ));
     }
     let read_lease = store
@@ -5365,6 +5366,24 @@ mod tests {
         assert_eq!(read["size"], 19);
         assert_eq!(read["contentBase64"], "YW55d2F5IGJsb2IgY29udGVudA==");
         assert_eq!(read["digest"], written["digest"]);
+
+        let oversized_read: HostCallRequest = serde_json::from_value(json!({
+            "apiVersion": HOST_SDK_API_VERSION,
+            "requestId": "blob-read-oversized-chunk",
+            "operation": "blob.read",
+            "payload": {
+                "kind": "inline",
+                "value": {
+                    "ref": written,
+                    "maxBytes": MAX_BLOB_READ_CHUNK_BYTES + 1
+                }
+            },
+            "deadlineMs": 30_000
+        }))
+        .unwrap();
+        let error = dispatch_blob_read(&oversized_read, state.blobs())
+            .expect_err("blob.read must preserve its bounded response frame");
+        assert!(error.contains(&MAX_BLOB_READ_CHUNK_BYTES.to_string()));
     }
 
     #[test]

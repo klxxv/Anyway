@@ -8,7 +8,7 @@ import test from "node:test";
 test("packager accepts the real development tree and excludes frontend toolchain sources", () => {
   const root = mkdtempSync(join(tmpdir(), "anyway-anpdfsolver-dev-tree-"));
   const source = resolve("my-plugins/anPdfsolver");
-  const archive = join(root, "myc.pdf-canvas-agent@0.5.0.myc");
+  const archive = join(root, "myc.pdf-canvas-agent@0.5.3.myc");
   try {
     const built = spawnSync(
       process.execPath,
@@ -38,7 +38,7 @@ test("packager accepts the real development tree and excludes frontend toolchain
 test("packaged anPdfsolver contains trusted frontend, Python worker, and vendored codec", () => {
   const root = mkdtempSync(join(tmpdir(), "anyway-anpdfsolver-package-"));
   const packageSource = join(root, "source");
-  const archive = join(root, "myc.pdf-canvas-agent@0.5.0.myc");
+  const archive = join(root, "myc.pdf-canvas-agent@0.5.3.myc");
   try {
     createBuiltPackageSource(packageSource);
     const packed = spawnSync(process.execPath, [resolve("scripts/pack-plugin.mjs"), packageSource, archive], {
@@ -81,7 +81,7 @@ test("packaged anPdfsolver contains trusted frontend, Python worker, and vendore
     assert.ok(inspected.names.every((name) => !/PdfUploadDialog|AgentReviewPanel|pdf-agent-host-slots/u.test(name)));
 
     assert.equal(inspected.manifest.name, "myc.pdf-canvas-agent");
-    assert.equal(inspected.manifest.version, "0.5.0");
+    assert.equal(inspected.manifest.version, "0.5.3");
     assert.deepEqual(inspected.manifest.frontend, {
       mode: "trusted-module",
       entry: "dist/frontend.mjs",
@@ -120,7 +120,7 @@ test("packaged anPdfsolver contains trusted frontend, Python worker, and vendore
 test("packaged anPdfsolver worker starts without repository Python imports", () => {
   const root = mkdtempSync(join(tmpdir(), "anyway-packaged-worker-"));
   const packageSource = join(root, "source");
-  const archive = join(root, "myc.pdf-canvas-agent@0.5.0.myc");
+  const archive = join(root, "myc.pdf-canvas-agent@0.5.3.myc");
   try {
     createBuiltPackageSource(packageSource);
     const packed = spawnSync(process.execPath, [resolve("scripts/pack-plugin.mjs"), packageSource, archive], {
@@ -176,7 +176,7 @@ try:
         "type": "hello",
         "apiVersion": "researchcanvas.dev/worker-rpc/v1",
         "pluginId": "myc.pdf-canvas-agent",
-        "pluginVersion": "0.5.0",
+        "pluginVersion": "0.5.3",
         "workerId": "packaged.worker",
         "allowedOperations": ["ping", "health"],
     })

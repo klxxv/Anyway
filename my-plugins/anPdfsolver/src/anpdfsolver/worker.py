@@ -29,7 +29,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(DEV_SDK_ROOT))
     from research_canvas import BlobRef, HostBusClient, RemoteWorkerError, WorkerRuntime
 
-from anpdfsolver.kimi_client import KimiClient, KimiClientError, KimiConfig
+from anpdfsolver.kimi_client import KimiClient, KimiClientError, KimiConfig, MAX_UPLOAD_BYTES
 from anpdfsolver.pdf_reader import PdfReadError, parse_pdf, read_host_blob
 from anpdfsolver.typed_frames import TypedFrameError, frames_to_graph_patch
 
@@ -83,25 +83,20 @@ def analyze_pdf(payload: Mapping[str, Any], host: HostBusClient) -> Mapping[str,
 
     record("file.reading", "Reading the Host-authorized PDF BlobRef.", 5)
     try:
-        content = read_host_blob(host, blob)
-        try:
+        config = KimiConfig.from_runtime_config(runtime_config)
+        if config.pdf_transport == "kimi-file-extract":
+            content = read_host_blob(host, blob, max_bytes=MAX_UPLOAD_BYTES)
+            local_text = ""
+            page_count = 0
+            text_bytes = 0
+            record("pdf.remote-extraction", "Uploading to Kimi Files for text extraction.", 30)
+        else:
+            content = read_host_blob(host, blob)
             parsed = parse_pdf(content)
             local_text = parsed.text
             page_count = parsed.page_count
             text_bytes = parsed.text_bytes
             record("pdf.parsed", f"Parsed {page_count} page(s) locally.", 30)
-        except PdfReadError as error:
-            if error.code != "OCR_REQUIRED":
-                raise
-            config = KimiConfig.from_runtime_config(runtime_config)
-            if config.pdf_transport != "kimi-file-extract":
-                raise
-            local_text = ""
-            page_count = 0
-            text_bytes = 0
-            record("pdf.remote-extraction", "Uploading to Kimi Files for text extraction.", 30)
-
-        config = KimiConfig.from_runtime_config(runtime_config)
         record("provider.streaming", "Streaming typed extraction frames from the configured provider.", 45)
 
         def on_frame(frame: Mapping[str, Any]) -> None:

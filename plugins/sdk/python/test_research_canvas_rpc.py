@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 from pathlib import Path
@@ -18,6 +19,8 @@ from research_canvas import (
     WorkerClient,
     WorkerServer,
     HostBusClient,
+    MAX_BLOB_READ_BASE64_BYTES,
+    MAX_BLOB_READ_RESULT_BYTES,
     MAX_ERROR_MESSAGE_BYTES,
     MAX_EVENTS_PER_REQUEST,
     WorkerTimeoutError,
@@ -175,6 +178,38 @@ class WorkerRpcTests(unittest.TestCase):
         value = json.loads(fixture.read_text(encoding="utf-8"))
         self.assertEqual(BlobRef.from_mapping(value).to_mapping(), value)
 
+    def test_client_allows_blobref_beside_bounded_business_metadata(self):
+        blob = BlobRef(
+            "sha256",
+            "a" * 64,
+            1024,
+            "application/pdf",
+            "private:plugin.a",
+            "plugin.a",
+            "session",
+        )
+        transport = CorrelatedResponseTransport({
+            "type": "response",
+            "ok": True,
+            "result": {"accepted": True},
+        })
+        client = WorkerClient(
+            transport,
+            plugin_id="p",
+            plugin_version="1",
+            worker_id="worker.test",
+            allowed_operations=("ping",),
+        )
+        client.handshake()
+        payload = {
+            "file": {
+                "label": "paper.pdf",
+                "blobRef": blob.to_mapping(),
+            }
+        }
+        self.assertEqual(client.request("ping", payload), {"accepted": True})
+        self.assertEqual(transport.sent[-1]["payload"], payload)
+
     def test_worker_host_bus_client_correlates_and_rejects_authority_fields(self):
         response = encode_frame({
             "type": "hostResponse",
@@ -194,6 +229,52 @@ class WorkerRpcTests(unittest.TestCase):
             host.call("event.publish", {"principal": "spoof"})
         with self.assertRaises(ProtocolError):
             host.call("event.publish", {"capabilityLeaseIds": ["forged"]})
+
+    def test_worker_host_bus_client_allows_only_bounded_blob_read_results_above_inline_limit(self):
+        blob_result = {
+            "digest": "a" * 64,
+            "size": 256 * 1024,
+            "mediaType": "application/pdf",
+            "offset": 0,
+            "nextOffset": 256 * 1024,
+            "eof": True,
+            "contentBase64": base64.b64encode(bytes(256 * 1024)).decode("ascii"),
+        }
+        response = encode_frame({
+            "type": "hostResponse",
+            "apiVersion": "researchcanvas.dev/worker-rpc/v1",
+            "parentRequestId": "request-blob",
+            "hostRequestId": "request-blob:host:1",
+            "ok": True,
+            "result": blob_result,
+        })
+        output = io.BytesIO()
+        host = HostBusClient(io.BytesIO(response), output, "request-blob", __import__("time").monotonic() + 1)
+        self.assertEqual(host.call("blob.read", {}), blob_result)
+        self.assertLess(len(json.dumps(blob_result, separators=(",", ":")).encode()), MAX_BLOB_READ_RESULT_BYTES)
+
+        for operation, content in [
+            ("event.publish", blob_result["contentBase64"]),
+            ("blob.read", base64.b64encode(bytes(256 * 1024 + 1)).decode("ascii")),
+        ]:
+            with self.subTest(operation=operation):
+                oversized = dict(blob_result, contentBase64=content)
+                rejected = encode_frame({
+                    "type": "hostResponse",
+                    "apiVersion": "researchcanvas.dev/worker-rpc/v1",
+                    "parentRequestId": "request-reject",
+                    "hostRequestId": "request-reject:host:1",
+                    "ok": True,
+                    "result": oversized,
+                })
+                rejecting_host = HostBusClient(
+                    io.BytesIO(rejected),
+                    io.BytesIO(),
+                    "request-reject",
+                    __import__("time").monotonic() + 1,
+                )
+                with self.assertRaises(InlinePayloadTooLargeError):
+                    rejecting_host.call(operation, {})
 
     def test_worker_server_bounds_results_events_and_errors(self):
         server = WorkerServer({"ping": lambda payload: {"ok": True}})

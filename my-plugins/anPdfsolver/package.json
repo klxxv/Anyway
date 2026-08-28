@@ -1,7 +1,7 @@
 {
   "name": "anpdfsolver-plugin",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.5.3",
   "type": "module",
   "scripts": {
     "build:frontend": "vite build --config frontend/vite.config.ts",

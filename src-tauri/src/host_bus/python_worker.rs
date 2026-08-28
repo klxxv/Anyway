@@ -5,6 +5,7 @@
 //! cannot call `kernel_native::kernel_bus_call` directly. The Host owns the
 //! process, operation allowlist, deadlines, cancellation and credentials.
 
+use base64::Engine;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -24,9 +25,12 @@ pub const WORKER_RPC_API_VERSION: &str = "researchcanvas.dev/worker-rpc/v1";
 pub const WORKER_TRANSPORT_ID: &str = "stdio-framed-json-v1";
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_INLINE_BYTES: usize = 64 * 1024;
+pub const MAX_BLOB_READ_CHUNK_BYTES: usize = 256 * 1024;
+pub const MAX_BLOB_READ_RESULT_BYTES: usize = 384 * 1024;
+const MAX_BLOB_READ_BASE64_BYTES: usize = ((MAX_BLOB_READ_CHUNK_BYTES + 2) / 3) * 4;
 pub const MAX_ERROR_MESSAGE_BYTES: usize = 8 * 1024;
 pub const MAX_EVENTS_PER_REQUEST: usize = 64;
-pub const MAX_HOST_CALLS_PER_REQUEST: usize = 32;
+pub const MAX_HOST_CALLS_PER_REQUEST: usize = 128;
 
 #[derive(Debug)]
 pub enum WorkerError {
@@ -233,19 +237,49 @@ fn validate_inline_payload(payload: &Value) -> Result<(), WorkerError> {
     })
 }
 
+fn validate_host_result(operation: &str, result: &Value) -> Result<(), WorkerError> {
+    if operation != "blob.read" {
+        return validate_inline_payload(result);
+    }
+    validate_no_authority_escape(result)?;
+    validate_blob_ref_envelopes(result)?;
+    let object = result
+        .as_object()
+        .ok_or_else(|| WorkerError::Protocol("blob.read result must be an object".to_string()))?;
+    let content_base64 = object
+        .get("contentBase64")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            WorkerError::Protocol("blob.read result must contain contentBase64".to_string())
+        })?;
+    let size = serde_json::to_vec(result)
+        .map_err(|error| WorkerError::InvalidJson(error.to_string()))?
+        .len();
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(content_base64)
+        .map_err(|_| WorkerError::Protocol("blob.read contentBase64 is invalid".to_string()))?;
+    if content_base64.len() > MAX_BLOB_READ_BASE64_BYTES
+        || decoded.len() > MAX_BLOB_READ_CHUNK_BYTES
+        || size > MAX_BLOB_READ_RESULT_BYTES
+    {
+        return Err(WorkerError::InlinePayloadTooLarge {
+            size,
+            limit: MAX_BLOB_READ_RESULT_BYTES,
+        });
+    }
+    Ok(())
+}
+
 fn validate_blob_ref_envelopes(value: &Value) -> Result<(), WorkerError> {
     match value {
         Value::Object(object) => {
             if object.contains_key("blobRef") {
-                if object.len() != 1 {
-                    return Err(WorkerError::Protocol(
-                        "BlobRef envelope contains unexpected fields".to_string(),
-                    ));
-                }
                 validate_blob_ref(object.get("blobRef").expect("blobRef exists"))?;
-                return Ok(());
             }
-            for child in object.values() {
+            for (key, child) in object {
+                if key == "blobRef" {
+                    continue;
+                }
                 validate_blob_ref_envelopes(child)?;
             }
         }
@@ -983,7 +1017,7 @@ impl PythonWorkerSession {
         let payload = message.get("payload").cloned().unwrap_or(Value::Null);
         let response = match host_call(operation, payload, host_budget) {
             Ok(result) => {
-                validate_inline_payload(&result)?;
+                validate_host_result(operation, &result)?;
                 json!({
                     "type": "hostResponse",
                     "apiVersion": WORKER_RPC_API_VERSION,
@@ -1175,6 +1209,23 @@ mod tests {
             validate_inline_payload(&owner_mismatch),
             Err(WorkerError::Protocol(_))
         ));
+
+        let file_payload = json!({
+            "file": {
+                "label": "paper.pdf",
+                "blobRef": {
+                    "algorithm": "sha256",
+                    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "size": 1024,
+                    "mediaType": "application/pdf",
+                    "scope": "private:plugin.a",
+                    "owner": "plugin.a",
+                    "retentionClass": "session"
+                }
+            }
+        });
+        validate_inline_payload(&file_payload)
+            .expect("BlobRef may appear beside bounded business metadata");
     }
 
     #[test]
@@ -1239,6 +1290,38 @@ mod tests {
         assert!(matches!(
             validate_incoming_message(&error),
             Err(WorkerError::Protocol(_))
+        ));
+    }
+
+    #[test]
+    fn blob_read_host_results_have_an_operation_scoped_binary_budget() {
+        let result = json!({
+            "digest": "a".repeat(64),
+            "size": MAX_BLOB_READ_CHUNK_BYTES,
+            "mediaType": "application/pdf",
+            "offset": 0,
+            "nextOffset": MAX_BLOB_READ_CHUNK_BYTES,
+            "eof": true,
+            "contentBase64": base64::engine::general_purpose::STANDARD.encode(vec![0_u8; MAX_BLOB_READ_CHUNK_BYTES]),
+        });
+        let encoded_size = serde_json::to_vec(&result)
+            .expect("serialize Blob result")
+            .len();
+        assert!(encoded_size > MAX_INLINE_BYTES);
+        assert!(encoded_size < MAX_BLOB_READ_RESULT_BYTES);
+        validate_host_result("blob.read", &result)
+            .expect("bounded blob.read result uses its operation-scoped budget");
+        assert!(matches!(
+            validate_host_result("event.publish", &result),
+            Err(WorkerError::InlinePayloadTooLarge { .. })
+        ));
+
+        let oversized = json!({
+            "contentBase64": base64::engine::general_purpose::STANDARD.encode(vec![0_u8; MAX_BLOB_READ_CHUNK_BYTES + 1]),
+        });
+        assert!(matches!(
+            validate_host_result("blob.read", &oversized),
+            Err(WorkerError::InlinePayloadTooLarge { .. })
         ));
     }
 
@@ -1476,5 +1559,62 @@ send({'type':'response','apiVersion':'researchcanvas.dev/worker-rpc/v1','request
         assert_eq!(calls, 1);
         assert_eq!(result["accepted"], true);
         session.shutdown().expect("reverse RPC shutdown");
+    }
+
+    #[test]
+    fn python_worker_accepts_a_bounded_large_blob_read_host_response() {
+        if !python_available() {
+            eprintln!("python executable unavailable; skipping integration test");
+            return;
+        }
+        let script = r#"
+import json, struct, sys
+def read():
+    header = sys.stdin.buffer.read(4)
+    size = struct.unpack('>I', header)[0]
+    return json.loads(sys.stdin.buffer.read(size))
+def send(value):
+    payload = json.dumps(value, separators=(',', ':')).encode()
+    sys.stdout.buffer.write(struct.pack('>I', len(payload)) + payload)
+    sys.stdout.buffer.flush()
+hello = read()
+send({'type':'helloAck','apiVersion':'researchcanvas.dev/worker-rpc/v1','workerId':hello['workerId'],'operations':['surface.action']})
+request = read()
+send({'type':'hostRequest','apiVersion':'researchcanvas.dev/worker-rpc/v1','parentRequestId':request['requestId'],'hostRequestId':'blob-read-1','operation':'blob.read','payload':{'offset':0,'maxBytes':262144},'deadlineMs':1000})
+host_response = read()
+content = host_response['result']['contentBase64']
+send({'type':'response','apiVersion':'researchcanvas.dev/worker-rpc/v1','requestId':request['requestId'],'ok':True,'result':{'accepted':host_response.get('ok') is True,'encodedBytes':len(content)}})
+"#;
+        let config = WorkerSessionConfig::python(
+            "python",
+            vec!["-c".into(), script.into()],
+            None,
+            "plugin.test",
+            "1.0.0",
+            "worker.blob-read",
+            ["surface.action"],
+        );
+        let mut session = PythonWorkerSession::spawn(config).expect("Blob read worker handshake");
+        let result = session
+            .request_with_host(
+                "surface.action",
+                json!({}),
+                Duration::from_secs(2),
+                |operation, _, _| {
+                    assert_eq!(operation, "blob.read");
+                    Ok(json!({
+                        "digest": "a".repeat(64),
+                        "size": MAX_BLOB_READ_CHUNK_BYTES,
+                        "mediaType": "application/pdf",
+                        "offset": 0,
+                        "nextOffset": MAX_BLOB_READ_CHUNK_BYTES,
+                        "eof": true,
+                        "contentBase64": base64::engine::general_purpose::STANDARD.encode(vec![0_u8; MAX_BLOB_READ_CHUNK_BYTES]),
+                    }))
+                },
+            )
+            .expect("bounded large blob.read response crosses the real worker transport");
+        assert_eq!(result["accepted"], true);
+        assert_eq!(result["encodedBytes"], MAX_BLOB_READ_BASE64_BYTES);
     }
 }

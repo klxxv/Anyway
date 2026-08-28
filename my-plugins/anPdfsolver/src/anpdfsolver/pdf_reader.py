@@ -19,9 +19,8 @@ from typing import Any, Mapping
 from research_canvas import BlobRef, HostBusClient, RemoteWorkerError
 
 
-BLOB_CHUNK_BYTES = 16 * 1024
-MAX_BLOB_CHUNKS = 24
-MAX_PDF_BYTES = BLOB_CHUNK_BYTES * MAX_BLOB_CHUNKS
+BLOB_CHUNK_BYTES = 256 * 1024
+MAX_PDF_BYTES = 384 * 1024
 MAX_TEXT_BYTES = 64 * 1024
 MAX_STREAM_BYTES = 256 * 1024
 
@@ -40,13 +39,14 @@ class ParsedPdf:
     strategy: str
 
 
-def read_host_blob(host: HostBusClient, blob: BlobRef) -> bytes:
+def read_host_blob(host: HostBusClient, blob: BlobRef, *, max_bytes: int = MAX_PDF_BYTES) -> bytes:
     """Read and re-hash one bounded Host BlobRef through reverse RPC."""
 
-    if blob.size > MAX_PDF_BYTES:
+    if max_bytes <= 0 or blob.size > max_bytes:
+        limit_label = "384 KiB local parser acceptance slice" if max_bytes == MAX_PDF_BYTES else f"{max_bytes}-byte Blob read limit"
         raise PdfReadError(
             "PDF_TOO_LARGE",
-            f"PDF exceeds the 384 KiB ({MAX_PDF_BYTES}-byte) bounded parser acceptance slice.",
+            f"PDF exceeds the {limit_label}.",
         )
     chunks: list[bytes] = []
     offset = 0
@@ -75,8 +75,6 @@ def read_host_blob(host: HostBusClient, blob: BlobRef) -> bytes:
             raise PdfReadError("BLOB_READ_TRUNCATED", "Host Blob ended before its declared size.", retryable=True)
         chunks.append(chunk)
         offset = next_offset
-        if len(chunks) > MAX_BLOB_CHUNKS:
-            raise PdfReadError("PDF_TOO_LARGE", "PDF requires more Blob chunks than this parser slice permits.")
     content = b"".join(chunks)
     if len(content) != blob.size or hashlib.sha256(content).hexdigest() != blob.digest:
         raise PdfReadError("BLOB_READ_MISMATCH", "Host Blob bytes failed size or digest verification.")

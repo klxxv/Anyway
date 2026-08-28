@@ -1,5 +1,5 @@
 import {
-  MYC_API_VERSION,
+  isSupportedMycApiVersion,
   type InstalledMycPlugin,
   type MycPluginKind,
 } from "./contracts";
@@ -83,7 +83,7 @@ function validateWorkspacePlugin(
  */
 export function pluginCompatibility(plugin: InstalledMycPlugin): PluginCompatibility {
   const issues: PluginCompatibilityIssue[] = [];
-  if (plugin.manifest.apiVersion !== MYC_API_VERSION) {
+  if (!isSupportedMycApiVersion(plugin.manifest.apiVersion)) {
     pushIssue(issues, "plugin.issue.unsupportedApiVersion");
   }
   if (plugin.manifest.spec.permissions.length > 0) {
@@ -148,7 +148,9 @@ export function pluginCompatibility(plugin: InstalledMycPlugin): PluginCompatibi
       }
       if (
         !plugin.manifest.spec.capabilities.some(
-          (capability) => capability === "agent.graph.patch.propose",
+          (capability) =>
+            capability === "graph.patch.propose" ||
+            capability === "agent.graph.patch.propose",
         )
       ) {
         pushIssue(issues, "plugin.issue.agentCapability");

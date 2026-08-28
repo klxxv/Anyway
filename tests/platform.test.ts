@@ -11,6 +11,7 @@ import {
 import { builtInPluginCatalog } from "../app/plugins/catalog";
 import {
   MYC_API_VERSION,
+  MYC_API_VERSION_V2,
   isMycFileName,
   normalizeInstalledEdgeStyle,
   normalizeInstalledTheme,
@@ -584,6 +585,34 @@ test("AgentPlugin and ProviderPlugin are activatable install kinds", () => {
     agent: { schemaVersion: 1, mode: "agent", reviewGated: true },
   };
   assert.equal(pluginCompatibility(agent).compatible, true);
+
+  const v2Agent: InstalledMycPlugin = {
+    ...agent,
+    installPath: "plugins/installed/myc.pdf-canvas-agent@0.5.3",
+    manifest: {
+      ...agent.manifest,
+      apiVersion: MYC_API_VERSION_V2,
+      metadata: {
+        ...agent.manifest.metadata,
+        version: "0.5.3",
+      },
+      spec: {
+        ...agent.manifest.spec,
+        capabilities: [
+          "plugin.files.pick",
+          "plugin.worker.open",
+          "plugin.worker.call",
+          "plugin.worker.cancel",
+          "plugin.worker.close",
+          "graph.patch.propose",
+          "graph.patch.get",
+          "graph.patch.review",
+        ],
+      },
+    },
+  };
+  assert.deepEqual(pluginCompatibility(v2Agent), { compatible: true, issues: [] });
+
   assert.equal(
     pluginCompatibility({
       ...agent,

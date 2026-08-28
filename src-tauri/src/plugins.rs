@@ -1639,7 +1639,10 @@ fn validate_agent_manifest_descriptor_v1(
     }
     for (label, section) in [
         ("securityBoundary", descriptor.security_boundary.as_ref()),
-        ("modelConfiguration", descriptor.model_configuration.as_ref()),
+        (
+            "modelConfiguration",
+            descriptor.model_configuration.as_ref(),
+        ),
         ("pipeline", descriptor.pipeline.as_ref()),
     ] {
         if section.is_some_and(|section| !section.is_object()) {
@@ -2712,12 +2715,6 @@ pub(crate) fn install_pending_packages(app: &AppHandle) -> Result<(), String> {
     #[cfg(not(debug_assertions))]
     {
         install_pending_from(&base, &base.join("packages"), &removed)?;
-        let resources = app
-            .path()
-            .resource_dir()
-            .map_err(|error| error.to_string())?
-            .join("plugins/packages");
-        install_pending_from(&base, &resources, &removed)?;
     }
     Ok(())
 }
@@ -3184,6 +3181,24 @@ pub fn require_plugin_capability(
     require_plugin_capabilities(app, plugin_id, plugin_version, &[capability])
 }
 
+/// Validate capabilities for any installed plugin kind. This is the gate for
+/// generic Host APIs such as plugin.files.pick and graph.patch.propose; the
+/// installer remains responsible for constraining which capabilities each
+/// plugin kind may declare.
+pub fn require_installed_plugin_capability(
+    app: &AppHandle,
+    plugin_id: &str,
+    plugin_version: &str,
+    capability: &str,
+) -> Result<PathBuf, String> {
+    require_installed_plugin_capabilities_from(
+        &plugin_base(app)?,
+        plugin_id,
+        plugin_version,
+        &[capability],
+    )
+}
+
 /** 解析一个 WorkspacePlugin 并验证全部宿主能力 / Resolve one WorkspacePlugin and prove all requested capabilities. */
 pub fn require_plugin_capabilities(
     app: &AppHandle,
@@ -3191,15 +3206,34 @@ pub fn require_plugin_capabilities(
     plugin_version: &str,
     capabilities: &[&str],
 ) -> Result<PathBuf, String> {
+    require_workspace_plugin_capabilities_from(
+        &plugin_base(app)?,
+        plugin_id,
+        plugin_version,
+        capabilities,
+    )
+}
+
+fn installed_plugin_for_capability_check(
+    base: &Path,
+    plugin_id: &str,
+    plugin_version: &str,
+) -> Result<(PathBuf, InstalledMycPlugin), String> {
     validate_slug(plugin_id, "plugin id")?;
     validate_slug(plugin_version, "plugin version")?;
-    let directory = plugin_base(app)?
+    let directory = base
         .join("installed")
         .join(format!("{plugin_id}@{plugin_version}"));
     let installed = read_installed_plugin(&directory)?;
-    if installed.manifest.kind != "WorkspacePlugin" {
-        return Err("Native workspace actions require WorkspacePlugin".to_string());
-    }
+    Ok((directory, installed))
+}
+
+fn validate_declared_plugin_capabilities(
+    installed: &InstalledMycPlugin,
+    plugin_id: &str,
+    plugin_version: &str,
+    capabilities: &[&str],
+) -> Result<(), String> {
     for capability in capabilities {
         if !installed
             .manifest
@@ -3213,6 +3247,33 @@ pub fn require_plugin_capabilities(
             ));
         }
     }
+    Ok(())
+}
+
+fn require_installed_plugin_capabilities_from(
+    base: &Path,
+    plugin_id: &str,
+    plugin_version: &str,
+    capabilities: &[&str],
+) -> Result<PathBuf, String> {
+    let (directory, installed) =
+        installed_plugin_for_capability_check(base, plugin_id, plugin_version)?;
+    validate_declared_plugin_capabilities(&installed, plugin_id, plugin_version, capabilities)?;
+    Ok(directory)
+}
+
+fn require_workspace_plugin_capabilities_from(
+    base: &Path,
+    plugin_id: &str,
+    plugin_version: &str,
+    capabilities: &[&str],
+) -> Result<PathBuf, String> {
+    let (directory, installed) =
+        installed_plugin_for_capability_check(base, plugin_id, plugin_version)?;
+    if installed.manifest.kind != "WorkspacePlugin" {
+        return Err("Native workspace actions require WorkspacePlugin".to_string());
+    }
+    validate_declared_plugin_capabilities(&installed, plugin_id, plugin_version, capabilities)?;
     Ok(directory)
 }
 
@@ -3907,7 +3968,7 @@ mod tests {
             .expect("manifest");
         archive
             .write_all(
-                br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.test-agent","name":"Test Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Test host-mediated review-gated agent."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.pdf.read","agent.graph.patch.propose","agent.review.request"],"permissions":[]}}"#,
+                br#"{"apiVersion":"researchcanvas.dev/v1alpha1","kind":"AgentPlugin","metadata":{"id":"myc.test-agent","name":"Test Agent","version":"0.1.0","publisher":"Research Canvas","developer":"Agent Tests","description":"Test host-mediated review-gated agent."},"spec":{"engine":"host-mediated","entry":"agent-manifest.json","capabilities":["agent.pdf.read","agent.graph.patch.propose","graph.patch.propose","plugin.files.pick","agent.review.request"],"permissions":[]}}"#,
             )
             .expect("manifest bytes");
         archive
@@ -3925,6 +3986,33 @@ mod tests {
         assert_eq!(installed.agent.expect("agent descriptor")["mode"], "agent");
         assert!(installed.runtime.is_none());
         assert!(installed.workspace.is_none());
+
+        require_installed_plugin_capabilities_from(
+            root.path(),
+            "myc.test-agent",
+            "0.1.0",
+            &["plugin.files.pick", "graph.patch.propose"],
+        )
+        .expect("generic Host capabilities accept an installed AgentPlugin");
+        let missing = require_installed_plugin_capabilities_from(
+            root.path(),
+            "myc.test-agent",
+            "0.1.0",
+            &["project.folder"],
+        )
+        .expect_err("undeclared generic capability must be rejected");
+        assert!(missing.contains("does not declare project.folder"));
+        let workspace_only = require_workspace_plugin_capabilities_from(
+            root.path(),
+            "myc.test-agent",
+            "0.1.0",
+            &["plugin.files.pick"],
+        )
+        .expect_err("Workspace actions must still reject AgentPlugin");
+        assert_eq!(
+            workspace_only,
+            "Native workspace actions require WorkspacePlugin"
+        );
 
         // 非审阅门控的 agent 描述符必须被拒绝 / Non-review-gated descriptors are rejected.
         let rogue_package = root.path().join("rogue-agent.myc");

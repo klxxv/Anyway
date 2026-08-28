@@ -62,13 +62,13 @@ node scripts/stage-plugin-runtime.mjs test
 Pack a plugin source into a package:
 
 ```bash
-node scripts/pack-plugin.mjs my-plugins/anPdfsolver .plugin-runtime/dev/packages/myc.pdf-canvas-agent@0.5.0.myc
+node scripts/pack-plugin.mjs my-plugins/anPdfsolver .plugin-runtime/dev/packages/myc.pdf-canvas-agent@0.5.3.myc
 ```
 
 Clean one exact staged plugin version from the generated runtime:
 
 ```bash
-node scripts/stage-plugin-runtime.mjs dev --clean-plugin myc.pdf-canvas-agent@0.5.0
+node scripts/stage-plugin-runtime.mjs dev --clean-plugin myc.pdf-canvas-agent@0.5.3
 ```
 
 The clean command accepts only an exact `pluginId@version` token and removes

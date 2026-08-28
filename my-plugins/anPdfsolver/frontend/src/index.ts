@@ -6,9 +6,9 @@ import styles from "./styles.css?inline";
 export { AnPdfsolverDialog, AnPdfsolverToolbarButton };
 
 export async function activate({ context }: { context: PluginContext }): Promise<void> {
-  if (!document.getElementById("anyway-plugin-myc-pdf-canvas-agent-0-5-0")) {
+  if (!document.getElementById("anyway-plugin-myc-pdf-canvas-agent-0-5-3")) {
     const style = document.createElement("style");
-    style.id = "anyway-plugin-myc-pdf-canvas-agent-0-5-0";
+    style.id = "anyway-plugin-myc-pdf-canvas-agent-0-5-3";
     style.textContent = styles;
     document.head.appendChild(style);
   }

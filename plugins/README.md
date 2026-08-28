@@ -35,7 +35,7 @@ Build a package:
 # Canonical packager (deterministic STORE zip, optional Ed25519 signing):
 node scripts/pack-plugin.mjs \
   my-plugins/anPdfsolver \
-  plugins/packages/myc.pdf-canvas-agent@0.5.0.myc
+  plugins/packages/myc.pdf-canvas-agent@0.5.3.myc
 
 ```
 
@@ -60,7 +60,7 @@ The staging script can also clean one exact generated version without touching
 source directories:
 
 ```bash
-node scripts/stage-plugin-runtime.mjs dev --clean-plugin myc.pdf-canvas-agent@0.5.0
+node scripts/stage-plugin-runtime.mjs dev --clean-plugin myc.pdf-canvas-agent@0.5.3
 ```
 
 That command is intentionally narrow: it accepts an exact `pluginId@version`

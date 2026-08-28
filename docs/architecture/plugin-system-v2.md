@@ -160,7 +160,7 @@ Host 只枚举物理 slot，例如 `workspace.toolbar.actions`、`workspace.dial
 10. 全量测试 + 迁移 `.myc` 包
 
 > 状态：全部完成。官方 `plugins/packages/<id>@<version>.myc` 已用 `pack-plugin.mjs` 重建为 v2 JSON 清单，并通过显式 staging 清单进入运行时；
-> 官方 `myc.pdf-canvas-agent@0.5.0` 已成为可信动态插件消费者：Host 加载
+> 官方 `myc.pdf-canvas-agent@0.5.3` 已成为可信动态插件消费者：Host 加载
 > `dist/frontend.mjs`，提供共享 Vue 单例和 `PluginContext`；插件拥有上传、批量分析、
 > response SSE、错误和 review UI，并可在 `network.mode=direct` 下直接连接 provider。
 > GraphPatch 只走 Rust canonical proposal/review/commit，`GraphProjectRegistry`

@@ -22,7 +22,7 @@
       "../.plugin-runtime/release-staging/packages/myc.export-suite@1.0.0.myc": "plugins/packages/myc.export-suite@1.0.0.myc",
       "../.plugin-runtime/release-staging/packages/myc.folder-workspaces@1.0.0.myc": "plugins/packages/myc.folder-workspaces@1.0.0.myc",
       "../.plugin-runtime/release-staging/packages/myc.git-workspace@1.2.0.myc": "plugins/packages/myc.git-workspace@1.2.0.myc",
-      "../.plugin-runtime/release-staging/packages/myc.pdf-canvas-agent@0.5.0.myc": "plugins/packages/myc.pdf-canvas-agent@0.5.0.myc"
+      "../.plugin-runtime/release-staging/packages/myc.pdf-canvas-agent@0.5.3.myc": "plugins/packages/myc.pdf-canvas-agent@0.5.3.myc"
     },
     "targets": [
       "nsis",
