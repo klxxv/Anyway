@@ -443,7 +443,10 @@ fn build_report(options: &Options, input: &Path, compiled: &CompileResult) -> Co
         let contradictions =
             research_graph_compiler::factor::contradiction::find_contradictions(
                 &compiled.project,
-                DEFAULT_MAX_DEPTH,
+                &research_graph_compiler::factor::contradiction::ContradictionOptions {
+                    max_depth: DEFAULT_MAX_DEPTH,
+                    ..Default::default()
+                },
             );
         contradiction_chains = serde_json::to_value(&contradictions).ok();
     }
@@ -451,8 +454,10 @@ fn build_report(options: &Options, input: &Path, compiled: &CompileResult) -> Co
         let factor_graph = research_graph_compiler::factor::compile::compile_factor_graph(
             &compiled.project,
         );
-        let beliefs =
-            research_graph_compiler::factor::bp::tree_belief_propagation(&factor_graph);
+        let beliefs = research_graph_compiler::factor::bp::belief_propagation(
+            &factor_graph,
+            &research_graph_compiler::factor::bp::BpOptions::default(),
+        );
         bp = serde_json::to_value(&beliefs).ok();
     }
     if options.layout {
@@ -493,8 +498,19 @@ fn render_report(options: &Options, report: &CompileReport, compiled: Option<&Co
         OutputFormat::Mermaid => {
             if let Some(compiled) = compiled {
                 print!("{}", export_mermaid(&compiled.project));
+            } else {
+                // 解析失败时不应静默输出空 mermaid：把诊断打印到 stderr，
+                // 让调用方明确知道失败原因。
+                eprintln!("canvas compile: parse failed; mermaid output not available");
+                for violation in &report.diagnostics {
+                    eprintln!(
+                        "  [{}] {} — {}",
+                        severity_name(violation.severity),
+                        violation.code,
+                        violation.message
+                    );
+                }
             }
-            // 解析失败时 mermaid 无图可导，诊断已由调用方输出到报告；这里不再输出。
         }
     }
 }

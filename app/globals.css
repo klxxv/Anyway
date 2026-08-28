@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "@xyflow/react/dist/style.css";
 
 @theme {
   --color-paper: #ffffff;
@@ -144,24 +143,6 @@
     background: var(--color-canvas);
   }
 
-  .zen-flow .react-flow__pane {
-    cursor: default;
-  }
-
-  .zen-flow.is-connecting .react-flow__pane,
-  .zen-flow.is-connecting .react-flow__node {
-    cursor: crosshair;
-  }
-
-  .zen-flow .react-flow__node {
-    font-family: var(--font-serif);
-  }
-
-  .zen-flow .react-flow__node:focus-visible {
-    outline: 2px solid var(--color-blue);
-    outline-offset: 3px;
-  }
-
   .zen-handle {
     width: 7px !important;
     height: 7px !important;
@@ -200,13 +181,6 @@
     contain: paint;
     max-width: calc(100% - 82px) !important;
     box-sizing: border-box;
-  }
-
-  .zen-minimap .react-flow__minimap-svg {
-    width: 100% !important;
-    height: 100% !important;
-    overflow: hidden;
-    border-radius: inherit;
   }
 
   .zen-controls {
@@ -447,7 +421,8 @@
     position: fixed;
     left: 50%;
     top: calc(var(--workspace-topbar-height) + clamp(16px, 2.5dvh, 24px));
-    z-index: 80;
+    z-index: 120;
+    pointer-events: none;
     max-width: min(520px, calc(100vw - 32px));
     transform: translateX(-50%);
     overflow: hidden;
@@ -498,6 +473,153 @@
     font-size: 10px;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Custom Cursor                                                        */
+/* ------------------------------------------------------------------ */
+
+/* Hide the native cursor everywhere when our custom cursor is active. */
+html.custom-cursor-active,
+html.custom-cursor-active * {
+  cursor: none !important;
+}
+
+.custom-cursor-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate3d(-100px, -100px, 0);
+  will-change: transform, opacity;
+  transition: opacity 0.3s ease;
+}
+
+.custom-cursor-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(36, 39, 43, 0.28);
+  border-color: var(--color-blue, #2457d6);
+  transform: scale(1);
+  transition:
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.35s ease,
+    background-color 0.35s ease,
+    opacity 0.3s ease;
+}
+
+.custom-cursor-ring.is-hover {
+  transform: scale(0.6);
+  /* border-color: var(--color-blue, #2457d6); */
+  background-color: color-mix(in srgb, var(--color-blue, #2457d6) 8%, transparent);
+}
+
+.custom-cursor-ring.is-longpress {
+  opacity: 0;
+  transform: scale(1);
+  transition:
+    transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.5s ease,
+    opacity 0.5s ease;
+}
+
+/* Box selection turns the custom cursor into an explicit crosshair. */
+.custom-cursor-ring.is-selection {
+  width: 30px;
+  height: 30px;
+  margin-left: -15px;
+  margin-top: -15px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  transform: none;
+}
+
+.custom-cursor-ring.is-selection::before,
+.custom-cursor-ring.is-selection::after {
+  position: absolute;
+  content: "";
+  background: var(--color-blue, #2457d6);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-paper, #fbfaf7) 72%, transparent);
+}
+
+.custom-cursor-ring.is-selection::before {
+  top: 14px;
+  left: 0;
+  width: 30px;
+  height: 1px;
+}
+
+.custom-cursor-ring.is-selection::after {
+  top: 0;
+  left: 14px;
+  width: 1px;
+  height: 30px;
+}
+
+/* The central dot – marks absolute cursor position. */
+.custom-cursor-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  will-change: opacity, width, height, margin;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--color-blue, #2457d6);
+  transition:
+    opacity 0.3s ease,
+    width 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    height 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    margin-left 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    margin-top 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.35s ease;
+}
+
+/* Long-press: the dot swells to fill the ring (36px) and adopts its border. */
+.custom-cursor-dot.is-longpress {
+  width: 36px;
+  height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
+  background: color-mix(in srgb, var(--color-blue, #2457d6) 12%, transparent);
+  border: 1.5px solid var(--color-blue, #2457d6);
+}
+
+.custom-cursor-dot.is-selection {
+  opacity: 0 !important;
+}
+
+.custom-cursor-dot.is-selection.is-longpress {
+  opacity: 1 !important;
+}
+
+/* Restore native cursor on touch / coarse-pointer devices. */
+@media (hover: none), (pointer: coarse) {
+  .custom-cursor-layer,
+  .custom-cursor-ring,
+  .custom-cursor-dot {
+    display: none;
+  }
+
+  html.custom-cursor-active,
+  html.custom-cursor-active * {
+    cursor: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion                                                      */
+/* ------------------------------------------------------------------ */
 
 @media (prefers-reduced-motion: reduce) {
   *,

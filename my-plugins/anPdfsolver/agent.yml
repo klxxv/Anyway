@@ -1,0 +1,121 @@
+apiVersion: researchcanvas.dev/trusted-plugin/v1alpha1
+kind: TrustedPluginPipeline
+version: 3
+
+id: myc.pdf-canvas-agent.pipeline
+name: anPdfsolver autonomous PDF analysis
+description: >-
+  anPdfsolver is a trusted Vue plugin with a plugin-owned Python worker. The
+  plugin owns PDF analysis UI, batch state, Kimi Files upload, provider SSE
+  parsing and deterministic GraphPatch draft assembly. Rust owns worker process
+  lifecycle, BlobRef authorization, and canonical GraphPatch proposal/review.
+
+frontend:
+  mode: trusted-module
+  entry: dist/frontend.mjs
+  framework: vue3
+  apiVersion: "1"
+  lifecycle:
+    activate: required
+    deactivate: required
+  contributions:
+    - id: anpdfsolver.toolbar
+      slotId: workspace.toolbar.actions
+      export: AnPdfsolverToolbarButton
+    - id: anpdfsolver.dialog
+      slotId: workspace.dialogs
+      export: AnPdfsolverDialog
+
+worker:
+  id: python-analyzer
+  language: python
+  entrypoint: src/anpdfsolver/worker.py
+  transport: stdio-framed-json-v1
+  openedBy: plugin.frontend
+  hostRpcOperations:
+    - plugin.worker.open
+    - plugin.worker.call
+    - plugin.worker.cancel
+    - plugin.worker.close
+  rpcDto:
+    open:
+      signature: worker.open(workerId, {sessionId, deadlineMs?})
+    call:
+      signature: worker.call(handle, {requestId, operation, payload?, deadlineMs?})
+    cancel:
+      signature: worker.cancel(handle, requestId)
+    close:
+      signature: worker.close(handle)
+  businessOperations:
+    - ping
+    - health
+    - anpdfsolver.analyze
+  reverseHostBus:
+    - blob.read
+  forbiddenReverseHostBus:
+    - graph.storage.put
+    - graph.patch.propose
+    - graph.patch.review
+
+network:
+  mode: direct
+  owner: plugin
+  providers:
+    - id: kimi
+      domains:
+        - api.moonshot.cn
+        - api.moonshot.ai
+      purpose: Kimi Files PDF upload, content extraction and SSE model frames.
+      secretEnv: ANYWAY_PLUGIN_SECRET_PROVIDER_API_KEY
+
+promptProtocol:
+  framing: typed-ndjson
+  maxFrameBytes: 8192
+  maxFrames: 512
+  frameTypes:
+    - progress
+    - evidence
+    - entity
+    - relation
+    - operator
+    - warning
+    - error
+    - end
+  forbiddenOutput:
+    - hidden-reasoning
+    - authorization
+    - api-key
+    - headers
+    - local-path
+    - aggregate-document-json
+
+graphPatch:
+  storageWrite: forbidden
+  draftOwner: plugin-worker
+  canonicalOwner: rust-kernel
+  frontendApi:
+    - graphPatch.propose
+    - graphPatch.get
+    - graphPatch.review
+    - graphPatch.cleanupSession
+  requiredBindings:
+    - pluginId
+    - pluginVersion
+    - sessionId
+    - projectId
+    - baseRevision
+    - digest
+  review:
+    source: rust-canonical-projection
+    acceptRequires:
+      - proposalId
+      - sessionId
+      - expectedDigest
+      - projectId
+      - baseRevision
+      - accept
+
+failurePolicy:
+  batchIsolation: continue-after-job-failure
+  cancellation: rust-worker-manager
+  requireReviewBeforeApply: true

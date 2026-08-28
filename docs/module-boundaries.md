@@ -64,7 +64,7 @@ verified metadata to the Webview.
 `src-tauri/src/plugin_vm.rs` is the only executable plugin boundary. A new
 `wasmi` store and instance are created for every invocation. Guest modules have
 no host imports, receive JSON through linear memory, and are bounded by memory,
-fuel, input, and output limits. Neither graph stores nor React components can
+fuel, input, and output limits. Neither graph stores nor renderer components can
 load native libraries or execute guest bytes directly.
 
 `src-tauri/src/projects.rs` owns validated native `.mycproj`/JSON persistence.
@@ -74,16 +74,22 @@ declared capability on every call; no filesystem handle or process API crosses
 into plugin code.
 
 `app/plugins/contracts.ts` defines the review-gated GraphPatch interchange.
-Torch/ONNX/model adapters may propose semantic nodes and relations, but only
-`use-workspace-project.ts` can apply the validated proposal and create layout,
-provenance, undo, and activity state.
+Plugin workers may draft semantic nodes and relations, but only the Rust kernel
+can validate, review, and atomically commit a proposal into canonical
+`ProjectState`. Vue fetches the committed snapshot and replaces its local view;
+it does not apply reviewed operations itself.
 
 ## Plugin source tree
 
-`plugins/sources/<id>` is one module. `plugin.yml` is its public contract.
-`plugins/packages/<id>@<version>.myc` is its distributable artifact.
-`plugins/installed/<id>@<version>` is generated state and is ignored except for
-the directory placeholder.
+`my-plugins/<name>` is the version-controlled source module for the official
+plugins being actively developed. The PDF Agent keeps the formal package ID
+`myc.pdf-canvas-agent` inside `my-plugins/anPdfsolver/plugin.json`.
+`plugins/packages/<id>@<version>.myc` is the checked-in official distributable
+artifact used as input to the explicit runtime staging manifest.
+`.plugin-runtime/dev/installed/<id>@<version>` and
+`.plugin-runtime/release-staging` are generated state and are ignored. Desktop
+development stages only the explicit official package allowlist unless a
+development plugin is requested with `--with-dev-plugin`.
 
 `plugins/sdk/rust` and `plugins/sdk/cpp` define the same guest ABI. Both compile
 to `plugin.wasm`; native Rust/C++ code is never loaded by the application.

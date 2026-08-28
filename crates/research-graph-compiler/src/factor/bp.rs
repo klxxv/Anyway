@@ -11,7 +11,8 @@
 //! - net_belief = σ(support_logit − refutation_logit)（0.5 = 中性）
 //! - conflict = support × refutation（两通道同时激活程度）
 
-use super::{Factor, FactorGraph, FactorKind};
+use super::{Factor, FactorDiagnostic, FactorGraph, FactorKind};
+use crate::invariant::Severity;
 use serde::Serialize;
 
 /// 信念状态 / Belief state (spec §4).
@@ -38,8 +39,11 @@ const PROB_EPSILON: f64 = 1e-15;
 
 /// 稳定 sigmoid（输入先限幅到 ±LOGIT_CLAMP；+inf→1，−inf→0，NaN→0.5 中性）。
 pub fn sigmoid(x: f64) -> f64 {
-    if !x.is_finite() {
-        return if x > 0.0 { 1.0 } else { 0.5 };
+    if x.is_nan() {
+        return 0.5;
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { 1.0 } else { 0.0 };
     }
     1.0 / (1.0 + (-x.clamp(-LOGIT_CLAMP, LOGIT_CLAMP)).exp())
 }
@@ -117,6 +121,8 @@ pub enum BpStatus {
     Unstable,
     /// 树 BP 收到环图（应改走 loopy，GC08-12）。
     TreeOnCyclicGraph,
+    /// 因子图包含零变量或未知种类因子，无法运行 BP。
+    InvalidFactorGraph,
 }
 
 /// BP 结果 / BP result.
@@ -132,6 +138,8 @@ pub struct BpResult {
     /// 最终残差（max |Δmessage|）。
     pub residual: f64,
     pub status: BpStatus,
+    /// 运行期诊断（如零变量因子）。
+    pub diagnostics: Vec<FactorDiagnostic>,
 }
 
 /// 因子消息权重：证据因子取 w=η·λ；逻辑因子（implies/and/or/等价）取 1；
@@ -159,6 +167,23 @@ fn factor_messages(factor: &Factor, nets: &[f64]) -> Vec<(f64, f64)> {
     let weight = factor_weight(factor);
     let n = factor.variables.len();
     let mut messages = vec![(0.0, 0.0); n];
+    // 防御性 guard：零变量因子或不足二元因子不触发索引 panic。
+    if n == 0 {
+        return messages;
+    }
+    let needs_two = matches!(
+        factor.kind,
+        FactorKind::Supports
+            | FactorKind::StatisticalTest
+            | FactorKind::MetaEvidence
+            | FactorKind::Contradicts
+            | FactorKind::Implies
+            | FactorKind::Equivalent
+            | FactorKind::DependsOn
+    );
+    if needs_two && n < 2 {
+        return messages;
+    }
     // 差值 m → 双通道拆分（m≥0 进支持，m<0 进反驳）。
     let split = |m: f64| if m >= 0.0 { (m, 0.0) } else { (0.0, -m) };
     match factor.kind {
@@ -203,6 +228,38 @@ fn factor_messages(factor: &Factor, nets: &[f64]) -> Vec<(f64, f64)> {
     messages
 }
 
+/// 校验因子是否满足 BP 运行最小元数要求。
+fn validate_factor_for_bp(index: usize, factor: &Factor) -> Option<FactorDiagnostic> {
+    let (required, name) = match factor.kind {
+        FactorKind::And | FactorKind::Or | FactorKind::Interaction => (1, "and/or/interaction"),
+        FactorKind::Supports
+        | FactorKind::StatisticalTest
+        | FactorKind::MetaEvidence
+        | FactorKind::Contradicts
+        | FactorKind::Implies
+        | FactorKind::Equivalent
+        | FactorKind::DependsOn => (2, "binary"),
+    };
+    if factor.variables.len() < required {
+        let entity = factor
+            .source_edge
+            .as_deref()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("factor:{index}"));
+        Some(FactorDiagnostic::new(
+            "bp-invalid-factor",
+            Severity::Error,
+            &entity,
+            format!(
+                "{name} factor has {} variables, needs at least {required}",
+                factor.variables.len()
+            ),
+        ))
+    } else {
+        None
+    }
+}
+
 /// 邻接（确定性构建）：变量 → (因子, 因子内位置)；因子 → 变量索引。
 struct Adjacency {
     var_to_factor: Vec<Vec<(usize, usize)>>,
@@ -241,8 +298,29 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
     let factor_count = graph.factors.len();
     let adjacency = Adjacency::build(graph);
 
-    // 消息表：msg_vf[u][k] ↔ var_to_factor[u][k]；msg_fv[f][pos]。
-    let mut msg_vf = vec![vec![(0.0, 0.0); graph.variables.len()]; var_count];
+    let diagnostics: Vec<FactorDiagnostic> = graph
+        .factors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| validate_factor_for_bp(i, f))
+        .collect();
+    if !diagnostics.is_empty() {
+        return BpResult {
+            beliefs: Vec::new(),
+            converged: false,
+            iterations: 0,
+            residual: 0.0,
+            status: BpStatus::InvalidFactorGraph,
+            diagnostics,
+        };
+    }
+
+    // 消息表:msg_vf[u][k] ↔ var_to_factor[u][k];msg_fv[f][pos]。
+    // 内层必须按各变量度数分配——hub 变量的度数可以超过变量总数,
+    // 按变量数分配会在 2 claims + 4 平行边时越界 panic。
+    let mut msg_vf: Vec<Vec<(f64, f64)>> = (0..var_count)
+        .map(|u| vec![(0.0, 0.0); adjacency.var_to_factor[u].len()])
+        .collect();
     let mut msg_fv: Vec<Vec<(f64, f64)>> = graph
         .factors
         .iter()
@@ -312,7 +390,13 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
                         if w == v {
                             0.0 // 父变量消息未算；factor_messages 不用目标自身 net
                         } else {
-                            let (sup, rfu) = msg_vf[w][pos_in(&adjacency, w, f)];
+                            // msg_vf[w] 按 var_to_factor[w] 的槽位布局,
+                            // 必须查变量侧位置(因子侧位置是另一个索引空间)。
+                            let k = adjacency.var_to_factor[w]
+                                .iter()
+                                .position(|&(g, _)| g == f)
+                                .unwrap_or(0);
+                            let (sup, rfu) = msg_vf[w][k];
                             sigmoid(sup - rfu)
                         }
                     })
@@ -359,7 +443,12 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
                 let nets: Vec<f64> = adjacency.factor_to_var[f]
                     .iter()
                     .map(|&x| {
-                        let (sup, rfu) = msg_vf[x][pos_in(&adjacency, x, f)];
+                        // 同上:msg_vf 必须按变量侧槽位索引。
+                        let k = adjacency.var_to_factor[x]
+                            .iter()
+                            .position(|&(g, _)| g == f)
+                            .unwrap_or(0);
+                        let (sup, rfu) = msg_vf[x][k];
                         sigmoid(sup - rfu)
                     })
                     .collect();
@@ -370,7 +459,8 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
     }
 
     // ---- 信念 ----
-    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv);
+    let options = BpOptions::default();
+    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv, &options);
 
     let status = if cyclic {
         BpStatus::TreeOnCyclicGraph
@@ -383,6 +473,7 @@ pub fn tree_belief_propagation(graph: &FactorGraph) -> BpResult {
         iterations: 2,
         residual: 0.0,
         status,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -391,7 +482,27 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
     let var_count = graph.variables.len();
     let adjacency = Adjacency::build(graph);
 
-    let msg_vf = vec![vec![(0.0, 0.0); graph.variables.len()]; var_count];
+    let diagnostics: Vec<FactorDiagnostic> = graph
+        .factors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| validate_factor_for_bp(i, f))
+        .collect();
+    if !diagnostics.is_empty() {
+        return BpResult {
+            beliefs: Vec::new(),
+            converged: false,
+            iterations: 0,
+            residual: 0.0,
+            status: BpStatus::InvalidFactorGraph,
+            diagnostics,
+        };
+    }
+
+    // 同树形 BP:内层按各变量度数分配,而不是变量总数(见上方注释)。
+    let msg_vf: Vec<Vec<(f64, f64)>> = (0..var_count)
+        .map(|u| vec![(0.0, 0.0); adjacency.var_to_factor[u].len()])
+        .collect();
     let mut msg_fv: Vec<Vec<(f64, f64)>> = graph
         .factors
         .iter()
@@ -403,7 +514,9 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
     let mut iterations = 0;
     let mut prev_residual = f64::INFINITY;
     let mut rising_streak = 0;
-    // period-2 振荡检测（GC10-09）：消息与两轮前重合但残差未收敛。
+    // period-2 振荡检测(GC10-09):消息与"两轮前"重合但残差未收敛。
+    // 需要 prev1/prev2 双快照;单快照在每轮末更新,实际比较的是一轮前,差一拍。
+    let mut prev1_msg = msg_fv.clone();
     let mut prev2_msg = msg_fv.clone();
 
     for round in 0..options.max_iterations {
@@ -430,7 +543,12 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
             let nets: Vec<f64> = adjacency.factor_to_var[f]
                 .iter()
                 .map(|&w| {
-                    let (sup, rfu) = snapshot[w][pos_in(&adjacency, w, f)];
+                    // snapshot 与 msg_vf 同布局:按变量侧槽位索引。
+                    let k = adjacency.var_to_factor[w]
+                        .iter()
+                        .position(|&(g, _)| g == f)
+                        .unwrap_or(0);
+                    let (sup, rfu) = snapshot[w][k];
                     sigmoid(sup - rfu)
                 })
                 .collect();
@@ -482,16 +600,17 @@ pub fn loopy_belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpR
                 break;
             }
         }
-        prev2_msg = msg_fv.clone();
+        prev2_msg = std::mem::replace(&mut prev1_msg, msg_fv.clone());
     }
 
-    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv);
+    let beliefs = compute_beliefs(graph, &adjacency, &msg_fv, options);
     BpResult {
         converged: status == BpStatus::Converged,
         iterations,
         residual,
         status,
         beliefs,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -500,6 +619,7 @@ fn compute_beliefs(
     graph: &FactorGraph,
     adjacency: &Adjacency,
     msg_fv: &[Vec<(f64, f64)>],
+    options: &BpOptions,
 ) -> Vec<BeliefState> {
     graph
         .variables
@@ -512,8 +632,9 @@ fn compute_beliefs(
                 support_logit += msg_fv[f][pos].0;
                 refutation_logit += msg_fv[f][pos].1;
             }
-            let support_logit = support_logit.clamp(-LOGIT_CLAMP, LOGIT_CLAMP);
-            let refutation_logit = refutation_logit.clamp(-LOGIT_CLAMP, LOGIT_CLAMP);
+            let clamp = options.logit_clamp;
+            let support_logit = support_logit.clamp(-clamp, clamp);
+            let refutation_logit = refutation_logit.clamp(-clamp, clamp);
             let support = sigmoid(support_logit);
             let refutation = sigmoid(refutation_logit);
             BeliefState {
@@ -529,13 +650,6 @@ fn compute_beliefs(
 }
 
 /// 变量 w 在因子 f 的邻接中的消息槽位置。
-fn pos_in(adjacency: &Adjacency, w: usize, f: usize) -> usize {
-    adjacency.factor_to_var[f]
-        .iter()
-        .position(|&x| x == w)
-        .unwrap_or(0)
-}
-
 /// 统一入口：树图走精确树 BP，环图走阻尼 Loopy BP（GC08-12 语义图环 → loopy）。
 pub fn belief_propagation(graph: &FactorGraph, options: &BpOptions) -> BpResult {
     if graph.has_cycle() {

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcanvas.dev/plugins/myc.pdf-canvas-agent/schemas/pass-a-structure.schema.json",
+  "title": "PDF Agent Pass A StructureExtraction",
+  "description": "Pass A paper structure; feeds the myc.llm.v4 document object and per-section anchors (camelCase Serde output).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": ["string", "null"] },
+    "authors": { "type": "array", "items": { "type": "string" } },
+    "year": { "type": ["integer", "null"], "minimum": 0 },
+    "abstractText": { "type": ["string", "null"] },
+    "sections": { "type": "array", "items": { "$ref": "#/$defs/sectionInfo" } },
+    "references": { "type": "array", "items": { "$ref": "#/$defs/referenceInfo" } },
+    "meta": { "$ref": "#/$defs/extractionMeta" }
+  },
+  "required": ["authors", "sections", "references", "meta"],
+  "$defs": {
+    "anchorRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sectionId": { "type": "string", "minLength": 1 },
+        "paragraphId": { "type": "string", "minLength": 1 },
+        "startOffset": { "type": "integer", "minimum": 0 },
+        "endOffset": { "type": "integer", "minimum": 0 },
+        "quote": { "type": "string" }
+      },
+      "required": ["sectionId", "paragraphId", "startOffset", "endOffset", "quote"]
+    },
+    "sectionInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "level": { "type": "integer", "minimum": 1 },
+        "summary": { "type": "string" },
+        "startAnchor": { "anyOf": [{ "$ref": "#/$defs/anchorRef" }, { "type": "null" }] }
+      },
+      "required": ["id", "title", "level", "summary"]
+    },
+    "referenceInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "refId": { "type": "string", "minLength": 1 },
+        "raw": { "type": "string" },
+        "title": { "type": ["string", "null"] },
+        "authors": { "type": "array", "items": { "type": "string" } },
+        "year": { "type": ["integer", "null"], "minimum": 0 },
+        "doi": { "type": ["string", "null"] }
+      },
+      "required": ["refId", "raw", "authors"]
+    },
+    "extractionMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "language": { "type": ["string", "null"] },
+        "totalPages": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    }
+  }
+}

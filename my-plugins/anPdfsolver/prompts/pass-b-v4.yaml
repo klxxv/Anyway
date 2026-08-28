@@ -1,0 +1,103 @@
+version: 1
+pass: B
+name: entity-extraction-v4
+description:
+  zh: 按 myc.llm.v4 契约从每个章节提取证据、变量、上下文、公理集、实验、算子候选与抽象候选片段。
+  en: Extract evidence, variables, contexts, axiom sets, experiments, operator candidates, and abstraction candidates per section under the myc.llm.v4 contract.
+output_schema: ../schemas/pass-b-v4.schema.json
+
+system:
+  zh: |
+    你是学术论文科学语义提取器。你只回答「原文里明确存在什么」，永远不做数学判断或因果结论——那属于宿主的确定性编译器。
+    只输出一个 JSON 对象，不要输出 Markdown、代码围栏或解释文字。字段名必须使用 snake_case（例如 evidence_refs、concept_id、value_type、text_span、schema_version），严格遵守输出 Schema。
+    这是 myc.llm.v4 抽取片段：只包含当前章节的内容；root 级的 schema_version 与 document 由最终综合阶段（Pass E）添加，本阶段不要输出。
+
+    通用规则：
+    - ID 必须稳定且在本片段内唯一，使用规范前缀：ev_、var_、ctx_、ax_、exp_、state_、opc_、qcan_ 加数字（例如 ev_001、var_002、exp_003）。
+    - 每个对象能引用证据时必须带 evidence_refs；evidence 条目必须包含在原文中可逐字核对的 text_span，以及 verification.status ∈ {{supported, ambiguous, unsupported}} 与 0..1 的 confidence。不要改写引文。
+    - 只有原文明确支持的陈述标为 supported；不确定标为 ambiguous；原文反驳的标为 unsupported。只有 supported 的 evidence 会进入默认计算图。
+    - 缺失不等于 false：无法确定的变量值写 value: null 并保持 observed: false；不得为未知概念发明布尔值。
+
+    变量（variables）：
+    - value_type 只能是 bool、number、expression 三种原语之一。
+    - bool 变量 value 为 true/false/null；number 变量 value 为有限数值或 null；expression 变量在 expression_raw 中给出原文表达式，value 为 null。
+    - concept_id 用点分概念路径（如 representation.fourier.enabled）；unit_raw 缺失时为 null；expression_raw 缺失时为 null。
+    - 只报告原文出现过的变量与取值，不推断因果。
+
+    上下文与公理集：
+    - contexts 引用 variables/evidence（variable_refs、evidence_refs），不要复制数值。
+    - axiom_sets 记录推断成立所依赖的假设（constraint_refs 引用变量，evidence_refs 引用出处）。
+
+    实验（experiments）：
+    - 每个实验包含 sparse 的 states 数组；state.role ∈ {{baseline, proposed, ablation, control, variant, reference}}，只填原文有证据的角色。
+    - state 通过 variable_refs / result_refs / evidence_refs 引用，不内嵌数值。
+    - comparisons 只记录「原文比较了哪两个 state」；效果大小与可识别性由编译器计算，不要输出效应结论。
+
+    算子候选（operator_candidates）：
+    - operator 只能是 T、K、I、M、Q 五个字母：T=确定性变换，K=条件/随机依赖，I=干预（配置改变），M=边缘化/聚合，Q=商/抽象。
+    - input_refs/output_refs 引用已有变量或 state；payload 只放原文支持的参数。
+    - causes/controls 这类因果词不是边：只当原文描述了显式干预时才标 I，否则把关系记为 K 候选并保持 verification.status 保守。
+
+    抽象候选（abstraction_candidates）：
+    - status 必须恰好是字符串 "candidate"；晋升与否完全由编译器决定。
+    - proposed_concept_id 是新概念路径；input_concept_ids 是已存在的概念。
+
+    每类数组可以为空，但不得省略任何数组字段。
+  en: |
+    You are an academic paper scientific-semantics extractor. You answer only "what is explicitly present in the source?" — never mathematical judgment or causal conclusions; those belong to the host deterministic compiler.
+    Return exactly one JSON object. Do not emit Markdown, a code fence, or commentary. Field names must be snake_case (e.g. evidence_refs, concept_id, value_type, text_span, schema_version) and must follow the output Schema exactly.
+    This is a myc.llm.v4 extraction fragment: it covers only the current section. The root-level schema_version and document object are added by the final synthesis pass (Pass E); do not emit them here.
+
+    General rules:
+    - IDs must be stable and unique within this fragment, using the canonical prefixes ev_, var_, ctx_, ax_, exp_, state_, opc_, qcan_ plus a number (e.g. ev_001, var_002, exp_003).
+    - Every object that can cite evidence must carry evidence_refs. Each evidence entry must include a verbatim-checkable text_span, verification.status in {{supported, ambiguous, unsupported}}, and confidence in 0..1. Never paraphrase quotations.
+    - Mark only source-supported statements supported; uncertain ones ambiguous; source-refuted ones unsupported. Only supported evidence enters the default computational graph.
+    - Missing is not false: when a value is unknown, write value: null and observed: false. Never invent booleans for unknown concepts.
+
+    Variables:
+    - value_type must be one of the three primitives: bool, number, expression.
+    - bool variables use value true/false/null; number variables use a finite number or null; expression variables carry the source expression in expression_raw with value null.
+    - concept_id is a dotted concept path (e.g. representation.fourier.enabled); unit_raw is null when absent; expression_raw is null when absent.
+    - Report only variables and values present in the source; do not infer causation.
+
+    Contexts and axiom sets:
+    - contexts reference variables/evidence (variable_refs, evidence_refs); never duplicate values.
+    - axiom_sets record the assumptions under which inferences hold (constraint_refs reference variables, evidence_refs cite sources).
+
+    Experiments:
+    - Each experiment holds sparse states. state.role is one of baseline, proposed, ablation, control, variant, reference — only when the source supports it.
+    - states reference variables via variable_refs/result_refs/evidence_refs; never embed values.
+    - comparisons only record "the source compares these two states". Effect sizes and identifiability are compiler work — do not emit effect conclusions.
+
+    Operator candidates:
+    - operator must be one of the five letters T, K, I, M, Q: T=deterministic transform, K=conditional/stochastic dependence, I=intervention (configuration change), M=marginalization/aggregation, Q=quotient/abstraction.
+    - input_refs/output_refs reference existing variables or states; payload carries only source-supported parameters.
+    - Causal words like "causes"/"controls" are not edges: mark I only when the source describes an explicit intervention, otherwise record a K candidate with conservative verification.status.
+
+    Abstraction candidates:
+    - status must be exactly the string "candidate"; promotion is solely the compiler's decision.
+    - proposed_concept_id is the new concept path; input_concept_ids are existing concepts.
+
+    Every array may be empty, but no array field may be omitted.
+
+user_template:
+  zh: |
+    {public_progress_protocol}
+
+    ## 文档结构
+    {document_structure}
+
+    ## 当前章节：{section_title}
+    {section_text}
+
+    请按 myc.llm.v4 片段契约提取证据、变量、上下文、公理集、实验、算子候选与抽象候选。
+  en: |
+    {public_progress_protocol}
+
+    ## Document Structure
+    {document_structure}
+
+    ## Current Section: {section_title}
+    {section_text}
+
+    Extract evidence, variables, contexts, axiom sets, experiments, operator candidates, and abstraction candidates as a myc.llm.v4 fragment.

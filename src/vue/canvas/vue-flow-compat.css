@@ -1,0 +1,182 @@
+/* Vue Flow equivalents for the selectors previously supplied by app/globals.css. */
+.zen-flow.vue-flow {
+  --vf-node-border-radius: 3px;
+  --vf-handle-size: 8px;
+  --vf-edge-stroke-width: 1.05;
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+}
+
+.zen-flow .zen-flow-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: transparent;
+  background-image: radial-gradient(circle, #dfe2e5 0.55px, transparent 0.65px);
+  background-position: 0 0;
+  background-size: 28px 28px;
+}
+
+.zen-flow .vue-flow__renderer,
+.zen-flow .vue-flow__viewport,
+.zen-flow .vue-flow__container {
+  width: 100%;
+  height: 100%;
+}
+
+.zen-flow .vue-flow__pane {
+  cursor: grab;
+}
+
+.zen-flow .vue-flow__pane:active,
+.zen-flow .vue-flow__node.dragging {
+  cursor: grabbing;
+}
+
+.zen-flow.is-selection-mode .vue-flow__pane {
+  cursor: crosshair;
+}
+
+.zen-flow.is-selection-mode .vue-flow__pane:active {
+  cursor: crosshair;
+}
+
+.zen-flow .vue-flow__selection {
+  border: 1px solid color-mix(in srgb, #2457d6 68%, transparent);
+  background: color-mix(in srgb, #2457d6 10%, transparent);
+}
+
+.zen-flow .vue-flow__node {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.zen-flow .vue-flow__node.selectable:focus,
+.zen-flow .vue-flow__node.selectable:focus-visible {
+  outline: none;
+}
+
+.zen-flow .vue-flow__handle {
+  width: var(--vf-handle-size);
+  height: var(--vf-handle-size);
+  min-width: var(--vf-handle-size);
+  min-height: var(--vf-handle-size);
+  border: 1px solid color-mix(in srgb, #656b72 55%, transparent);
+  background: var(--color-paper, #fbfaf7);
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.zen-flow .vue-flow__node:hover .zen-handle,
+.zen-flow.is-connecting .zen-handle,
+.zen-flow .vue-flow__handle.connectionindicator {
+  opacity: 1;
+}
+
+.zen-flow .zen-route-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.zen-flow .vue-flow__edge-path {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.zen-flow .vue-flow__edge.selected .vue-flow__edge-path {
+  filter: drop-shadow(0 0 0.4px #2457d6);
+}
+
+.zen-flow .vue-flow__edge-text,
+.zen-flow .vue-flow__edge-label {
+  pointer-events: none;
+  user-select: none;
+}
+
+.zen-flow .vue-flow__controls {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #20242a 28%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, #fbfaf7 94%, transparent);
+  box-shadow: 0 4px 14px rgb(20 24 30 / 8%);
+}
+
+.zen-flow .vue-flow__controls-button {
+  width: 25px;
+  height: 25px;
+  border-bottom: 1px solid color-mix(in srgb, #20242a 12%, transparent);
+  background: transparent;
+  color: #656b72;
+}
+
+.zen-flow .vue-flow__controls-button:hover {
+  background: #eef3ff;
+  color: #2457d6;
+}
+
+.zen-flow .vue-flow__minimap {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 5;
+  width: 200px;
+  height: 150px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #20242a 28%, transparent);
+  border-radius: 5px;
+  background: var(--minimap-background, rgb(251 250 247 / 96%));
+  box-shadow: 0 4px 14px rgb(20 24 30 / 8%);
+}
+
+.zen-flow .vue-flow__minimap svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.zen-minimap-relations {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 200px;
+  height: 150px;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 5px;
+}
+
+.zen-minimap-relations svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.zen-flow .vue-flow__attribution {
+  display: none;
+}
+
+.zen-flow.is-connecting .vue-flow__connection-path {
+  stroke: var(--color-blue, #2457d6);
+  stroke-width: 1.6;
+}
+
+.zen-canvas-context-menu,
+.zen-radial-menu {
+  user-select: none;
+}
+
+.zen-radial-menu.is-gesture-active {
+  border-color: var(--color-blue, #2457d6);
+  box-shadow: 0 0 0 2px rgb(36 87 214 / 14%), 0 12px 28px rgb(20 24 30 / 16%);
+}

@@ -1,0 +1,32 @@
+{
+  "name": "myc.runtime-smoke",
+  "version": "1.1.0",
+  "publisher": "Research Canvas",
+  "developer": "Runtime Team",
+  "description": "Verifies the capability-free Rust/C++ WebAssembly plugin boundary.",
+  "license": "MIT",
+  "categories": [
+    "AnalysisPlugin"
+  ],
+  "main": "plugin.wasm",
+  "engines": {
+    "engine": "wasm32-myc"
+  },
+  "language": "rust",
+  "capabilities": [
+    "analysis.run",
+    "context-menu.contribute"
+  ],
+  "permissions": [],
+  "contributes": {
+    "menus": [
+      {
+        "id": "inspect-context",
+        "scope": "node",
+        "label": "Analyze node context",
+        "icon": "sparkles"
+      }
+    ]
+  },
+  "displayName": "Runtime Smoke"
+}

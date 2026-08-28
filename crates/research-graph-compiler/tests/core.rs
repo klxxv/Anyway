@@ -302,6 +302,34 @@ fn invariants_report_dangling_references_and_duplicates() {
 }
 
 #[test]
+fn compile_project_rejects_error_level_violations() {
+    // 重复 id:两个节点同 id → duplicate-id(Error)→ compile_project 必须拒绝,
+    // 否则最后写入胜出的哈希表会静默损坏 contentRootHash。
+    let mut broken = sample_project();
+    broken["nodes"].as_array_mut().unwrap().push(json!({
+        "id": "n1",
+        "type": "concept",
+        "title": "撞车节点",
+        "data": {}
+    }));
+    let bytes = serde_json::to_vec(&broken).unwrap();
+    let result = compile_project(&bytes);
+    match result {
+        Err(CompileFailure::Invariant(messages)) => {
+            assert!(
+                messages.iter().any(|m| m.contains("duplicate-id")),
+                "{messages:?}"
+            );
+        }
+        other => panic!("duplicate ids must fail compilation, got {other:?}"),
+    }
+
+    // 干净项目照常编译。
+    let bytes = serde_json::to_vec(&sample_project()).unwrap();
+    assert!(compile_project(&bytes).is_ok());
+}
+
+#[test]
 fn clean_project_has_no_invariant_violations() {
     let violations = check_invariants(&sample_project());
     assert!(violations.is_empty(), "{violations:?}");

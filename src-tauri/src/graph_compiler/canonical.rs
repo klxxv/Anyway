@@ -13,6 +13,7 @@ use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::io::Write as _;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::graph_compiler::invariants::check_invariants;
@@ -25,7 +26,12 @@ use crate::graph_compiler::invariants::check_invariants;
 /// Text normalization: NFC + whitespace folding (any run of Unicode whitespace
 /// collapses to one space, with leading/trailing whitespace trimmed).
 pub fn normalize_text(input: &str) -> String {
-    input.nfc().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
+    input
+        .nfc()
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// 键规范化：仅 NFC 归一化，不折叠空白 —— 键是结构标识，合并键会掩盖数据错误。
@@ -62,9 +68,8 @@ pub fn canonicalize(value: &Value) -> Vec<u8> {
         Value::Array(items) => {
             let mut canonical_items: Vec<Vec<u8>> = items.iter().map(canonicalize).collect();
             canonical_items.sort();
-            let mut out = Vec::with_capacity(
-                canonical_items.iter().map(Vec::len).sum::<usize>() + 2,
-            );
+            let mut out =
+                Vec::with_capacity(canonical_items.iter().map(Vec::len).sum::<usize>() + 2);
             out.push(b'[');
             for (index, bytes) in canonical_items.iter().enumerate() {
                 if index > 0 {
@@ -80,7 +85,10 @@ pub fn canonicalize(value: &Value) -> Vec<u8> {
             let mut entries: Vec<(String, &Value)> = Vec::with_capacity(map.len());
             for (key, entry) in map {
                 let normalized = normalize_key(key);
-                match entries.iter_mut().find(|(existing, _)| *existing == normalized) {
+                match entries
+                    .iter_mut()
+                    .find(|(existing, _)| *existing == normalized)
+                {
                     Some((_, existing_value)) => *existing_value = entry,
                     None => entries.push((normalized, entry)),
                 }
@@ -104,7 +112,30 @@ pub fn canonicalize(value: &Value) -> Vec<u8> {
 
 /// 带 JSON 转义的带引号字符串字节 / Quoted, JSON-escaped string bytes.
 fn quoted_string(text: &str) -> Vec<u8> {
-    serde_json::to_vec(&Value::String(text.to_string())).expect("string serialization cannot fail")
+    serde_json::to_vec(&Value::String(text.to_string())).unwrap_or_else(|_| {
+        // 防御性回退：serde_json 对合法 String 不应失败，但若失败则手动转义，
+        // 避免 panic 路径。
+        let mut out = Vec::with_capacity(text.len() + 2);
+        out.push(b'"');
+        for ch in text.chars() {
+            match ch {
+                '"' => out.extend_from_slice(b"\\\""),
+                '\\' => out.extend_from_slice(b"\\\\"),
+                '\n' => out.extend_from_slice(b"\\n"),
+                '\r' => out.extend_from_slice(b"\\r"),
+                '\t' => out.extend_from_slice(b"\\t"),
+                c if (c as u32) < 0x20 => {
+                    let _ = write!(out, "\\u{:04x}", c as u32);
+                }
+                c => {
+                    let mut buf = [0; 4];
+                    out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                }
+            }
+        }
+        out.push(b'"');
+        out
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -195,8 +226,16 @@ const EDGE_CLAIM_FIELDS: &[&str] = &[
 
 /// evidence claim 字段：id、sourceType、sourceId、title、authors、year、doi、url。
 /// 不含 locator（fileName/page/section/quote/startOffset/endOffset）、status、provenance。
-const EVIDENCE_CLAIM_FIELDS: &[&str] =
-    &["id", "sourceType", "sourceId", "title", "authors", "year", "doi", "url"];
+const EVIDENCE_CLAIM_FIELDS: &[&str] = &[
+    "id",
+    "sourceType",
+    "sourceId",
+    "title",
+    "authors",
+    "year",
+    "doi",
+    "url",
+];
 
 fn pick_fields(entity: &Value, fields: &[&str]) -> Value {
     let mut claim = Map::new();
@@ -324,7 +363,10 @@ pub fn compile(project: &Value) -> CompileResult {
     let mut compiled = project.clone();
     inject_block_hashes(&mut compiled, &block_hashes);
     if let Some(root) = compiled.as_object_mut() {
-        root.insert("contentRootHash".to_string(), Value::String(content_root_hash.clone()));
+        root.insert(
+            "contentRootHash".to_string(),
+            Value::String(content_root_hash.clone()),
+        );
     }
     let file_hash = file_hash(&compiled);
     if let Some(root) = compiled.as_object_mut() {
@@ -355,7 +397,11 @@ pub fn verify_hashes(project: &Value) -> VerifyResult {
     let mut mismatches = Vec::new();
     let block_hashes = compute_block_hashes(project);
 
-    for (kind, collection) in [("node", "nodes"), ("edge", "edges"), ("evidence", "evidence")] {
+    for (kind, collection) in [
+        ("node", "nodes"),
+        ("edge", "edges"),
+        ("evidence", "evidence"),
+    ] {
         let entities = project.get(collection).and_then(Value::as_array);
         let empty: Vec<Value> = Vec::new();
         for entity in entities.unwrap_or(&empty) {
@@ -592,7 +638,10 @@ pub mod tests {
         let claim = node_claim(&project["nodes"][0]);
         let mut renamed = project.clone();
         renamed["nodes"][0]["title"] = json!("另一个问题");
-        assert_ne!(block_hash(&claim), block_hash(&node_claim(&renamed["nodes"][0])));
+        assert_ne!(
+            block_hash(&claim),
+            block_hash(&node_claim(&renamed["nodes"][0]))
+        );
         // 键顺序无关：同一对象的字段重排后哈希不变。
         let other_order = json!({"body": "b", "tags": [], "data": {}, "id": "n1", "title": "Q"});
         assert_eq!(
@@ -617,7 +666,10 @@ pub mod tests {
         assert_eq!(content_root_hash(&base), content_root_hash(&layout_changed));
         assert_eq!(content_root_hash(&base), content_root_hash(&title_changed));
         // evidenceIds 是悬挂字段：增删证据不改变主张哈希。
-        assert_eq!(content_root_hash(&base), content_root_hash(&evidence_hanging_changed));
+        assert_eq!(
+            content_root_hash(&base),
+            content_root_hash(&evidence_hanging_changed)
+        );
         assert_ne!(content_root_hash(&base), content_root_hash(&node_changed));
         assert_eq!(content_root_hash(&base).len(), 64);
     }
@@ -646,7 +698,12 @@ pub mod tests {
     #[test]
     fn compile_injects_hashes_and_verifies() {
         let result = compile(&sample_project());
-        assert_eq!(result.block_hashes.len(), 4, "{:?}", result.block_hashes.keys());
+        assert_eq!(
+            result.block_hashes.len(),
+            4,
+            "{:?}",
+            result.block_hashes.keys()
+        );
         assert!(result.violations.is_empty(), "{:?}", result.violations);
         assert_eq!(result.content_root_hash.len(), 64);
         assert_eq!(result.file_hash.len(), 64);
@@ -657,7 +714,10 @@ pub mod tests {
                 assert_eq!(hash.len(), 12);
             }
         }
-        assert_eq!(result.project["contentRootHash"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            result.project["contentRootHash"].as_str().unwrap().len(),
+            64
+        );
         assert_eq!(result.project["fileHash"].as_str().unwrap().len(), 64);
 
         let verified = verify_hashes(&result.project);
@@ -673,7 +733,10 @@ pub mod tests {
         let after = verify_hashes(&edited);
         assert!(!after.valid);
         assert!(after.mismatches.iter().any(|m| m.contains("node:n1")));
-        assert!(after.mismatches.iter().any(|m| m == "contentRootHash mismatch"));
+        assert!(after
+            .mismatches
+            .iter()
+            .any(|m| m == "contentRootHash mismatch"));
         assert!(after.mismatches.iter().any(|m| m == "fileHash mismatch"));
 
         // 布局变化 → fileHash 失效，但 contentRootHash 与 blockHash 仍有效。
@@ -681,8 +744,14 @@ pub mod tests {
         moved["placements"] = json!([{"id": "pl", "viewId": "v", "nodeId": "n1", "x": 9, "y": 9, "width": 1, "height": 1}]);
         let after_move = verify_hashes(&moved);
         assert!(!after_move.valid);
-        assert!(after_move.mismatches.iter().any(|m| m == "fileHash mismatch"));
-        assert!(!after_move.mismatches.iter().any(|m| m.contains("blockHash") || m.contains("contentRootHash")));
+        assert!(after_move
+            .mismatches
+            .iter()
+            .any(|m| m == "fileHash mismatch"));
+        assert!(!after_move
+            .mismatches
+            .iter()
+            .any(|m| m.contains("blockHash") || m.contains("contentRootHash")));
     }
 
     #[test]

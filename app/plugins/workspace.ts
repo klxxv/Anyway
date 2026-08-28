@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import type { ProjectState } from "../lib/research-types";
+import type { ProjectState, ResearchEdgeType } from "../lib/research-types";
 import type {
   InstalledMycPlugin,
   InstalledPluginLocale,
@@ -80,9 +80,10 @@ export function projectToSvg(project: ProjectState): string {
       const y1 = source.y + source.height / 2;
       const x2 = target.x + target.width / 2;
       const y2 = target.y + target.height / 2;
-      const dash = edge.type === "controls" ? ' stroke-dasharray="8 6"' : edge.type === "derived_from" ? ' stroke-dasharray="3 5"' : "";
-      const color = edge.type === "contradicts" ? "#d15a53" : "#666d75";
-      const label = escapeXml(edge.note?.trim() || edge.type.replaceAll("_", " "));
+      const dash = edge.type === "I" ? ' stroke-dasharray="8 6"' : edge.type === "M" ? ' stroke-dasharray="3 5"' : "";
+      const edgeColors: Record<ResearchEdgeType, string> = { T: "#5271c7", K: "#25836f", I: "#c98a2b", M: "#7d8796", Q: "#6d5bc1" };
+      const color = edgeColors[edge.type];
+      const label = escapeXml(edge.note?.trim() || edge.type);
       return `<g><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.4"${dash}/><text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 7}" text-anchor="middle" fill="${color}" font-size="12" font-family="serif">${label}</text></g>`;
     })
     .join("");
@@ -173,6 +174,10 @@ export function normalizePluginGraphPatch(value: unknown): PluginGraphPatch | nu
     typeof candidate.source.operation !== "string" ||
     candidate.source.operation.length === 0 ||
     candidate.source.operation.length > 160 ||
+    (candidate.source.projectId !== undefined &&
+      (typeof candidate.source.projectId !== "string" ||
+        candidate.source.projectId.length === 0 ||
+        candidate.source.projectId.length > 160)) ||
     typeof candidate.title !== "string" ||
     candidate.title.length === 0 ||
     candidate.title.length > 500 ||
@@ -199,7 +204,7 @@ export function normalizePluginGraphPatch(value: unknown): PluginGraphPatch | nu
         isText(node.id, 160) &&
         isText(node.type, 40) &&
         isText(node.title) &&
-        (node.body === undefined || typeof node.body === "string") &&
+        (node.body === undefined || isText(node.body, 10_000)) &&
         (node.tags === undefined ||
           (Array.isArray(node.tags) && node.tags.every((tag) => isText(tag, 80)))) &&
         (node.data === undefined || isRecord(node.data))
@@ -213,7 +218,7 @@ export function normalizePluginGraphPatch(value: unknown): PluginGraphPatch | nu
         isText(edge.source, 160) &&
         isText(edge.target, 160) &&
         isText(edge.type, 40) &&
-        (edge.note === undefined || typeof edge.note === "string") &&
+        (edge.note === undefined || isText(edge.note, 2_000)) &&
         (edge.data === undefined || isRecord(edge.data))
       );
     }

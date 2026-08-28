@@ -6,7 +6,7 @@
 use crate::canonical::canonicalize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 /// sha256 → 64 位小写 hex / sha256 → 64 lowercase hex chars.
@@ -22,8 +22,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// 被排除出语义哈希的键（§3 边界定案 E4/E5 + 规则 6/7）。
 /// Keys excluded from semantic hashing: review trail, timestamps, status,
 /// layout, evidence locator details, and the hanging `evidenceIds` field.
+///
+/// `blockHash` and `fileHash` are also excluded because they are derived
+/// fields, not part of the semantic claim; otherwise hashing would become
+/// circular/git-style self-encoding would fail.
 const EXCLUDED_KEYS: &[&str] = &[
+    "blockHash",
+    "contentRootHash",
     "derivedFrom",
+    "fileHash",
     "review",
     "status",
     "layout",
@@ -134,8 +141,8 @@ pub fn evidence_claim(evidence: &Value) -> Value {
 
 /// 计算全部 ① 区实体的 blockHash（entityId → 12 hex）。
 /// Computes block hashes for every ①-zone entity (entityId → 12 hex).
-pub fn compute_block_hashes(project: &Value) -> HashMap<String, String> {
-    let mut hashes = HashMap::new();
+pub fn compute_block_hashes(project: &Value) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
     for (collection, claim) in [
         ("nodes", node_claim as fn(&Value) -> Value),
         ("edges", edge_claim),
@@ -154,7 +161,7 @@ pub fn compute_block_hashes(project: &Value) -> HashMap<String, String> {
 
 /// `contentRootHash`（64 hex）= sha256(sorted(所有 ① 区实体 blockHash) 拼接)。
 /// Content root hash = sha256 over the concatenation of the sorted block hashes.
-pub fn content_root_hash_from_hashes(block_hashes: &HashMap<String, String>) -> String {
+pub fn content_root_hash_from_hashes(block_hashes: &BTreeMap<String, String>) -> String {
     let mut sorted: Vec<&String> = block_hashes.values().collect();
     sorted.sort();
     let mut input = String::with_capacity(sorted.len() * 12);
@@ -173,7 +180,12 @@ pub fn content_root_hash(project: &Value) -> String {
 /// File hash (64 hex) = sha256 over the canonical bytes of the whole file with
 /// the `fileHash` field blanked — git-style self-encoding. Hashing the canonical
 /// form keeps the hash stable across formatting and key order (§3.4).
+///
+/// 非对象根不进入哈希：返回空字符串，避免把非法输入当合法文件处理。
 pub fn file_hash(project: &Value) -> String {
+    if !project.is_object() {
+        return String::new();
+    }
     let mut blanked = project.clone();
     if let Some(root) = blanked.as_object_mut() {
         root.insert("fileHash".to_string(), Value::String(String::new()));

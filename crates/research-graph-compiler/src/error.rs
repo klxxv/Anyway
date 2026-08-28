@@ -14,6 +14,9 @@ use std::fmt;
 pub enum CompileFailure {
     /// 字节流不是合法 JSON（GC01-01/02/03：空输入、BOM、非法 UTF-8 一并归入）。
     Parse(String),
+    /// Error 级不变式违规(重复 id、悬挂引用等)——编译必须拒绝,
+    /// 否则破损图也会被盖上哈希,签名层失去意义。
+    Invariant(Vec<String>),
     /// 尚未实现的阶段（占位）。
     NotImplemented(&'static str),
 }
@@ -22,6 +25,9 @@ impl fmt::Display for CompileFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CompileFailure::Parse(detail) => write!(formatter, "parse error: {detail}"),
+            CompileFailure::Invariant(violations) => {
+                write!(formatter, "invariant violations: {}", violations.join("; "))
+            }
             CompileFailure::NotImplemented(stage) => {
                 write!(formatter, "stage {stage:?} is not implemented yet")
             }

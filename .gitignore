@@ -13,16 +13,9 @@
 # testing
 /coverage
 
-# next.js
-/.next/
-/.vinext/
-/out/
-
 # build artifacts
 /dist/
 /build/
-/.wrangler/
-/next-env.d.ts
 *.tsbuildinfo
 
 # runtime artifacts
@@ -42,6 +35,12 @@
 /plugins/installed/*
 !/plugins/installed/.gitkeep
 
+# separated local plugin packages and generated runtimes
+/my-third-plugins/
+my-plugins/*/dist/
+/.plugin-runtime/
+/plugin-runtime/
+
 # secrets — the app generates Ed25519 keys; never commit them
 .env
 .env.*
@@ -56,9 +55,10 @@ id_ed25519.pub
 /docs/*
 !/docs/module-boundaries.md
 !/docs/architecture/
-
-# deployment-specific credentials
-/.openai/
+!/docs/schema-v4/
+!/docs/vue-migration-handoff.md
+!/docs/sse-bp-canvas.png
+!/docs/sse-canvas-diff.png
 
 # external reference examples (not core app)
 /examples/
@@ -66,15 +66,8 @@ id_ed25519.pub
 # standalone demos
 /demos/
 
-# cloudflare worker (not used in desktop app)
-/worker/
-
-# cloudflare d1 database (not used in desktop app)
-/db/
-/drizzle/
-
-# openai deployment plugin (tied to .openai/)
-/build/
+# parallel-session scratch (DSH plugin port built by another workspace session)
+/dsh-anyway/
 
 # auto-generated docs
 /merge-roadmap.md
@@ -98,4 +91,12 @@ yarn-error.log*
 .vercel
 
 # rust workspace crates build output
+/target/
 crates/*/target/
+
+# python caches
+__pycache__/
+*.py[cod]
+
+# opencode session handoff (local context, never published)
+/OPENCODE_HANDOFF.md

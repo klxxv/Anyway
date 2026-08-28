@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "mode": "trusted-plugin",
+  "pluginId": "myc.pdf-canvas-agent",
+  "pluginVersion": "0.5.3",
+  "agentType": "pdf-canvas",
+  "reviewGated": true,
+  "frontend": {
+    "mode": "trusted-module",
+    "entry": "dist/frontend.mjs",
+    "framework": "vue3",
+    "apiVersion": "1",
+    "exports": ["activate", "deactivate", "AnPdfsolverToolbarButton", "AnPdfsolverDialog"],
+    "uiContributions": [
+      {
+        "id": "anpdfsolver.toolbar",
+        "slotId": "workspace.toolbar.actions",
+        "export": "AnPdfsolverToolbarButton"
+      },
+      {
+        "id": "anpdfsolver.dialog",
+        "slotId": "workspace.dialogs",
+        "export": "AnPdfsolverDialog"
+      }
+    ]
+  },
+  "worker": {
+    "id": "python-analyzer",
+    "language": "python",
+    "entrypoint": "src/anpdfsolver/worker.py",
+    "transport": "stdio-framed-json-v1",
+    "openedBy": "plugin.frontend",
+    "operations": ["ping", "health", "anpdfsolver.analyze"],
+    "hostOperations": ["blob.read"],
+    "forbiddenHostOperations": ["graph.storage.put", "graph.patch.propose", "graph.patch.review"],
+    "credentials": "host-secret-injected-to-exact-worker"
+  },
+  "frontendContextRequired": {
+    "files": ["pick"],
+    "worker": ["open", "call", "cancel", "close"],
+    "graphPatch": ["propose", "get", "review", "cleanupSession"],
+    "settings": ["read", "write"],
+    "hostContext": ["workspace.projectId", "workspace.baseRevision"]
+  },
+  "modelConfiguration": {
+    "ownership": "trusted-plugin",
+    "invocation": "plugin-direct-provider",
+    "nativeProviderProfile": {
+      "id": "kimi",
+      "requestPolicy": "agent.yml#network.providers[0]",
+      "credentialOwnership": "host-stored-or-plugin-trusted-variable",
+      "reviewGated": true
+    },
+    "settingIds": ["api-key", "api-url", "api-format", "pdf-transport", "model", "thinking", "public-progress"],
+    "secretSettingIds": ["api-key"],
+    "workerReceivesPlaintextSecrets": true
+  },
+  "pipeline": {
+    "stages": [
+      "plugin.files.pick",
+      "plugin.worker.open",
+      "anpdfsolver.analyze",
+      "streaming_typed_frames",
+      "deterministic_graph_patch_draft",
+      "graphPatch.propose",
+      "graphPatch.get",
+      "graphPatch.review"
+    ],
+    "analysisSessionId": "single-session-from-file-pick-through-review",
+    "extractionContract": "typed-ndjson-v1",
+    "transport": "plugin-direct-provider",
+    "directStorageWrite": false
+  },
+  "securityBoundary": {
+    "trustedPlugin": true,
+    "directProviderEgress": true,
+    "egressEnforcement": "manifest policy declaration; OS network sandbox not implemented",
+    "noGraphStoreWrite": true,
+    "pythonSdkRole": "framed-rpc-codec-only"
+  }
+}

@@ -1,30 +1,27 @@
 //! Ed25519 签名验证与公钥信任根管理 / Ed25519 signature verification and public-key trust-root management.
 //!
-//! `.myc` 插件的 plugin.yml 可携带一个 `signature` 字段，存储发布者对清单内容的 Ed25519 签名。
+//! `.myc` 插件的 plugin.json 可携带一个 `signature` 字段，存储发布者对清单内容的 Ed25519 签名。
 //! 安装器在校验阶段提取该字段，使用发布者公钥验证，验签失败则拒绝安装。
 //!
-//! A `.myc` plugin's plugin.yml may carry a `signature` field holding the publisher's
+//! A `.myc` plugin's plugin.json may carry a `signature` field holding the publisher's
 //! Ed25519 signature over the manifest content. The installer extracts the field,
 //! verifies it against the publisher's public key, and rejects invalid signatures.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-};
+use std::{collections::HashMap, fs, path::Path};
 
 /// 信任的发布者公钥映射（发布者 ID → Ed25519 验证密钥）/ Trusted publisher public keys.
 pub type TrustedKeys = HashMap<String, VerifyingKey>;
 
 /// Research Canvas 官方内置公钥（base64 编码的 32 字节 Ed25519 公钥）。
-/// 在正式的密钥轮换流程建立之前，用于校验官方发布的 .myc 插件包。
+/// 对应私钥由官方离线保管(见 examples/generate_signing_key.rs),用于签发官方 .myc 包。
 ///
 /// Research Canvas built-in public key (base64-encoded 32-byte Ed25519 public key).
-/// Used to verify official .myc packages until a formal key rotation process is established.
-const BUILTIN_RESEARCH_CANVAS_PUBKEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+/// The matching secret key is held offline by the official publisher (see
+/// examples/generate_signing_key.rs) and signs official .myc packages.
+const BUILTIN_RESEARCH_CANVAS_PUBKEY: &str = "aUxtfcFs9fwdlK6/BtCajYzWVHKe2RsdgrVVcR/I7nY=";
 
 /// 信任根配置文件名 / Trust-root configuration file name.
 const TRUSTED_KEYS_FILE: &str = "trusted-keys.json";
@@ -38,10 +35,12 @@ const TRUSTED_KEYS_FILE: &str = "trusted-keys.json";
 ///
 /// Computes the signature payload for a manifest: SHA-256 of its JSON serialization
 /// with the signature field removed. Using JSON avoids YAML formatting ambiguity.
-pub fn manifest_payload(manifest_json_without_signature: &serde_json::Value) -> Vec<u8> {
-    let json_bytes =
-        serde_json::to_vec(manifest_json_without_signature).expect("JSON serialization is infallible");
-    Sha256::digest(&json_bytes).to_vec()
+pub fn manifest_payload(
+    manifest_json_without_signature: &serde_json::Value,
+) -> Result<Vec<u8>, String> {
+    let json_bytes = serde_json::to_vec(manifest_json_without_signature)
+        .map_err(|error| format!("JSON serialization failed: {error}"))?;
+    Ok(Sha256::digest(&json_bytes).to_vec())
 }
 
 // ---------------------------------------------------------------------------
@@ -49,6 +48,10 @@ pub fn manifest_payload(manifest_json_without_signature: &serde_json::Value) -> 
 // ---------------------------------------------------------------------------
 
 /// 从 base64 字符串解码 Ed25519 公钥 / Decode an Ed25519 public key from base64.
+///
+/// 拒绝小阶点:全零等弱编码的公钥会让伪造签名通过验证(4 阶点的离散对数可解)。
+/// Rejects small-order points: weak encodings such as all-zero bytes make
+/// forged signatures verify (the discrete log on a 4-order point is trivial).
 pub fn decode_public_key(b64: &str) -> Result<VerifyingKey, String> {
     let bytes = BASE64
         .decode(b64)
@@ -56,8 +59,15 @@ pub fn decode_public_key(b64: &str) -> Result<VerifyingKey, String> {
     let arr: &[u8; 32] = bytes
         .first_chunk::<32>()
         .ok_or_else(|| "Ed25519 public key must be exactly 32 bytes".to_string())?;
-    VerifyingKey::from_bytes(arr)
-        .map_err(|error| format!("Invalid Ed25519 public key: {error}"))
+    let point = curve25519_dalek::edwards::CompressedEdwardsY(*arr)
+        .decompress()
+        .ok_or_else(|| "Ed25519 public key is not a valid curve point".to_string())?;
+    if point.is_small_order() {
+        return Err(
+            "Ed25519 public key is a small-order point and cannot be a trust root".to_string(),
+        );
+    }
+    VerifyingKey::from_bytes(arr).map_err(|error| format!("Invalid Ed25519 public key: {error}"))
 }
 
 /// 从 base64 字符串解码 Ed25519 签名 / Decode an Ed25519 signature from base64.
@@ -99,10 +109,10 @@ pub fn load_file_trusted_keys(base: &Path) -> Result<TrustedKeys, String> {
     if !path.is_file() {
         return Ok(HashMap::new());
     }
-    let text =
-        fs::read_to_string(&path).map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
-    let map: HashMap<String, String> =
-        serde_json::from_str(&text).map_err(|error| format!("Invalid {}: {error}", TRUSTED_KEYS_FILE))?;
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
+    let map: HashMap<String, String> = serde_json::from_str(&text)
+        .map_err(|error| format!("Invalid {}: {error}", TRUSTED_KEYS_FILE))?;
     let mut keys = HashMap::with_capacity(map.len());
     for (publisher, b64) in map {
         let key = decode_public_key(&b64).map_err(|error| {
@@ -113,12 +123,15 @@ pub fn load_file_trusted_keys(base: &Path) -> Result<TrustedKeys, String> {
     Ok(keys)
 }
 
-/// 合并内置与文件信任根（文件中的条目可覆盖内置条目）。
-/// Merge built-in and file trust roots (file entries override built-in entries).
+/// 合并内置与文件信任根。
+/// 内置条目优先:文件不得覆盖内置发布者(否则本地可写文件即可替换官方信任根)。
+///
+/// Merge built-in and file trust roots. Built-in entries win: the on-disk
+/// file must not override a built-in publisher, or anyone who can write the
+/// file could replace the official trust root.
 pub fn load_all_trusted_keys(base: &Path) -> Result<TrustedKeys, String> {
-    let mut keys = load_builtin_trusted_keys();
-    let file_keys = load_file_trusted_keys(base)?;
-    keys.extend(file_keys);
+    let mut keys = load_file_trusted_keys(base)?;
+    keys.extend(load_builtin_trusted_keys());
     Ok(keys)
 }
 
@@ -127,20 +140,16 @@ pub fn load_all_trusted_keys(base: &Path) -> Result<TrustedKeys, String> {
 // ---------------------------------------------------------------------------
 
 /// 在信任根中查找发布者的公钥 / Look up a publisher's public key in the trust roots.
+///
+/// 仅精确匹配:大小写回退会让 "ResearchCanvas" 撞上内置的 "researchcanvas"。
+/// Exact match only: a case-insensitive fallback lets "ResearchCanvas"
+/// collide with the built-in "researchcanvas" trust root.
 pub fn find_public_key<'a>(
     publisher: &str,
     trusted_keys: &'a TrustedKeys,
 ) -> Result<&'a VerifyingKey, String> {
-    // 精确匹配 / Exact match
     if let Some(key) = trusted_keys.get(publisher) {
         return Ok(key);
-    }
-    // 大小写不敏感回退 / Case-insensitive fallback
-    let lower = publisher.to_lowercase();
-    for (name, key) in trusted_keys {
-        if name.to_lowercase() == lower {
-            return Ok(key);
-        }
     }
     Err(format!(
         "No trusted public key found for publisher '{publisher}'. \
@@ -166,7 +175,7 @@ pub fn verify_manifest_signature(
 ) -> Result<(), String> {
     let public_key = find_public_key(publisher, trusted_keys)?;
     let signature = decode_signature(signature_b64)?;
-    let payload = manifest_payload(manifest_without_signature);
+    let payload = manifest_payload(manifest_without_signature)?;
 
     public_key
         .verify(&payload, &signature)
@@ -212,7 +221,7 @@ mod tests {
             }
         });
 
-        let payload = manifest_payload(&manifest);
+        let payload = manifest_payload(&manifest).expect("manifest payload");
         let signature = signing_key.sign(&payload);
 
         let mut trusted = HashMap::new();
@@ -269,7 +278,7 @@ mod tests {
             }
         });
 
-        let payload = manifest_payload(&original);
+        let payload = manifest_payload(&original).expect("manifest payload");
         let signature = signing_key.sign(&payload);
 
         let mut trusted = HashMap::new();
@@ -313,7 +322,7 @@ mod tests {
             }
         });
 
-        let payload = manifest_payload(&manifest);
+        let payload = manifest_payload(&manifest).expect("manifest payload");
         let signature = signing_key.sign(&payload);
 
         let trusted: TrustedKeys = HashMap::new(); // empty trust store
@@ -344,13 +353,64 @@ mod tests {
     }
 
     #[test]
-    fn case_insensitive_publisher_lookup() {
+    fn publisher_lookup_is_case_sensitive() {
         let (_signing_key, verifying_key) = make_test_keys();
         let mut trusted = HashMap::new();
         trusted.insert("ResearchCanvas".to_string(), verifying_key);
 
-        let key = find_public_key("researchcanvas", &trusted)
-            .expect("case-insensitive lookup should succeed");
+        assert!(
+            find_public_key("researchcanvas", &trusted).is_err(),
+            "case-insensitive fallback must not alias distinct publishers"
+        );
+        let key = find_public_key("ResearchCanvas", &trusted).expect("exact match works");
         assert_eq!(key.as_bytes(), verifying_key.as_bytes());
+    }
+
+    #[test]
+    fn weak_small_order_public_keys_are_rejected() {
+        // 全零是 4 阶点:任何“官方签名”都可用低阶点性质伪造 / All-zero is an
+        // order-4 point: any "official" signature becomes forgeable.
+        assert!(
+            decode_public_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").is_err(),
+            "all-zero key must be rejected"
+        );
+        // y=1 恒等元编码也是小阶点 / The y=1 identity encoding is small-order too.
+        assert!(
+            decode_public_key("AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").is_err(),
+            "identity point must be rejected"
+        );
+        // 合法公钥照常通过 / A real key still decodes.
+        let (_signing_key, verifying_key) = make_test_keys();
+        let b64 = BASE64.encode(verifying_key.as_bytes());
+        assert!(decode_public_key(&b64).is_ok(), "valid key must decode");
+    }
+
+    #[test]
+    fn builtin_trust_root_loads_and_cannot_be_overridden_by_file() {
+        let builtin = load_builtin_trusted_keys();
+        let builtin_key = builtin
+            .get("researchcanvas")
+            .expect("built-in researchcanvas key loads");
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (attacker_signing, attacker_verifying) = make_test_keys();
+        let _ = attacker_signing;
+        let mut file_map = HashMap::new();
+        file_map.insert(
+            "researchcanvas".to_string(),
+            BASE64.encode(attacker_verifying.as_bytes()),
+        );
+        fs::write(
+            dir.path().join(TRUSTED_KEYS_FILE),
+            serde_json::to_string(&file_map).expect("serialize file keys"),
+        )
+        .expect("write trusted-keys.json");
+
+        let merged = load_all_trusted_keys(dir.path()).expect("merged keys");
+        assert_eq!(
+            merged["researchcanvas"].as_bytes(),
+            builtin_key.as_bytes(),
+            "on-disk file must not override the built-in trust root"
+        );
     }
 }

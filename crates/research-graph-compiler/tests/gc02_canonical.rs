@@ -114,6 +114,31 @@ fn gc02_04_ordered_sequence_arrays_keep_order() {
     );
 }
 
+/// 回归:顶层 canonicalize 的对象分支必须走 canonicalize_field——
+/// 之前统一 canonicalize 导致序列字段在对象内被排序(canonicalize_field 死代码)。
+#[test]
+fn gc02_04_object_members_preserve_sequence_field_order() {
+    let chain_a: Value = serde_json::from_str(
+        r#"{"id":"c1","pathSteps":["n1","n2","n3"],"type":"logic-chain"}"#,
+    )
+    .unwrap();
+    let chain_b: Value = serde_json::from_str(
+        r#"{"id":"c1","pathSteps":["n3","n2","n1"],"type":"logic-chain"}"#,
+    )
+    .unwrap();
+    assert_ne!(
+        canonicalize(&chain_a),
+        canonicalize(&chain_b),
+        "chains with different step orders must not hash the same"
+    );
+    // 同序不同写法(键顺序、空白)仍等价。
+    let chain_c: Value = serde_json::from_str(
+        r#"{"type":"logic-chain", "pathSteps": ["n1","n2","n3"],  "id":"c1"}"#,
+    )
+    .unwrap();
+    assert_eq!(canonicalize(&chain_a), canonicalize(&chain_c));
+}
+
 /// GC02-05 NFD 与 NFC 等价字符 → 统一 NFC，哈希相同。
 #[test]
 fn gc02_05_nfd_nfc_equivalent_hashes() {

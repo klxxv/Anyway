@@ -86,9 +86,13 @@ pub fn compile_factor_graph(project: &Value) -> FactorGraph {
         if !CLAIM_NODE_TYPES.contains(&node_type) {
             continue; // paper/dataset/experiment 等不是主张变量。
         }
-        let Some(data) = node.get("data").and_then(Value::as_object) else {
-            continue;
-        };
+        // 无 data(或非对象)的主张节点按空 data 处理:默认布尔变量。
+        // 之前直接 continue,导致这类 claim 从 BP 静默消失。
+        let empty_data = serde_json::Map::new();
+        let data = node
+            .get("data")
+            .and_then(Value::as_object)
+            .unwrap_or(&empty_data);
         // 注入检测：data 中不得携带哈希/后验/布局（MUST 拒绝）。
         for key in INJECTED_TRUST_KEYS {
             if data.contains_key(*key) {
@@ -210,6 +214,17 @@ pub fn compile_factor_graph(project: &Value) -> FactorGraph {
             continue; // 端点不是主张变量（如 paper/metric 节点），跳过因子。
         }
         let edge_type = edge.get("type").and_then(Value::as_str).unwrap_or("");
+        // 未知边类型不生成因子(自有文档如此声明,此前却静默编译为 Supports,
+        // 会给 causes/measures 等结构边注入正向证据)。显式跳过并留诊断。
+        let Some(factor_kind) = kind_for_type(edge_type) else {
+            graph.diagnostics.push(FactorDiagnostic::new(
+                "unsupported-edge-factor",
+                Severity::Warning,
+                &location,
+                format!("edge type {edge_type:?} has no factor semantics; skipped instead of defaulting to supports"),
+            ));
+            continue;
+        };
         let evidence_ids: Vec<&str> = edge
             .get("evidenceIds")
             .and_then(Value::as_array)
@@ -264,7 +279,7 @@ pub fn compile_factor_graph(project: &Value) -> FactorGraph {
                 ));
                 // 证据被拒绝 → 退化为未接地逻辑因子。
                 let mut factor = Factor::logical(
-                    kind_for_type(edge_type),
+                    factor_kind,
                     vec![source.to_string(), target.to_string()],
                     Some(edge_id.clone()),
                 );
@@ -286,7 +301,19 @@ pub fn compile_factor_graph(project: &Value) -> FactorGraph {
             ));
         }
 
-        let kind = kind_for_type(edge_type);
+        // 自环非 supports 因子：避免变量邻接表中重复变量 [x,x] 导致 BP
+        // 消息槽位歧义；此等因子对同一变量发送两个消息,语义无意义。
+        if source == target && factor_kind != FactorKind::Supports {
+            graph.diagnostics.push(FactorDiagnostic::new(
+                "self-loop-non-supports",
+                Severity::Error,
+                &location,
+                "self-loop edge must be of type 'supports'",
+            ));
+            continue;
+        }
+
+        let kind = factor_kind;
         let mut factor = Factor {
             kind,
             variables: vec![source.to_string(), target.to_string()],
@@ -348,8 +375,8 @@ fn node_grounded(node: &Value) -> bool {
 }
 
 /// 边类型 → 因子种类（未知类型不生成因子）。
-fn kind_for_type(edge_type: &str) -> FactorKind {
-    match edge_type {
+fn kind_for_type(edge_type: &str) -> Option<FactorKind> {
+    Some(match edge_type {
         "supports" => FactorKind::Supports,
         "contradicts" => FactorKind::Contradicts,
         "implies" => FactorKind::Implies,
@@ -360,8 +387,8 @@ fn kind_for_type(edge_type: &str) -> FactorKind {
         "and" => FactorKind::And,
         "or" => FactorKind::Or,
         "equivalent" => FactorKind::Equivalent,
-        _ => FactorKind::Supports,
-    }
+        _ => return None,
+    })
 }
 
 /// 从边 data 读取质量五元组（缺省全 1）。

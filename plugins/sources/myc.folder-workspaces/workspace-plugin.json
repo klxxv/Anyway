@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "mode": "folder",
+  "testFixture": "pinn-architecture",
+  "config": {
+    "extensions": ["mycproj", "json"],
+    "maxDepth": 4,
+    "maxProjects": 500,
+    "tree": {
+      "lazy": true,
+      "maxEntries": 1000
+    }
+  }
+}

@@ -1,0 +1,171 @@
+.anpdfsolver-panel {
+  position: fixed;
+  inset: 64px 20px 20px;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  min-width: min(1180px, 100%);
+  color: inherit;
+  background: Canvas;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 24px 80px color-mix(in srgb, black 28%, transparent);
+  overflow: auto;
+}
+
+.anpdfsolver-panel .anpdfsolver-header,
+.anpdfsolver-panel .card-title,
+.anpdfsolver-panel .actions,
+.anpdfsolver-panel .job-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.anpdfsolver-panel h2,
+.anpdfsolver-panel h3,
+.anpdfsolver-panel p {
+  margin: 0;
+}
+
+.anpdfsolver-panel h2 { font-size: 18px; }
+.anpdfsolver-panel h3 { font-size: 14px; }
+
+.anpdfsolver-panel .muted,
+.anpdfsolver-panel .status,
+.anpdfsolver-panel small {
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  font-size: 12px;
+}
+
+.anpdfsolver-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(360px, 1fr) minmax(260px, 340px);
+  gap: 12px;
+  align-items: start;
+}
+
+.anpdfsolver-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, Canvas 96%, currentColor 4%);
+}
+
+.anpdfsolver-panel button {
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: color-mix(in srgb, Canvas 88%, currentColor 12%);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.anpdfsolver-panel button:disabled { cursor: not-allowed; opacity: 0.48; }
+.anpdfsolver-panel button.danger { color: #b42318; }
+.anpdfsolver-panel button.ghost { background: transparent; }
+
+.anpdfsolver-panel .file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.anpdfsolver-panel .file-list button {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+}
+
+.anpdfsolver-panel .file-list .selected button { border-color: #2563eb; }
+.anpdfsolver-panel progress { width: 160px; height: 10px; }
+
+.anpdfsolver-panel .stream,
+.anpdfsolver-panel .review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.anpdfsolver-panel .stream-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 220px;
+  max-height: 360px;
+  overflow: auto;
+  border-radius: 6px;
+  padding: 10px;
+  background: color-mix(in srgb, Canvas 88%, black 12%);
+}
+
+.anpdfsolver-panel .stream-box article,
+.anpdfsolver-panel .review-list article,
+.anpdfsolver-panel .error-box {
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.anpdfsolver-panel code {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+
+.anpdfsolver-panel .error-box {
+  color: #b42318;
+  background: color-mix(in srgb, #b42318 8%, Canvas);
+}
+
+.anpdfsolver-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, Canvas 92%, currentColor 8%);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.anpdfsolver-toolbar-button:hover {
+  background: color-mix(in srgb, Canvas 86%, currentColor 14%);
+}
+
+.anpdfsolver-toolbar-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 20px;
+  border-radius: 4px;
+  background: #b42318;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+@media (max-width: 980px) {
+  .anpdfsolver-grid { grid-template-columns: 1fr; }
+}

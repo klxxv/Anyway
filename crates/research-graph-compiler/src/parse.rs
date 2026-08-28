@@ -136,34 +136,96 @@ pub fn parse_bytes(bytes: &[u8], options: &ParseOptions) -> Result<Value, ParseE
             "input contains only a UTF-8 BOM",
         ));
     }
-    // GC02-09：JSON 标准不允许多个顶层数字字面量之外的非有限数。
+    // GC02-09：JSON 标准不允许多个顶层/嵌套 NaN / Infinity / -Infinity 字面量。
     reject_non_finite_literals(text)?;
     // GC01-10：迭代式深度预检，避免 serde_json 在深嵌套下抛非稳定错误。
     check_nesting_depth(text.as_bytes(), options.max_depth)?;
     serde_json::from_str(text).map_err(|error| {
+        let offset = byte_offset_from_line_col(text, error.line(), error.column());
         ParseError::new(
             "invalid-json",
-            Some(error.line()),
+            offset,
             None,
-            format!("invalid JSON: {error}"),
+            format!("invalid JSON at line {} column {}: {error}", error.line(), error.column()),
         )
     })
 }
 
-/// 拒绝顶层 NaN / Infinity / -Infinity 字面量（GC02-09）。
-/// Rejects top-level non-finite number literals with a stable code.
-fn reject_non_finite_literals(text: &str) -> Result<(), ParseError> {
-    let trimmed = text.trim_start();
-    for literal in ["NaN", "Infinity", "-Infinity"] {
-        if trimmed.starts_with(literal) {
-            let offset = text.len() - trimmed.len();
-            return Err(ParseError::new(
-                "invalid-number",
-                Some(offset),
-                None,
-                format!("non-finite number literal {literal:?} is not valid JSON"),
-            ));
+/// 将 serde_json 的 line/column 转换为字节偏移（最佳努力）。
+///
+/// serde_json 的 column 是字符列号；对 ASCII 输入即为字节偏移，
+/// 对多字节字符为近似偏移。结果用于 `offset` 字段，总比存行号准确。
+fn byte_offset_from_line_col(text: &str, line: usize, column: usize) -> Option<usize> {
+    if line == 0 || column == 0 {
+        return None;
+    }
+    let mut current_line = 1;
+    let mut current_col = 1;
+    for (idx, ch) in text.char_indices() {
+        if current_line == line && current_col == column {
+            return Some(idx);
         }
+        if ch == '\n' {
+            current_line += 1;
+            current_col = 1;
+        } else {
+            current_col += 1;
+        }
+    }
+    if current_line == line && current_col == column {
+        Some(text.len())
+    } else {
+        None
+    }
+}
+
+/// 拒绝 NaN / Infinity / -Infinity 字面量（GC02-09）。
+///
+/// 扫描跳过字符串内容，检测任何位置的非有限数字字面量，避免嵌套位置
+/// 落入 `invalid-json` 而丢失稳定错误码。
+fn reject_non_finite_literals(text: &str) -> Result<(), ParseError> {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escape = false;
+
+    while index < len {
+        let byte = bytes[index];
+        if in_string {
+            if escape {
+                escape = false;
+            } else if byte == b'\\' {
+                escape = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            index += 1;
+            continue;
+        }
+        // 尝试匹配非有限数字字面量（要求前后不是标识符字符，避免误伤 "banana"）。
+        for literal in ["NaN", "Infinity", "-Infinity"] {
+            let lit_bytes = literal.as_bytes();
+            if index + lit_bytes.len() <= len && &bytes[index..index + lit_bytes.len()] == lit_bytes {
+                let before = index.checked_sub(1).and_then(|i| bytes.get(i)).copied();
+                let after = bytes.get(index + lit_bytes.len()).copied();
+                let is_ident = |b: Option<u8>| matches!(b, Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'));
+                if !is_ident(before) && !is_ident(after) {
+                    return Err(ParseError::new(
+                        "invalid-number",
+                        Some(index),
+                        None,
+                        format!("non-finite number literal {literal:?} is not valid JSON"),
+                    ));
+                }
+            }
+        }
+        index += 1;
     }
     Ok(())
 }
@@ -267,14 +329,25 @@ pub fn check_schema(project: &Value, options: &ParseOptions) -> Result<(), Parse
         ));
     };
     let version = match root.get("schemaVersion") {
-        Some(Value::Number(number)) => number.as_u64().ok_or_else(|| {
-            ParseError::new(
-                "type-mismatch",
-                None,
-                Some("/schemaVersion".to_string()),
-                "schemaVersion must be an integer",
-            )
-        })? as u32,
+        Some(Value::Number(number)) => {
+            let raw = number.as_u64().ok_or_else(|| {
+                ParseError::new(
+                    "type-mismatch",
+                    None,
+                    Some("/schemaVersion".to_string()),
+                    "schemaVersion must be an integer",
+                )
+            })?;
+            // 不得 `as u32` 截断:2³²+3 会被当成 v3 绕过版本闸门。
+            u32::try_from(raw).map_err(|_| {
+                ParseError::new(
+                    "unsupported-schema-version",
+                    None,
+                    Some("/schemaVersion".to_string()),
+                    format!("schema version {raw} is newer than supported v{SCHEMA_VERSION}"),
+                )
+            })?
+        }
         Some(_) => {
             return Err(ParseError::new(
                 "type-mismatch",
@@ -501,6 +574,13 @@ pub fn migrate_v2_to_v3(project: Value) -> Result<(Value, MigrationReport), Pars
             }
         }
     }
+    // 导航区:recentNodeIds/pinnedNodeIds 也是节点引用,漏改会在迁移后
+    // 必报 dangling-node-reference。
+    if let Some(navigation) = migrated.get_mut("navigation").and_then(Value::as_object_mut) {
+        for field in ["recentNodeIds", "pinnedNodeIds"] {
+            rewrite_id_array(navigation, field, &remap);
+        }
+    }
     if let Some(root) = migrated.as_object_mut() {
         root.insert(
             "schemaVersion".to_string(),
@@ -553,4 +633,34 @@ pub fn parse_project(bytes: &[u8], options: &ParseOptions) -> Result<Value, Pars
         project = migrated;
     }
     Ok(project)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_nan_uses_invalid_number_code() {
+        let text = r#"{"schemaVersion": 3, "value": NaN}"#;
+        let err = parse_bytes(text.as_bytes(), &ParseOptions::default()).unwrap_err();
+        assert_eq!(err.code, "invalid-number");
+        assert!(err.offset.unwrap() > 0, "offset should be a byte offset");
+    }
+
+    #[test]
+    fn nan_inside_string_is_allowed() {
+        let text = r#"{"schemaVersion": 3, "note": "this is not NaN"}"#;
+        let result = parse_bytes(text.as_bytes(), &ParseOptions::default());
+        assert!(result.is_ok(), "NaN inside a string should not be rejected");
+    }
+
+    #[test]
+    fn invalid_json_reports_byte_offset_not_line_number() {
+        let text = "\n\n{ not valid json";
+        let err = parse_bytes(text.as_bytes(), &ParseOptions::default()).unwrap_err();
+        assert_eq!(err.code, "invalid-json");
+        // 第三行起始偏移约为 2（换行），不应返回行号 3。
+        let offset = err.offset.expect("should report byte offset");
+        assert!(offset > 2, "expected byte offset, got line-like small number: {offset}");
+    }
 }

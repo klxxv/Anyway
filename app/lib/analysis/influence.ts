@@ -2,7 +2,6 @@ import type { InfluenceResult, ProjectState, ResearchEdge } from "../research-ty
 
 /** 将置信度规范到影响传播权重 / Normalizes confidence into an influence-propagation weight. */
 function edgeWeight(edge: ResearchEdge) {
-  if (edge.type === "controls") return 0;
   const experimental = Math.abs(edge.experiment?.delta ?? 0);
   if (experimental > 0) return Math.min(1, experimental * 8 + 0.08);
   return Math.max(0.05, Math.min(1, edge.confidence ?? 0.5));
@@ -11,7 +10,6 @@ function edgeWeight(edge: ResearchEdge) {
 /** 将关系极性转换为传播方向符号 / Converts relation polarity to a propagation sign. */
 function edgeSign(edge: ResearchEdge) {
   if (
-    edge.type === "contradicts" ||
     edge.polarity === "negative" ||
     edge.experiment?.outcome === "refutes"
   ) {

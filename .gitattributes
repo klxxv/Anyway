@@ -1,0 +1,10 @@
+# Enforce LF for all text files so golden tests and hashes are stable
+# across Windows (CRLF) and Unix checkouts.
+* text=auto eol=lf
+
+# Binary artifacts must never be normalized.
+*.myc binary
+*.png binary
+*.ico binary
+*.icns binary
+*.wasm binary

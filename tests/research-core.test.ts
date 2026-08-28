@@ -45,7 +45,7 @@ test("DFS distinguishes tree and back edges when a directed cycle exists", () =>
     id: "cycle-r1-q1",
     source: "r1",
     target: "q1",
-    type: "causes",
+    type: "K",
     directed: true,
     polarity: "positive",
     confidence: 0.5,
@@ -92,7 +92,7 @@ test("all equally short paths and evidence backlinks remain deterministic", () =
     id: "parallel-q1-r1",
     source: "q1",
     target: "r1",
-    type: "supports",
+    type: "K",
     directed: true,
     polarity: "positive",
     confidence: 0.8,
@@ -118,10 +118,10 @@ test("Obsidian JSON Canvas and Markdown exports preserve semantic references", (
   assert.equal(canvas.nodes.length, initialProject.nodes.length);
   assert.equal(canvas.edges.length, initialProject.edges.length);
   assert.equal(canvas.nodes.find((node) => node.id === "m2")?.x, 330);
-  assert.equal(canvas.edges.find((edge) => edge.id === "e-m2-m3")?.label, "depends_on");
+  assert.equal(canvas.edges.find((edge) => edge.id === "e-m2-m3")?.label, "T");
   assert.match(markdown, /# Long-context Transformer ablation/);
   assert.match(markdown, /Rotary positional encoding/);
-  assert.match(markdown, /depends_on/);
+  assert.match(markdown, /\*\*T\*\*/);
   assert.match(nodeCsv, /"id","type","title"/);
   assert.match(edgeCsv, /"source","target","type"/);
 });
@@ -177,7 +177,7 @@ test("social-science acceptance fixture exposes mediation, filtering, cycles, an
     strategy: "bfs",
     direction: "in",
     maxDepth: 8,
-    edgeTypes: ["causes", "mediates"],
+    edgeTypes: ["K"],
   });
   const cycles = detectCycles(project);
   const diff = compareScenarioReachability(project, "soc-q", "soc-without-homophily");
@@ -223,7 +223,7 @@ test("indexed BFS handles the 5,000-node / 10,000-edge MVP target", () => {
         id: `e-${index}`,
         source: `n-${source}`,
         target: `n-${target}`,
-        type: "depends_on" as const,
+        type: "T" as const,
         directed: true,
         polarity: "unknown" as const,
         confidence: 1,

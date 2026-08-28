@@ -11,12 +11,16 @@ import {
   cloneProject,
   createEdgeInDraft,
   createNodeInDraft,
+  createSelectionClipboard,
   duplicateNodeInDraft,
   moveNodeInDraft,
+  moveNodesInDraft,
+  pasteSelectionClipboardInDraft,
   pushHistoryEntry,
   redoHistory,
   removeEdgeInDraft,
   removeNodeInDraft,
+  removeSelectionInDraft,
   reverseEdgeInDraft,
   stampDraftRevision,
   undoHistory,
@@ -24,6 +28,7 @@ import {
 } from "../app/features/research-workspace/hooks/commit-logic";
 import {
   applyGraphPatchToDraft,
+  sanitizePluginActorId,
   sortGraphPatchOperations,
 } from "../app/features/research-workspace/hooks/patch-apply";
 import {
@@ -187,17 +192,37 @@ test("moveNodeInDraft repositions only the matching placement", () => {
   assert.equal(draft.placements.length, cloneFixture().placements.length);
 });
 
-test("createEdgeInDraft pushes a directed edge with polarity derived from type", () => {
+test("moveNodesInDraft repositions a group atomically", () => {
   const draft = cloneFixture();
-  createEdgeInDraft(draft, "edge-new", "variable-canopy", "paper-landsat", "contradicts");
+  const first = draft.placements[0]!;
+  const second = draft.placements[1]!;
+
+  moveNodesInDraft(draft, [
+    { nodeId: first.nodeId, x: 321, y: 654 },
+    { nodeId: second.nodeId, x: 987, y: 123 },
+  ]);
+
+  assert.deepEqual(
+    draft.placements.find((item) => item.nodeId === first.nodeId),
+    { ...first, x: 321, y: 654 },
+  );
+  assert.deepEqual(
+    draft.placements.find((item) => item.nodeId === second.nodeId),
+    { ...second, x: 987, y: 123 },
+  );
+});
+
+test("createEdgeInDraft pushes a directed edge with positive polarity", () => {
+  const draft = cloneFixture();
+  createEdgeInDraft(draft, "edge-new", "variable-canopy", "paper-landsat", "K");
   const edge = draft.edges.find((item) => item.id === "edge-new");
   assert.ok(edge);
   assert.equal(edge.directed, true);
-  assert.equal(edge.polarity, "negative");
+  assert.equal(edge.polarity, "positive");
   assert.equal(edge.confidence, 1);
   assert.deepEqual(edge.provenance, { origin: "human", actorId: "local-researcher" });
 
-  createEdgeInDraft(draft, "edge-positive", "question-tree", "result-canopy", "supports");
+  createEdgeInDraft(draft, "edge-positive", "question-tree", "result-canopy", "T");
   assert.equal(
     draft.edges.find((item) => item.id === "edge-positive")?.polarity,
     "positive",
@@ -217,6 +242,73 @@ test("removeNodeInDraft cascades incident edges and placements", () => {
   );
   assert.equal(draft.edges.length, beforeEdges - 5);
   assert.equal(draft.placements.some((p) => p.nodeId === "variable-canopy"), false);
+});
+
+test("selection clipboard remaps copied graph fragments and offsets their placements", () => {
+  const draft = cloneFixture();
+  const sourceEdge = draft.edges[0]!;
+  const clipboard = createSelectionClipboard(draft, [], [sourceEdge.id]);
+  assert.ok(clipboard);
+  assert.equal(clipboard.nodes.length, 2);
+  assert.ok(clipboard.edges.some((edge) => edge.id === sourceEdge.id));
+
+  clipboard.nodes[0]!.title = "clipboard-only change";
+  assert.notEqual(
+    draft.nodes.find((node) => node.id === sourceEdge.source)?.title,
+    "clipboard-only change",
+  );
+
+  const pasted = pasteSelectionClipboardInDraft(
+    draft,
+    clipboard,
+    40,
+    now,
+  );
+  assert.equal(pasted.nodeIds.length, 2);
+  assert.ok(pasted.edgeIds.length >= 1);
+  const pastedNodeIds = new Set(pasted.nodeIds);
+  assert.ok(
+    draft.edges
+      .filter((edge) => pasted.edgeIds.includes(edge.id))
+      .every((edge) => pastedNodeIds.has(edge.source) && pastedNodeIds.has(edge.target)),
+  );
+  const copiedNode = clipboard.nodes[0]!;
+  const originalPlacement = clipboard.placements.find(
+    (placement) => placement.nodeId === copiedNode.id,
+  );
+  const pastedNode = draft.nodes.find(
+    (node) => node.title === `${copiedNode.title} copy`,
+  );
+  const pastedPlacement = draft.placements.find(
+    (placement) => placement.nodeId === pastedNode?.id,
+  );
+  assert.ok(originalPlacement);
+  assert.ok(pastedPlacement);
+  assert.equal(pastedPlacement.x, originalPlacement.x + 40);
+  assert.equal(pastedPlacement.y, originalPlacement.y + 40);
+});
+
+test("removeSelectionInDraft deletes selected relations and cascades selected nodes", () => {
+  const draft = cloneFixture();
+  const selectedNodeId = draft.edges[0]!.source;
+  const explicitEdgeId = draft.edges.find(
+    (edge) => edge.source !== selectedNodeId && edge.target !== selectedNodeId,
+  )?.id;
+  assert.ok(explicitEdgeId);
+
+  removeSelectionInDraft(draft, [selectedNodeId], [explicitEdgeId]);
+
+  assert.equal(draft.nodes.some((node) => node.id === selectedNodeId), false);
+  assert.equal(draft.placements.some((placement) => placement.nodeId === selectedNodeId), false);
+  assert.equal(
+    draft.edges.some(
+      (edge) =>
+        edge.id === explicitEdgeId ||
+        edge.source === selectedNodeId ||
+        edge.target === selectedNodeId,
+    ),
+    false,
+  );
 });
 
 test("duplicateNodeInDraft clones the node with an offset placement", () => {
@@ -273,9 +365,9 @@ test("applyLayoutInDraft writes every projected placement position", () => {
 
 test("applyLayoutInDraft falls back to the first projected node when root is absent", () => {
   const draft = cloneFixture();
-  const projected = projectForLegendFilter(draft, "contradicts");
+  const projected = projectForLegendFilter(draft, "K");
   const expected = computeLayout(projected, "table", projected.nodes[0]?.id);
-  applyLayoutInDraft(draft, "table", "no-such-node", "contradicts");
+  applyLayoutInDraft(draft, "table", "no-such-node", "K");
   const filtered = draft.placements.filter((p) =>
     projected.nodes.some((node) => node.id === p.nodeId),
   );
@@ -302,7 +394,7 @@ function patch(operations: PluginGraphPatch["operations"]): PluginGraphPatch {
 
 test("patch operations sort into stable dependency phases", () => {
   const operations: PluginGraphPatch["operations"] = [
-    { op: "add-edge", edge: { id: "e", source: "a", target: "b", type: "causes" } },
+    { op: "add-edge", edge: { id: "e", source: "a", target: "b", type: "K" } },
     { op: "update-node", nodeId: "a", changes: { title: "t" } },
     { op: "add-node", node: { id: "a", type: "note", title: "A" } },
     { op: "update-edge", edgeId: "e", changes: { note: "n" } },
@@ -318,9 +410,9 @@ test("add-node and add-edge ops land on the draft with import provenance", () =>
   applyGraphPatchToDraft(
     draft,
     patch([
-      { op: "add-edge", edge: { id: "edge-new", source: "missing-a", target: "missing-b", type: "causes" } },
+      { op: "add-edge", edge: { id: "edge-new", source: "missing-a", target: "missing-b", type: "K" } },
       { op: "add-node", node: { id: "node-new", type: "note", title: "新节点", tags: ["t"] } },
-      { op: "add-edge", edge: { id: "edge-new-2", source: "node-new", target: "question-tree", type: "contradicts" } },
+      { op: "add-edge", edge: { id: "edge-new-2", source: "node-new", target: "question-tree", type: "K" } },
     ]),
     now,
   );
@@ -336,7 +428,7 @@ test("add-node and add-edge ops land on the draft with import provenance", () =>
   assert.equal(draft.edges.some((edge) => edge.id === "edge-new"), false);
   const addedEdge = draft.edges.find((edge) => edge.id === "edge-new-2")!;
   assert.ok(addedEdge);
-  assert.equal(addedEdge.polarity, "negative");
+  assert.equal(addedEdge.polarity, "positive");
   assert.equal(draft.placements.some((p) => p.nodeId === "node-new"), true);
 });
 
@@ -393,18 +485,81 @@ test("update-node and update-edge ops respect type and range guards", () => {
   assert.deepEqual(node.data.extra, 1);
   assert.equal(node.updatedAt, now);
   assert.equal(edge.note, "新备注");
-  assert.equal(edge.type, "causes"); // unsupported type ignored
+  assert.equal(edge.type, "K"); // unsupported type ignored
   assert.equal(edge.confidence, originalConfidence); // out-of-range confidence ignored
 });
 
 test("patch application records one import activity entry", () => {
   const draft = cloneFixture();
-  applyGraphPatchToDraft(draft, patch([{ op: "add-node", node: { id: "n1", type: "note", title: "A" } }]), now);
+  const result = applyGraphPatchToDraft(
+    draft,
+    patch([{ op: "add-node", node: { id: "n1", type: "note", title: "A" } }]),
+    now,
+  );
+  assert.equal(result.applied, 1);
+  assert.equal(result.skipped, 0);
   const activity = draft.activity.at(-1)!;
-  assert.equal(activity.label, "测试补丁 · 1 proposed operations");
+  assert.equal(activity.label, "测试补丁 · 1 applied · 0 skipped");
   assert.equal(activity.origin, "import");
   assert.equal(activity.createdAt, now);
   assert.ok(activity.id.startsWith("activity-"));
+});
+
+test("patch apply reports skipped operations and records accurate activity", () => {
+  const draft = cloneFixture();
+  const result = applyGraphPatchToDraft(
+    draft,
+    patch([
+      { op: "add-node", node: { id: "n1", type: "note", title: "A" } },
+      { op: "add-node", node: { id: "n1", type: "note", title: "Duplicate" } },
+      { op: "add-edge", edge: { id: "e1", source: "n1", target: "missing", type: "K" } },
+    ]),
+    now,
+  );
+  assert.equal(result.applied, 1);
+  assert.equal(result.skipped, 2);
+  assert.equal(result.byOp["add-node"]?.applied, 1);
+  assert.equal(result.byOp["add-node"]?.skipped, 1);
+  assert.equal(result.byOp["add-edge"]?.skipped, 1);
+  const activity = draft.activity.at(-1)!;
+  assert.equal(activity.label, "测试补丁 · 1 applied · 2 skipped");
+});
+
+test("patch apply with zero effective operations records skipped activity", () => {
+  const draft = cloneFixture();
+  const result = applyGraphPatchToDraft(
+    draft,
+    patch([
+      { op: "add-node", node: { id: "question-tree", type: "note", title: "Duplicate" } },
+      { op: "add-edge", edge: { id: "e1", source: "missing", target: "missing", type: "K" } },
+    ]),
+    now,
+  );
+  assert.equal(result.applied, 0);
+  assert.equal(result.skipped, 2);
+  const activity = draft.activity.at(-1)!;
+  assert.match(activity.label, /no effective operations/);
+});
+
+test("sanitizePluginActorId rejects unsafe plugin ids and keeps safe ones", () => {
+  assert.equal(sanitizePluginActorId("myc.pdf-canvas-agent"), "myc.pdf-canvas-agent");
+  assert.equal(sanitizePluginActorId("plugin@v1"), null);
+  assert.equal(sanitizePluginActorId("../../evil"), null);
+  assert.equal(sanitizePluginActorId("a".repeat(161)), null);
+});
+
+test("patch provenance actorId is sanitized to unknown-plugin when unsafe", () => {
+  const draft = cloneFixture();
+  applyGraphPatchToDraft(
+    draft,
+    {
+      ...patch([{ op: "add-node", node: { id: "n2", type: "note", title: "B" } }]),
+      source: { pluginId: "plugin@v1", operation: "bad" },
+    },
+    now,
+  );
+  const added = draft.nodes.find((node) => node.id === "n2")!;
+  assert.equal(added.provenance.actorId, "unknown-plugin");
 });
 
 // ---------------------------------------------------------------------------
@@ -432,7 +587,73 @@ test("corrupt persisted JSON loads as null instead of throwing", () => {
   const storage = createLocalStorageProjectStorage("key", memoryStorage({ key: "{oops" }));
   assert.equal(storage.load(), null);
   assert.equal(parseStoredProject("not json"), null);
-  assert.ok(parseStoredProject('{"schemaVersion":2}'));
+  // 仅含 schemaVersion 的 JSON 不满足结构校验，应返回 null。
+  assert.equal(parseStoredProject('{"schemaVersion":2}'), null);
+});
+
+test("structurally invalid project is rejected during hydration", () => {
+  const bad = {
+    schemaVersion: 2,
+    id: "bad",
+    title: "Bad",
+    discipline: "test",
+    updatedAt: now,
+    revision: 1,
+    nodes: [{ id: "n1", type: "note" }], // missing required fields
+    edges: [],
+    evidence: [],
+    placements: [],
+    scenarios: [],
+    activity: [],
+  };
+  const storage = createLocalStorageProjectStorage("bad-key", memoryStorage({ "bad-key": JSON.stringify(bad) }));
+  assert.equal(storage.load(), null);
+});
+
+test("minimal structurally valid project hydrates successfully", () => {
+  const minimal = {
+    schemaVersion: 2,
+    id: "minimal",
+    title: "Minimal",
+    discipline: "test",
+    updatedAt: now,
+    revision: 1,
+    nodes: [
+      {
+        id: "n1",
+        type: "note",
+        title: "Note",
+        body: "body",
+        tags: [],
+        status: "draft",
+        evidenceIds: [],
+        data: {},
+        provenance: { origin: "human" },
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    edges: [],
+    evidence: [],
+    placements: [
+      {
+        id: "p1",
+        viewId: "view-main",
+        nodeId: "n1",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+      },
+    ],
+    scenarios: [],
+    activity: [],
+  };
+  const storage = createLocalStorageProjectStorage("min-key", memoryStorage({ "min-key": JSON.stringify(minimal) }));
+  const loaded = storage.load();
+  assert.ok(loaded);
+  assert.equal(loaded?.id, "minimal");
+  assert.equal(loaded?.nodes[0]?.id, "n1");
 });
 
 test("resolveHydratedProject migrates only the bundled example under schemaVersion 2", () => {

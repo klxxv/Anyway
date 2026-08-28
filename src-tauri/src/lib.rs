@@ -1,70 +1,57 @@
 pub mod agent_commands;
 pub mod agent_host;
 pub mod deepseek_client;
-pub mod graph_algorithms;
+mod graph_cmds;
 pub mod graph_compiler;
+pub mod host_bus;
+pub mod kernel;
+mod kernel_commands;
+pub mod kernel_native;
 pub mod llm_client;
 pub mod llm_plugin;
 pub mod llm_provider_registry;
+pub mod native_plugins;
+pub mod pdf_agent_v4;
 pub mod pdf_pipeline;
-mod graph_cmds;
+pub mod plugin_manifest_v2;
+mod plugin_settings;
 mod plugin_vm;
 mod plugins;
 mod projects;
 mod signing;
 #[cfg(windows)]
 mod trackpad;
+mod vsix_importer;
 mod workspace_host;
 
-// ── PDF Agent 多阶段提取与 GraphPatch 构建（不合并到 pdf_pipeline）──
-pub use graphpatch_gen;
-pub use semantic_pipeline;
+// ── PDF Agent 多阶段提取走 myc.llm.v4 抽取 + host bus 编译(见 pdf_agent_v4)──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let kernel_state =
+        kernel_commands::create_kernel_state().expect("kernel Host Bus routes must be valid");
+    let agent_gate = kernel_commands::agent_gate_for(&kernel_state);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(agent_commands::AgentHostState(std::sync::Mutex::new(
+        .manage(kernel_state)
+        .manage(agent_commands::AgentHostState::with_gate(
             agent_host::AgentHost::new(std::env::temp_dir()),
-        )))
+            agent_gate,
+        ))
         .manage(llm_provider_registry::ProviderRegistryState::default())
+        .manage(kernel_commands::CapabilityPolicyState::default())
         .invoke_handler(tauri::generate_handler![
-            graph_cmds::compute_graph_layout,
-            graph_cmds::layout_project_view,
-            graph_cmds::compile_project,
-            graph_cmds::compute_diff,
-            deepseek_client::set_deepseek_api_key,
-            deepseek_client::has_deepseek_api_key,
-            deepseek_client::clear_deepseek_api_key,
-            plugins::install_myc_plugin,
-            plugins::uninstall_myc_plugin,
-            plugins::list_installed_plugins,
-            plugins::execute_myc_plugin,
-            projects::save_project_file,
-            projects::import_project_file,
-            workspace_host::save_plugin_artifact,
-            workspace_host::scan_project_folder,
-            workspace_host::read_git_workspace,
-            workspace_host::initialize_git_workspace,
-            workspace_host::read_github_account,
-            workspace_host::login_github_account,
-            workspace_host::generate_github_ssh_key,
-            workspace_host::upload_github_ssh_key,
-            workspace_host::git_autosave_project,
-            agent_commands::start_pdf_job,
-            agent_commands::get_job_status,
-            agent_commands::review_patch,
-            agent_commands::cancel_job,
-            llm_provider_registry::list_llm_providers,
-            llm_provider_registry::set_active_llm_provider,
-            llm_provider_registry::set_llm_api_key,
-            llm_provider_registry::has_llm_api_key,
-            llm_provider_registry::clear_llm_api_key
+            kernel_commands::kernel_host_call,
+            kernel_commands::kernel_host_cancel
         ])
         .setup(|app| {
+            if let Err(error) = plugins::install_pending_packages(app.handle()) {
+                eprintln!("Startup plugin package discovery failed: {error}");
+            }
+
             #[cfg(debug_assertions)]
             let url = tauri::WebviewUrl::External(
-                "http://localhost:3000/"
+                "http://127.0.0.1:5173/"
                     .parse()
                     .expect("valid Research Canvas development URL"),
             );

@@ -1,0 +1,45 @@
+version: 1
+pass: A
+name: structure-extraction
+description:
+  zh: 提取论文标题、作者、摘要、章节树和参考文献。
+  en: Extract the paper title, authors, abstract, section tree, and references.
+output_schema: ../schemas/pass-a-structure.schema.json
+
+system:
+  zh: |
+    你是学术论文结构分析专家。根据输入的 StructuredDocument 和全文，提取论文级结构信息。
+    只输出一个 JSON 对象，不要输出 Markdown、代码围栏或解释文字。字段必须使用 camelCase，严格遵守输出 Schema。
+    必须使用 abstractText，不得使用 abstract；章节锚点必须包含 sectionId、paragraphId、startOffset、endOffset、quote。
+    如果信息无法确定，省略可选字段或使用 null；不要编造作者、年份、DOI 或锚点。
+    sections 的 id 应稳定且按文档顺序生成，例如 s1、s2、s2.1；level 从 1 开始。
+    references 的 refId 应保持原文引用编号；尽可能提取 DOI 和年份。
+  en: |
+    You are an academic paper structure analyst. Extract paper-level structure from the StructuredDocument and full text.
+    Return exactly one JSON object. Do not emit Markdown, a code fence, or commentary. Use camelCase and follow the output Schema exactly.
+    The abstract field is named abstractText, never abstract. Every section anchor must contain sectionId, paragraphId, startOffset, endOffset, and quote.
+    Omit optional fields or use null when the source does not support them. Never invent authors, years, DOIs, or anchors.
+    Section ids must be stable and ordered, such as s1, s2, and s2.1; level starts at 1.
+    Preserve reference numbering in refId and extract DOI and year only when supported by the source.
+
+user_template:
+  zh: |
+    {public_progress_protocol}
+
+    ## 文档结构
+    {document_structure}
+
+    ## 全文
+    {full_text}
+
+    请提取标题、作者、论文自身年份、摘要、章节树和参考文献。
+  en: |
+    {public_progress_protocol}
+
+    ## Document Structure
+    {document_structure}
+
+    ## Full Text
+    {full_text}
+
+    Extract the title, authors, paper publication year, abstract, section tree, and reference list.

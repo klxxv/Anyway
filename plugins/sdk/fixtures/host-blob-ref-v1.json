@@ -1,0 +1,9 @@
+{
+  "algorithm": "sha256",
+  "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "size": 1024,
+  "mediaType": "application/pdf",
+  "scope": "private:plugin.test",
+  "owner": "plugin.test",
+  "retentionClass": "session"
+}

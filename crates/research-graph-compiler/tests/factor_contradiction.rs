@@ -52,6 +52,52 @@ fn gc11_02_positive_and_negative_path_pair() {
     assert_eq!(pair.paths[1], vec!["e1"]); // 负边
 }
 
+/// 回归:多边正路径必须完整进入见证(parent 键带 ±1 parity,
+/// 重建游标若把 parity 写成 0,路径会被截断成最后一条边)。
+#[test]
+fn multi_edge_positive_path_witness_is_complete() {
+    let report = find_contradictions(
+        &project(vec![
+            edge("e1", "supports", "a", "b"),
+            edge("e2", "supports", "b", "c"),
+            edge("e3", "contradicts", "a", "c"),
+        ]),
+        &ContradictionOptions::default(),
+    );
+    let pair = report
+        .witnesses
+        .iter()
+        .find(|w| w.kind == "path-pair")
+        .expect("path-pair witness");
+    assert_eq!(
+        pair.paths[0],
+        vec!["e1", "e2"],
+        "the two-hop positive path must be witnessed in full, not truncated to its last edge"
+    );
+    assert_eq!(pair.paths[1], vec!["e3"]);
+}
+
+/// 回归:正路径若在的中途复用被查 contradicts 边,该见证是自指的、无效的。
+/// 偶数条负边乘积仍为 +1,所以"乘积为正 ⇒ 不含负边"的假设在数学上不成立。
+#[test]
+fn positive_path_reusing_the_queried_edge_is_not_a_witness() {
+    let report = find_contradictions(
+        &project(vec![
+            edge("e1", "supports", "a", "b"),
+            edge("e2", "contradicts", "b", "a"),
+            edge("e3", "contradicts", "a", "c"),
+        ]),
+        &ContradictionOptions::default(),
+    );
+    // a→c 唯一的 +1 路径是 [e1,e2,e3](用了被查边 e3 本身):
+    // 没有 e3 就不存在正路径,因此不构成双路径冲突。
+    assert!(
+        report.witnesses.iter().all(|w| w.kind != "path-pair"),
+        "self-referential positive path must not be witnessed: {:?}",
+        report.witnesses
+    );
+}
+
 #[test]
 fn gc11_03_negative_path_alone_is_not_conflict() {
     let report = find_contradictions(

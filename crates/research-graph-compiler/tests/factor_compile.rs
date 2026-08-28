@@ -19,6 +19,54 @@ fn project_with_edges(edges: Vec<Value>) -> Value {
     })
 }
 
+/// 回归:未知边类型不得静默编译为 Supports(自有文档声明不生成因子)。
+#[test]
+fn unknown_edge_type_is_skipped_with_diagnostic_not_supports() {
+    let project = project_with_edges(vec![json!({
+        "id": "e1", "type": "causes", "source": "a", "target": "b",
+        "directed": true, "polarity": "positive"
+    })]);
+    let graph = compile_factor_graph(&project);
+    assert!(
+        graph.factors.is_empty(),
+        "causes has no factor semantics and must not silently become Supports"
+    );
+    assert!(
+        graph
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "unsupported-edge-factor"),
+        "{:?}",
+        graph.diagnostics
+    );
+}
+
+/// 回归:无 data 字段的 claim 不得从因子图静默消失(按默认布尔变量编译)。
+#[test]
+fn claim_without_data_still_enters_factor_graph() {
+    let project = json!({
+        "schemaVersion": 3,
+        "nodes": [
+            {"id": "bare", "type": "claim", "title": "No data claim"},
+            {"id": "a", "type": "claim", "title": "A", "data": {}}
+        ],
+        "edges": [
+            {"id": "e1", "type": "supports", "source": "a", "target": "bare",
+             "directed": true, "polarity": "positive"}
+        ],
+        "evidence": []
+    });
+    let graph = compile_factor_graph(&project);
+    assert!(
+        graph.variable_index("bare").is_some(),
+        "claim without data must compile to a default boolean variable"
+    );
+    assert!(
+        graph.factors.iter().any(|f| f.variables.iter().any(|v| v == "bare")),
+        "edges to a data-less claim must not dangle out of BP"
+    );
+}
+
 #[test]
 fn gc08_01_supports_edge_compiles_binary_factor() {
     let project = project_with_edges(vec![json!({

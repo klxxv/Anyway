@@ -5,21 +5,18 @@
   "identifier": "com.researchcanvas.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:desktop-web",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://127.0.0.1:5173",
     "beforeBuildCommand": "npm run build:desktop",
-    "frontendDist": "../out"
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' tauri://localhost ipc://localhost https: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' blob:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
     }
   },
   "bundle": {
     "active": true,
-    "resources": {
-      "../plugins/packages/*.myc": "plugins/packages/"
-    },
     "targets": [
       "nsis",
       "dmg",

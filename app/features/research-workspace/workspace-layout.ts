@@ -5,7 +5,7 @@ import type {
   ResearchEdgeType,
 } from "../../lib/research-types";
 
-export type LinkLegendFilter = "causal" | "control" | "derived" | "contradicts";
+export type LinkLegendFilter = ResearchEdgeType;
 
 export const layoutOptions: Array<{
   mode: LayoutMode;
@@ -44,18 +44,12 @@ export const layoutOptions: Array<{
   },
 ];
 
-const controlTypes = new Set<ResearchEdgeType>(["controls", "mediates", "moderates"]);
-const derivedTypes = new Set<ResearchEdgeType>(["derived_from"]);
-
 /**
- * Converts persisted relation semantics into the four compact legend families.
- * 将持久化关系语义归并为图例中的四类紧凑关系。
+ * The legend filter is the operator itself: every relation is exactly one of
+ * the five operators (T/K/I/M/Q).
  */
 export function linkLegendFilterOf(edge: ResearchEdge): LinkLegendFilter {
-  if (edge.type === "contradicts") return "contradicts";
-  if (controlTypes.has(edge.type)) return "control";
-  if (derivedTypes.has(edge.type)) return "derived";
-  return "causal";
+  return edge.type;
 }
 
 export function edgeMatchesLegendFilter(

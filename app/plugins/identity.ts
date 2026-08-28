@@ -1,12 +1,18 @@
 import {
-  MYC_API_VERSION,
+  isSupportedMycApiVersion,
   type InstalledMycPlugin,
   type MycPluginKind,
 } from "./contracts";
+import type { MessageKey } from "../i18n/catalog";
+
+export type PluginCompatibilityIssue = {
+  key: MessageKey;
+  params?: Record<string, string>;
+};
 
 export type PluginCompatibility = {
   compatible: boolean;
-  issues: string[];
+  issues: PluginCompatibilityIssue[];
 };
 
 export function pluginKey(plugin: InstalledMycPlugin): string {
@@ -31,23 +37,41 @@ export function comparePluginVersions(left: string, right: string): number {
   return a[3].localeCompare(b[3]);
 }
 
-function expectsCapability(plugin: InstalledMycPlugin, capability: string, issues: string[]) {
+function pushIssue(
+  issues: PluginCompatibilityIssue[],
+  key: MessageKey,
+  params?: Record<string, string>,
+) {
+  issues.push(params ? { key, params } : { key });
+}
+
+function expectsCapability(
+  plugin: InstalledMycPlugin,
+  capability: string,
+  issues: PluginCompatibilityIssue[],
+) {
   if (!plugin.manifest.spec.capabilities.includes(capability)) {
-    issues.push(`Missing capability: ${capability}`);
+    pushIssue(issues, "plugin.issue.missingCapability", { capability });
   }
 }
 
-function validateWorkspacePlugin(plugin: InstalledMycPlugin, issues: string[]) {
+function validateWorkspacePlugin(
+  plugin: InstalledMycPlugin,
+  issues: PluginCompatibilityIssue[],
+) {
   if (plugin.manifest.spec.engine !== "host-mediated") {
-    issues.push("WorkspacePlugin engine must be host-mediated");
+    pushIssue(issues, "plugin.issue.workspaceEngine");
   }
-  if (!plugin.workspace) issues.push("Workspace descriptor is missing");
+  if (!plugin.workspace) pushIssue(issues, "plugin.issue.workspaceDescriptor");
   const commands = plugin.manifest.spec.contributes?.commands ?? [];
-  if (commands.length === 0) issues.push("Workspace commands are missing");
+  if (commands.length === 0) pushIssue(issues, "plugin.issue.workspaceCommands");
   for (const command of commands) {
     expectsCapability(plugin, command.capability, issues);
     if (plugin.workspace && command.category !== plugin.workspace.mode) {
-      issues.push(`Command ${command.id} does not match workspace mode ${plugin.workspace.mode}`);
+      pushIssue(issues, "plugin.issue.workspaceCommandMode", {
+        id: command.id,
+        mode: plugin.workspace.mode,
+      });
     }
   }
 }
@@ -55,46 +79,89 @@ function validateWorkspacePlugin(plugin: InstalledMycPlugin, issues: string[]) {
 /**
  * Frontend defense-in-depth for native-validated packages. This is also the
  * activation contract used by the registry and every contribution selector.
+ * Diagnostic messages are returned as i18n keys so the UI can translate them.
  */
 export function pluginCompatibility(plugin: InstalledMycPlugin): PluginCompatibility {
-  const issues: string[] = [];
-  if (plugin.manifest.apiVersion !== MYC_API_VERSION) issues.push("Unsupported API version");
-  if (plugin.manifest.spec.permissions.length > 0) issues.push("Ambient permissions are not allowed");
+  const issues: PluginCompatibilityIssue[] = [];
+  if (!isSupportedMycApiVersion(plugin.manifest.apiVersion)) {
+    pushIssue(issues, "plugin.issue.unsupportedApiVersion");
+  }
+  if (plugin.manifest.spec.permissions.length > 0) {
+    pushIssue(issues, "plugin.issue.ambientPermissions");
+  }
   const kind: MycPluginKind = plugin.manifest.kind;
   switch (kind) {
     case "ThemePlugin":
       expectsCapability(plugin, "theme.register", issues);
       if (plugin.manifest.spec.engine !== "declarative") {
-        issues.push("ThemePlugin engine must be declarative");
+        pushIssue(issues, "plugin.issue.themeEngine");
       }
-      if (!plugin.theme) issues.push("Theme descriptor is missing");
+      if (!plugin.theme) pushIssue(issues, "plugin.issue.themeDescriptor");
+      break;
+    case "IconThemePlugin":
+      expectsCapability(plugin, "icon-theme.register", issues);
+      if (plugin.manifest.spec.engine !== "declarative") {
+        pushIssue(issues, "plugin.issue.themeEngine");
+      }
+      if (!plugin.iconTheme) pushIssue(issues, "plugin.issue.themeDescriptor");
       break;
     case "EdgeStylePlugin":
       expectsCapability(plugin, "edge.style.register", issues);
       if (plugin.manifest.spec.engine !== "declarative") {
-        issues.push("EdgeStylePlugin engine must be declarative");
+        pushIssue(issues, "plugin.issue.edgeStyleEngine");
       }
-      if (!plugin.edgeStyle) issues.push("Edge style descriptor is missing");
+      if (!plugin.edgeStyle) pushIssue(issues, "plugin.issue.edgeStyleDescriptor");
       break;
     case "LocalePlugin":
       expectsCapability(plugin, "i18n.register", issues);
       if (plugin.manifest.spec.engine !== "declarative") {
-        issues.push("LocalePlugin engine must be declarative");
+        pushIssue(issues, "plugin.issue.localeEngine");
       }
-      if (!plugin.locales?.length) issues.push("Locale bundles are missing");
+      if (!plugin.locales?.length) pushIssue(issues, "plugin.issue.localeBundles");
       break;
     case "AnalysisPlugin":
       expectsCapability(plugin, "analysis.run", issues);
       if (plugin.manifest.spec.engine !== "wasm32-myc") {
-        issues.push("AnalysisPlugin engine must be wasm32-myc");
+        pushIssue(issues, "plugin.issue.analysisEngine");
       }
-      if (!plugin.runtime) issues.push("Verified WebAssembly runtime is missing");
+      if (!plugin.runtime) pushIssue(issues, "plugin.issue.analysisRuntime");
       break;
     case "WorkspacePlugin":
       validateWorkspacePlugin(plugin, issues);
       break;
+    case "ProviderPlugin":
+      if (plugin.manifest.spec.engine !== "host-mediated") {
+        pushIssue(issues, "plugin.issue.providerEngine");
+      }
+      if (
+        !plugin.manifest.spec.capabilities.some(
+          (capability) => capability === "llm.chat" || capability === "llm.configure",
+        )
+      ) {
+        pushIssue(issues, "plugin.issue.providerCapability");
+      }
+      if (!plugin.provider) pushIssue(issues, "plugin.issue.providerDescriptor");
+      break;
+    case "AgentPlugin":
+      if (plugin.manifest.spec.engine !== "host-mediated") {
+        pushIssue(issues, "plugin.issue.agentEngine");
+      }
+      if (
+        !plugin.manifest.spec.capabilities.some(
+          (capability) =>
+            capability === "graph.patch.propose" ||
+            capability === "agent.graph.patch.propose",
+        )
+      ) {
+        pushIssue(issues, "plugin.issue.agentCapability");
+      }
+      if (!plugin.agent) pushIssue(issues, "plugin.issue.agentDescriptor");
+      if (plugin.agent && plugin.agent.reviewGated !== true) {
+        pushIssue(issues, "plugin.issue.agentReviewGated");
+      }
+      break;
     default:
-      issues.push(`Unsupported plugin kind: ${kind}`);
+      pushIssue(issues, "plugin.issue.unsupportedKind", { kind });
   }
   return { compatible: issues.length === 0, issues };
 }
@@ -120,6 +187,24 @@ export function latestCompatiblePlugins(
   return [...latest.values()].sort((left, right) =>
     left.manifest.metadata.id.localeCompare(right.manifest.metadata.id),
   );
+}
+
+/**
+ * Returns compatible packages which are shadowed by a newer compatible
+ * version of the same plugin. They stay installed so the host can offer an
+ * explicit removal action, but must not be the primary store entry.
+ */
+export function supersededCompatiblePlugins(
+  plugins: readonly InstalledMycPlugin[],
+): InstalledMycPlugin[] {
+  const latestKeys = new Set(latestCompatiblePlugins(plugins).map(pluginKey));
+  return plugins
+    .filter((plugin) => pluginCompatibility(plugin).compatible && !latestKeys.has(pluginKey(plugin)))
+    .sort((left, right) => {
+      const byId = left.manifest.metadata.id.localeCompare(right.manifest.metadata.id);
+      if (byId !== 0) return byId;
+      return comparePluginVersions(left.manifest.metadata.version, right.manifest.metadata.version);
+    });
 }
 
 /** Selects at most one enabled, compatible version for every plugin id. */

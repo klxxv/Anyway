@@ -1,0 +1,22 @@
+{
+  "name": "myc.circuit-orthogonal",
+  "version": "1.1.0",
+  "publisher": "Research Canvas Community",
+  "developer": "Research Canvas Visual Systems",
+  "description": "Blueprint-inspired theme with crisp 90-degree experiment connectors, semantic support, and refutation strokes.",
+  "license": "MIT",
+  "homepage": "https://github.com/research-canvas/plugins",
+  "categories": [
+    "ThemePlugin"
+  ],
+  "main": "theme.json",
+  "engines": {
+    "engine": "declarative"
+  },
+  "capabilities": [
+    "theme.register",
+    "edge.style.register"
+  ],
+  "permissions": [],
+  "displayName": "Circuit Orthogonal"
+}

@@ -2,7 +2,7 @@
 //!
 //! 提供：
 //! 1. `LlmClient` trait — 富操作接口（角色路由、推理缓存、重试）
-//! 2. `LlmClientAdapter` — 桥接到 `semantic_pipeline::LlmProvider`
+//! 2. `ChatProvider` trait + `LlmClientAdapter` — 受信宿主管线的对话桥接
 //! 3. `OpenAiCompatibleClient` — OpenAI 兼容 API 的具体实现（可配置 base URL）
 //! 4. 所有请求/响应类型、重试/截断修复/缓存工具函数
 //!
@@ -10,11 +10,13 @@
 //! The API key is never hard-coded, never merged into prompts, and never logged.
 
 use async_trait::async_trait;
+use rand::Rng as _;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,6 +26,10 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 120;
 pub const MAX_RETRIES: u32 = 3;
 pub const INITIAL_BACKOFF_MS: u64 = 1000;
 pub const MAX_BACKOFF_MS: u64 = 16_000;
+/// 最大允许的 HTTP 响应体大小（1 MiB）。LLM 响应再大即视为畸形/攻击载荷。
+pub const MAX_RESPONSE_BODY_BYTES: usize = 1 * 1024 * 1024;
+/// 单个客户端实例的推理缓存条目上限。防止长会话无界增长。
+pub const MAX_REASONING_CACHE_ENTRIES: usize = 256;
 
 // ── 模型路由 / Model routing ──────────────────────────────────────────────
 
@@ -241,10 +247,7 @@ pub enum LlmError {
     TruncationRepairFailed(String),
 
     #[error("Retry exhausted after {attempts} attempts: {last_error}")]
-    RetryExhausted {
-        attempts: u32,
-        last_error: String,
-    },
+    RetryExhausted { attempts: u32, last_error: String },
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
@@ -303,17 +306,17 @@ pub fn detect_truncation(
     finish_reason: Option<&str>,
 ) -> Result<TruncationStatus, LlmError> {
     if finish_reason != Some("length") {
-        match serde_json::from_str::<Value>(content.trim()) {
-            Ok(_) => return Ok(TruncationStatus::Complete),
-            Err(_) => {
-                if let Some(extracted) = extract_json_substring(content) {
-                    if serde_json::from_str::<Value>(&extracted).is_ok() {
-                        return Ok(TruncationStatus::Complete);
-                    }
-                }
+        if serde_json::from_str::<Value>(content.trim()).is_ok() {
+            return Ok(TruncationStatus::Complete);
+        }
+        if let Some(extracted) = extract_json_substring(content) {
+            if serde_json::from_str::<Value>(&extracted).is_ok() {
                 return Ok(TruncationStatus::Complete);
             }
         }
+        return Err(LlmError::ParseError(
+            "JSON output is invalid and was not truncated".to_string(),
+        ));
     }
 
     let content = content.trim();
@@ -341,7 +344,7 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
         let mut depth = 0i32;
         let mut in_string = false;
         let mut escape = false;
-        for (i, ch) in text[start..].chars().enumerate() {
+        for (byte_offset, ch) in text[start..].char_indices() {
             if escape {
                 escape = false;
                 continue;
@@ -353,7 +356,8 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
                 '}' if !in_string => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(text[start..start + i + 1].to_string());
+                        let end = start + byte_offset + ch.len_utf8();
+                        return Some(text[start..end].to_string());
                     }
                 }
                 _ => {}
@@ -364,7 +368,7 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
         let mut depth = 0i32;
         let mut in_string = false;
         let mut escape = false;
-        for (i, ch) in text[start..].chars().enumerate() {
+        for (byte_offset, ch) in text[start..].char_indices() {
             if escape {
                 escape = false;
                 continue;
@@ -376,7 +380,8 @@ pub fn extract_json_substring(text: &str) -> Option<String> {
                 ']' if !in_string => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(text[start..start + i + 1].to_string());
+                        let end = start + byte_offset + ch.len_utf8();
+                        return Some(text[start..end].to_string());
                     }
                 }
                 _ => {}
@@ -447,13 +452,13 @@ pub fn merge_truncated_output(partial: &str, continuation: &str) -> String {
 
 // ── 重试工具 / Retry utilities ────────────────────────────────────────────
 
-/// 计算第 n 次重试的退避时间（指数退避 + 随机抖动）。
+/// 计算第 n 次重试的退避时间（指数退避 + 真随机抖动）。
 pub fn backoff_duration(attempt: u32) -> Duration {
     let base = INITIAL_BACKOFF_MS * 2u64.pow(attempt.saturating_sub(1));
     let capped = base.min(MAX_BACKOFF_MS);
-    let jitter = capped / 4;
-    let jittered = capped + (jitter.min((capped as f64 * 0.25) as u64));
-    Duration::from_millis(jittered)
+    // 抖动范围 [0, capped/4]；使用 rand::thread_rng 提供真随机性。
+    let jitter = rand::thread_rng().gen_range(0..=capped / 4);
+    Duration::from_millis(capped.saturating_add(jitter))
 }
 
 /// 判断错误是否应终止重试。
@@ -531,10 +536,19 @@ pub trait LlmClient: Send + Sync {
     fn provider_id(&self) -> &str;
 }
 
-// ── LlmClientAdapter: 桥接 LlmClient → semantic_pipeline::LlmProvider ─────
+// ── LlmClientAdapter: 桥接 LlmClient → 受信宿主管线的对话能力 ─────
 
-/// 将富 `LlmClient` 适配为 `semantic_pipeline::LlmProvider` trait。
-/// Pipeline 对每个 CallRole 创建一个适配器。
+/// 宿主受信管线(如 pdf-agent v4 抽取器)使用的最小对话接口。与具体
+/// provider 无关;`LlmClientAdapter` 对每个 CallRole 创建一个实现。
+#[async_trait]
+pub trait ChatProvider: Send + Sync {
+    async fn chat(&self, system_prompt: &str, user_prompt: &str) -> Result<String, String>;
+    fn name(&self) -> &str;
+    fn model(&self) -> &str;
+}
+
+/// 将富 `LlmClient` 适配为 [`ChatProvider`]。
+/// The pipeline creates one adapter per CallRole.
 pub struct LlmClientAdapter {
     client: Arc<dyn LlmClient>,
     role: CallRole,
@@ -552,15 +566,16 @@ impl LlmClientAdapter {
 }
 
 #[async_trait]
-impl semantic_pipeline::pipeline::LlmProvider for LlmClientAdapter {
-    async fn chat(
-        &self,
-        system_prompt: &str,
-        user_prompt: &str,
-        _format: semantic_pipeline::pipeline::ResponseFormat,
-    ) -> Result<String, String> {
+impl ChatProvider for LlmClientAdapter {
+    async fn chat(&self, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
         self.client
-            .chat(self.role, system_prompt, user_prompt, &self.project_id, None)
+            .chat(
+                self.role,
+                system_prompt,
+                user_prompt,
+                &self.project_id,
+                None,
+            )
             .await
             .map_err(|e| e.to_string())
     }
@@ -826,6 +841,21 @@ impl OpenAiCompatibleClient {
         })
     }
 
+    /// 读取响应文本并限制最大长度，避免 OOM 与把攻击载荷嵌进错误串。
+    async fn bounded_response_text(response: reqwest::Response) -> String {
+        match response.bytes().await {
+            Ok(bytes) => {
+                let truncated = bytes
+                    .iter()
+                    .take(MAX_RESPONSE_BODY_BYTES)
+                    .copied()
+                    .collect::<Vec<u8>>();
+                String::from_utf8_lossy(&truncated).into_owned()
+            }
+            Err(error) => format!("(failed to read response body: {})", error),
+        }
+    }
+
     /// 执行单次 HTTP 请求（不包含重试逻辑）。
     async fn execute_request(
         &self,
@@ -847,15 +877,30 @@ impl OpenAiCompatibleClient {
         let status = response.status().as_u16();
 
         if status == 200 {
-            let full_body: Value = response.json().await?;
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| LlmError::HttpError(error.to_string()))?;
+            if bytes.len() > MAX_RESPONSE_BODY_BYTES {
+                return Err(LlmError::ServerError {
+                    status,
+                    body: format!(
+                        "response body exceeds {} bytes (got {})",
+                        MAX_RESPONSE_BODY_BYTES,
+                        bytes.len()
+                    ),
+                });
+            }
+            let full_body: Value = serde_json::from_slice(&bytes)
+                .map_err(|error| LlmError::ParseError(error.to_string()))?;
             let parsed: ChatCompletionResponse = serde_json::from_value(full_body)
                 .map_err(|error| LlmError::ParseError(error.to_string()))?;
             Ok(parsed)
         } else if is_terminal_http_status(status) {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::bounded_response_text(response).await;
             Err(LlmError::ClientError { status, body })
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::bounded_response_text(response).await;
             Err(LlmError::ServerError { status, body })
         }
     }
@@ -893,8 +938,7 @@ impl OpenAiCompatibleClient {
                                 .and_then(|m| m.content.as_deref())
                                 .unwrap_or("");
 
-                            let merged =
-                                merge_truncated_output(partial_content, continuation);
+                            let merged = merge_truncated_output(partial_content, continuation);
                             let merged_len = merged.len();
 
                             match serde_json::from_str::<Value>(&merged) {
@@ -948,6 +992,13 @@ impl OpenAiCompatibleClient {
 
     fn cache_reasoning(&self, key: &str, reasoning: &str) {
         if let Ok(mut cache) = self.reasoning_cache.lock() {
+            if cache.len() >= MAX_REASONING_CACHE_ENTRIES {
+                // Evict oldest entry deterministically to cap memory.
+                let oldest = cache.keys().next().cloned();
+                if let Some(oldest) = oldest {
+                    cache.remove(&oldest);
+                }
+            }
             cache.insert(key.to_string(), reasoning.to_string());
         }
     }
@@ -965,6 +1016,493 @@ impl OpenAiCompatibleClient {
             cache.remove(key);
         }
     }
+}
+
+// ── PDF Agent provider adapter ─────────────────────────────────────────────
+
+/// Message transport selected by the host settings. PDF bytes are never
+/// accepted by chat requests; the Kimi transport first turns them into
+/// text/plain and then uses the same text-message path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiFormat {
+    OpenAi,
+    Anthropic,
+}
+
+impl ApiFormat {
+    pub fn parse(value: Option<&str>) -> Result<Self, LlmError> {
+        match value
+            .unwrap_or("openai")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "openai" | "openai-compatible" | "open_ai" => Ok(Self::OpenAi),
+            "anthropic" | "claude" => Ok(Self::Anthropic),
+            other => Err(LlmError::ClientError {
+                status: 0,
+                body: format!("Unsupported api-format: {other}"),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PdfAgentTransport {
+    LocalText,
+    KimiFileExtract,
+}
+
+impl PdfAgentTransport {
+    pub fn parse(value: Option<&str>) -> Result<Self, LlmError> {
+        match value
+            .unwrap_or("local-text")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "local" | "local-text" | "local_text" | "text" => Ok(Self::LocalText),
+            "kimi-file-extract" | "kimi_file_extract" | "file-extract" => Ok(Self::KimiFileExtract),
+            other => Err(LlmError::ClientError {
+                status: 0,
+                body: format!("Unsupported PDF transport: {other}"),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PdfAgentLlmConfig {
+    pub api_url: String,
+    pub api_format: ApiFormat,
+    pub api_key: String,
+    pub model: String,
+    pub thinking: bool,
+    pub thinking_level: Option<String>,
+    pub provider: String,
+    pub transport: PdfAgentTransport,
+    pub timeout_secs: u64,
+}
+
+impl PdfAgentLlmConfig {
+    pub fn validate(&self) -> Result<(), LlmError> {
+        if self.api_key.trim().is_empty() {
+            return Err(LlmError::ApiKeyMissing);
+        }
+        if self.api_url.trim().is_empty() {
+            return Err(LlmError::ClientError {
+                status: 0,
+                body: "api-url cannot be empty".to_string(),
+            });
+        }
+        if self.model.trim().is_empty() {
+            return Err(LlmError::ClientError {
+                status: 0,
+                body: "model cannot be empty".to_string(),
+            });
+        }
+        if self.transport == PdfAgentTransport::KimiFileExtract
+            && (self.api_format != ApiFormat::OpenAi
+                || !is_approved_kimi_endpoint(&self.api_url)
+                || !is_kimi_provider(&self.provider))
+        {
+            return Err(LlmError::ClientError {
+                status: 0,
+                body: "Kimi file extraction requires provider=Kimi/Moonshot, an approved Moonshot API URL, and api-format=openai".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+pub struct PdfAgentLlmClient {
+    http: reqwest::Client,
+    config: PdfAgentLlmConfig,
+}
+
+impl PdfAgentLlmClient {
+    pub fn new(config: PdfAgentLlmConfig) -> Result<Self, LlmError> {
+        config.validate()?;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.timeout_secs.max(1)))
+            .build()
+            .map_err(|error| LlmError::HttpError(error.to_string()))?;
+        Ok(Self { http, config })
+    }
+
+    pub fn config(&self) -> &PdfAgentLlmConfig {
+        &self.config
+    }
+
+    fn endpoint(&self, suffix: &str) -> String {
+        append_api_path(&self.config.api_url, suffix)
+    }
+
+    fn auth_headers(
+        &self,
+        format: ApiFormat,
+        content_type: Option<&str>,
+    ) -> Result<HeaderMap, LlmError> {
+        let mut headers = HeaderMap::new();
+        match format {
+            ApiFormat::OpenAi => {
+                let value = format!("Bearer {}", self.config.api_key);
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&value).map_err(|error| {
+                        LlmError::HttpError(format!("Invalid API key: {error}"))
+                    })?,
+                );
+            }
+            ApiFormat::Anthropic => {
+                headers.insert(
+                    "x-api-key",
+                    HeaderValue::from_str(&self.config.api_key).map_err(|error| {
+                        LlmError::HttpError(format!("Invalid API key: {error}"))
+                    })?,
+                );
+                headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+            }
+        }
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_str(content_type.unwrap_or("application/json"))
+                .map_err(|error| LlmError::HttpError(format!("Invalid content type: {error}")))?,
+        );
+        Ok(headers)
+    }
+
+    pub async fn chat_json(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        project_id: &str,
+    ) -> Result<String, LlmError> {
+        let route = ModelRoute {
+            model: self.config.model.clone(),
+            thinking: self.config.thinking,
+            thinking_level: self.config.thinking_level.clone(),
+            json_output: true,
+        };
+        let body = match self.config.api_format {
+            ApiFormat::OpenAi => serde_json::json!({
+                "model": route.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.1,
+                "max_tokens": if route.thinking { 8192 } else { 4096 },
+                "stream": false,
+                "user": project_user_id(project_id)
+            }),
+            ApiFormat::Anthropic => {
+                let mut value = serde_json::json!({
+                    "model": route.model,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": anthropic_max_tokens(&route),
+                });
+                if route.thinking {
+                    value["thinking"] = serde_json::json!({
+                        "type": "enabled",
+                        "budget_tokens": anthropic_thinking_budget(route.thinking_level.as_deref()),
+                    });
+                }
+                value
+            }
+        };
+        let headers = self.auth_headers(self.config.api_format, None)?;
+        let endpoint = match self.config.api_format {
+            ApiFormat::OpenAi => self.endpoint("v1/chat/completions"),
+            ApiFormat::Anthropic => self.endpoint("v1/messages"),
+        };
+        let response = self.post_json_with_retry(&endpoint, headers, body).await?;
+        extract_text_from_model_response(self.config.api_format, &response)
+    }
+
+    /// Kimi/Moonshot file-extract transport. The upload is deliberately gated
+    /// by `PdfAgentLlmConfig::validate`; the returned file id is never sent to
+    /// chat, only the subsequent text/plain response is.
+    pub async fn extract_kimi_file_text(&self, pdf_path: &Path) -> Result<String, LlmError> {
+        if self.config.transport != PdfAgentTransport::KimiFileExtract {
+            return Err(LlmError::ClientError {
+                status: 0,
+                body: "Kimi file extraction is not enabled".to_string(),
+            });
+        }
+        let form = reqwest::multipart::Form::new()
+            .text("purpose", "file-extract")
+            .file("file", pdf_path)
+            .await
+            .map_err(|error| {
+                LlmError::HttpError(format!("Cannot prepare Kimi PDF upload: {error}"))
+            })?;
+        let mut headers = self.auth_headers(ApiFormat::OpenAi, None)?;
+        // reqwest adds the multipart boundary/content type when `.multipart`
+        // is used. Leaving the JSON content type here would corrupt the body.
+        headers.remove(CONTENT_TYPE);
+        let upload = self
+            .http
+            .post(self.endpoint("v1/files"))
+            .headers(headers)
+            .multipart(form)
+            .send()
+            .await?;
+        let upload_status = upload.status().as_u16();
+        if !(200..300).contains(&upload_status) {
+            let error_body = Self::bounded_bytes(upload).await;
+            return Err(if is_terminal_http_status(upload_status) {
+                LlmError::ClientError {
+                    status: upload_status,
+                    body: error_body,
+                }
+            } else {
+                LlmError::ServerError {
+                    status: upload_status,
+                    body: error_body,
+                }
+            });
+        }
+        let upload_body = Self::bounded_bytes(upload).await;
+        let upload_json: Value = serde_json::from_str(&upload_body)
+            .map_err(|error| LlmError::ParseError(format!("Kimi file upload response: {error}")))?;
+        let file_id = upload_json
+            .get("id")
+            .or_else(|| upload_json.get("file_id"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                LlmError::ParseError("Kimi file upload response omitted file id".to_string())
+            })?
+            .to_string();
+
+        let result = self.download_kimi_file_text(&file_id).await;
+        let _ = self.delete_kimi_file(&file_id).await;
+        result
+    }
+
+    async fn download_kimi_file_text(&self, file_id: &str) -> Result<String, LlmError> {
+        let headers = self.auth_headers(ApiFormat::OpenAi, None)?;
+        let response = self
+            .http
+            .get(format!("{}/{}/content", self.endpoint("v1/files"), file_id))
+            .headers(headers)
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(LlmError::ClientError {
+                status,
+                body: Self::bounded_bytes(response).await,
+            });
+        }
+        let text = Self::bounded_bytes(response).await;
+        if text.trim().is_empty() {
+            return Err(LlmError::ParseError(
+                "Kimi file content was empty".to_string(),
+            ));
+        }
+        Ok(text)
+    }
+
+    async fn delete_kimi_file(&self, file_id: &str) -> Result<(), LlmError> {
+        let headers = self.auth_headers(ApiFormat::OpenAi, None)?;
+        let response = self
+            .http
+            .delete(format!("{}/{}", self.endpoint("v1/files"), file_id))
+            .headers(headers)
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(LlmError::ClientError {
+                status: response.status().as_u16(),
+                body: Self::bounded_bytes(response).await,
+            })
+        }
+    }
+
+    async fn post_json_with_retry(
+        &self,
+        endpoint: &str,
+        headers: HeaderMap,
+        body: Value,
+    ) -> Result<Value, LlmError> {
+        let bytes = serde_json::to_vec(&body)
+            .map_err(|error| LlmError::SerializationError(error.to_string()))?;
+        let mut last_error = String::new();
+        for attempt in 1..=MAX_RETRIES {
+            let result = self
+                .http
+                .post(endpoint)
+                .headers(headers.clone())
+                .body(bytes.clone())
+                .send()
+                .await;
+            match result {
+                Ok(response) => {
+                    let status = response.status().as_u16();
+                    let body = Self::bounded_bytes(response).await;
+                    if (200..300).contains(&status) {
+                        return serde_json::from_str(&body)
+                            .map_err(|error| LlmError::ParseError(error.to_string()));
+                    }
+                    let error = if is_terminal_http_status(status) {
+                        LlmError::ClientError { status, body }
+                    } else {
+                        LlmError::ServerError { status, body }
+                    };
+                    last_error = error.to_string();
+                    if should_terminate(&error) || attempt == MAX_RETRIES {
+                        return Err(error);
+                    }
+                }
+                Err(error) => {
+                    last_error = error.to_string();
+                    if attempt == MAX_RETRIES {
+                        return Err(LlmError::RetryExhausted {
+                            attempts: MAX_RETRIES,
+                            last_error,
+                        });
+                    }
+                }
+            }
+            tokio::time::sleep(backoff_duration(attempt)).await;
+        }
+        Err(LlmError::RetryExhausted {
+            attempts: MAX_RETRIES,
+            last_error,
+        })
+    }
+
+    async fn bounded_bytes(response: reqwest::Response) -> String {
+        match response.bytes().await {
+            Ok(bytes) => {
+                let bounded = bytes
+                    .iter()
+                    .take(8 * 1024 * 1024)
+                    .copied()
+                    .collect::<Vec<_>>();
+                String::from_utf8_lossy(&bounded).into_owned()
+            }
+            Err(error) => format!("(failed to read response body: {error})"),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmClient for PdfAgentLlmClient {
+    async fn chat(
+        &self,
+        _role: CallRole,
+        system_prompt: &str,
+        user_prompt: &str,
+        project_id: &str,
+        _reasoning_key: Option<&str>,
+    ) -> Result<String, LlmError> {
+        self.chat_json(system_prompt, user_prompt, project_id).await
+    }
+
+    fn provider_name(&self) -> &str {
+        &self.config.provider
+    }
+
+    fn model_for_role(&self, _role: CallRole) -> &str {
+        &self.config.model
+    }
+
+    fn provider_id(&self) -> &str {
+        &self.config.provider
+    }
+}
+
+fn append_api_path(base_url: &str, suffix: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let suffix = suffix.trim_start_matches('/');
+    if base.ends_with(suffix) {
+        return base.to_string();
+    }
+    if base.ends_with("/v1") && suffix.starts_with("v1/") {
+        return format!("{base}/{}", suffix.trim_start_matches("v1/"));
+    }
+    format!("{base}/{suffix}")
+}
+
+fn extract_text_from_model_response(
+    format: ApiFormat,
+    response: &Value,
+) -> Result<String, LlmError> {
+    let raw = match format {
+        ApiFormat::OpenAi => response
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                LlmError::ParseError(
+                    "OpenAI response did not contain choices[0].message.content".to_string(),
+                )
+            })?,
+        ApiFormat::Anthropic => response
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|content| {
+                content
+                    .iter()
+                    .find_map(|block| block.get("text").and_then(Value::as_str))
+            })
+            .ok_or_else(|| {
+                LlmError::ParseError(
+                    "Anthropic response did not contain a text content block".to_string(),
+                )
+            })?,
+    };
+    Ok(extract_json_substring(raw).unwrap_or_else(|| raw.trim().to_string()))
+}
+
+fn anthropic_thinking_budget(level: Option<&str>) -> u32 {
+    match level.unwrap_or("high").to_ascii_lowercase().as_str() {
+        "low" => 2048,
+        "medium" => 4096,
+        "extra_high" | "extra-high" => 16_384,
+        _ => 8192,
+    }
+}
+
+fn anthropic_max_tokens(route: &ModelRoute) -> u32 {
+    if route.thinking {
+        anthropic_thinking_budget(route.thinking_level.as_deref()).saturating_add(1024)
+    } else {
+        4096
+    }
+}
+
+pub fn is_kimi_provider(provider: &str) -> bool {
+    let provider = provider.trim().to_ascii_lowercase();
+    provider.contains("kimi") || provider.contains("moonshot")
+}
+
+pub fn is_approved_kimi_endpoint(api_url: &str) -> bool {
+    let lower = api_url.trim().to_ascii_lowercase();
+    let Some(authority) = lower.strip_prefix("https://") else {
+        return false;
+    };
+    let host = authority
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    matches!(host, "api.moonshot.ai" | "api.moonshot.cn")
 }
 
 // ── LlmClient 实现 / LlmClient impl for OpenAiCompatibleClient ────────────
@@ -1045,6 +1583,12 @@ mod tests {
     }
 
     #[test]
+    fn detect_truncation_rejects_invalid_json_when_not_truncated() {
+        let result = detect_truncation(r#"{"a": 1, "b": ["#, None);
+        assert!(result.is_err(), "obviously broken JSON should be rejected");
+    }
+
+    #[test]
     fn extract_json_substring_finds_outer_object() {
         let text = r#"前缀 {"key": "value"} 后缀"#;
         let extracted = extract_json_substring(text).unwrap();
@@ -1059,6 +1603,15 @@ mod tests {
     }
 
     #[test]
+    fn extract_json_substring_uses_utf8_byte_boundaries() {
+        let text = "说明：{\"summary\":\"正在分析中文论文\",\"count\":2} 完成";
+        let extracted = extract_json_substring(text).expect("extract Unicode JSON");
+        let value: Value = serde_json::from_str(&extracted).expect("parse Unicode JSON");
+        assert_eq!(value["summary"], "正在分析中文论文");
+        assert_eq!(value["count"], 2);
+    }
+
+    #[test]
     fn merge_truncated_output_no_overlap() {
         let merged = merge_truncated_output(r#"{"a": "#, r#""value"}"#);
         assert_eq!(merged, r#"{"a":"value"}"#);
@@ -1066,8 +1619,7 @@ mod tests {
 
     #[test]
     fn merge_truncated_output_with_overlap() {
-        let merged =
-            merge_truncated_output(r#"{"data": [1, 2, 3"#, r#"3, 4, 5]}"#);
+        let merged = merge_truncated_output(r#"{"data": [1, 2, 3"#, r#"3, 4, 5]}"#);
         assert!(merged.contains("[1, 2, 3, 4, 5]"));
     }
 
@@ -1129,5 +1681,75 @@ mod tests {
         // Recovery 应该关闭 JSON 模式
         assert!(!routing.route(CallRole::Recovery).json_output);
         assert!(routing.route(CallRole::Extraction).json_output);
+    }
+
+    #[test]
+    fn pdf_agent_parses_openai_and_anthropic_formats() {
+        assert_eq!(
+            ApiFormat::parse(Some("openai-compatible")).unwrap(),
+            ApiFormat::OpenAi
+        );
+        assert_eq!(
+            ApiFormat::parse(Some("anthropic")).unwrap(),
+            ApiFormat::Anthropic
+        );
+        assert!(ApiFormat::parse(Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn kimi_file_transport_is_strictly_gated() {
+        let config = |api_url: &str, provider: &str| PdfAgentLlmConfig {
+            api_url: api_url.to_string(),
+            api_format: ApiFormat::OpenAi,
+            api_key: "test-key".to_string(),
+            model: "moonshot-v1-8k".to_string(),
+            thinking: false,
+            thinking_level: None,
+            provider: provider.to_string(),
+            transport: PdfAgentTransport::KimiFileExtract,
+            timeout_secs: 1,
+        };
+
+        assert!(config("https://api.moonshot.ai/v1", "moonshot")
+            .validate()
+            .is_ok());
+        assert!(config("https://example.invalid/v1", "moonshot")
+            .validate()
+            .is_err());
+        assert!(config("https://api.moonshot.ai/v1", "deepseek")
+            .validate()
+            .is_err());
+    }
+
+    #[test]
+    fn kimi_file_routes_use_content_endpoint_and_keep_chat_text_only() {
+        assert_eq!(
+            append_api_path("https://api.moonshot.ai/v1", "v1/files"),
+            "https://api.moonshot.ai/v1/files"
+        );
+        assert_eq!(
+            format!(
+                "{}/{}/content",
+                append_api_path("https://api.moonshot.ai/v1", "v1/files"),
+                "file-123"
+            ),
+            "https://api.moonshot.ai/v1/files/file-123/content"
+        );
+        let response =
+            serde_json::json!({"choices": [{"message": {"content": "{\"nodes\": []}"}}]});
+        assert_eq!(
+            extract_text_from_model_response(ApiFormat::OpenAi, &response).unwrap(),
+            "{\"nodes\": []}"
+        );
+    }
+
+    #[test]
+    fn kimi_endpoint_requires_https_and_approved_host() {
+        assert!(is_approved_kimi_endpoint("https://api.moonshot.ai/v1"));
+        assert!(is_approved_kimi_endpoint("https://api.moonshot.cn/v1"));
+        assert!(!is_approved_kimi_endpoint("http://api.moonshot.ai/v1"));
+        assert!(!is_approved_kimi_endpoint(
+            "https://api.moonshot.ai.attacker.test/v1"
+        ));
     }
 }

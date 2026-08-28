@@ -117,8 +117,8 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
   # ── Build Verification (main push only) ────────────────────────────
-  build-next:
-    name: Build · Next.js
+  build-vite:
+    name: Build · Vite
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -130,7 +130,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Next.js production build
+      - name: Vite production build
         run: npm run build:desktop
 
   build-desktop:
@@ -172,7 +172,7 @@ jobs:
       - name: Tauri desktop build check
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
-      - name: Next.js desktop build
+      - name: Vite desktop renderer build
         run: npm run build:desktop
 
   # ── Plugin Build Verification ──────────────────────────────────────
@@ -189,11 +189,11 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Build One Dark Pro theme plugin
-        run: python scripts/build_myc_plugin.py plugins/sources/researchcanvas.onedarkpro plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+      - name: Stage release plugin runtime
+        run: npm run plugins:stage-release
 
-      - name: Verify .myc package exists
-        run: test -f plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+      - name: Verify release staging manifest exists
+        run: test -f .plugin-runtime/release-staging/release-manifest.json
 
   # ── Performance Smoke (main push only) ─────────────────────────────
   perf-smoke:
@@ -201,7 +201,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-next]
+    needs: [build-vite]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

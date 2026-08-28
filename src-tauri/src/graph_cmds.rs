@@ -3,7 +3,7 @@
 //! 语义内核（graph_compiler）是纯 Rust 库；本模块是它到 Webview 的唯一桥：
 //! 参数经 JSON 校验后交给纯函数，结果序列化为 camelCase JSON。不持有状态。
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 /// 解析 diff 输入：接受完整 ProjectState JSON，或 `{ fileHash, project }` 包装。
 /// 包装形式会校验 fileHash 与 project 内容一致（git 式自编码自校验），
@@ -14,10 +14,14 @@ fn resolve_diff_input(value: &Value) -> Result<Value, String> {
             let expected = object
                 .get("fileHash")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "diff input { fileHash, project } requires a fileHash string".to_string())?;
+                .ok_or_else(|| {
+                    "diff input { fileHash, project } requires a fileHash string".to_string()
+                })?;
             let actual = research_graph_compiler::hash::file_hash(project);
             if actual != expected {
-                return Err(format!("diff input fileHash mismatch: expected {expected}, computed {actual}"));
+                return Err(format!(
+                    "diff input fileHash mismatch: expected {expected}, computed {actual}"
+                ));
             }
             return Ok(project.clone());
         }
@@ -55,7 +59,9 @@ pub fn compute_diff(v1: Value, v2: Value) -> Result<Value, String> {
         })
         .sum::<usize>();
     if entity_count > 100_000 {
-        return Err(format!("project too large for diff: {entity_count} entities exceeds the 100k limit"));
+        return Err(format!(
+            "project too large for diff: {entity_count} entities exceeds the 100k limit"
+        ));
     }
     let result = research_graph_compiler::diff::canvas_diff(&project_v1, &project_v2);
     serde_json::to_value(result).map_err(|error| error.to_string())
@@ -65,6 +71,7 @@ pub fn compute_diff(v1: Value, v2: Value) -> Result<Value, String> {
 /// Deterministic layout: given a project, mode, optional root id and params,
 /// return the computed presentation result (positions / annotations / node & edge ids).
 #[tauri::command]
+#[allow(dead_code)] // superseded by compile_project + frontend layout; retained for compiler parity
 pub fn compute_graph_layout(
     project: Value,
     mode: String,
@@ -102,7 +109,10 @@ pub fn compile_project(project: Value) -> Result<Value, String> {
     let mean_net_belief = if bp.beliefs.is_empty() {
         0.5
     } else {
-        bp.beliefs.iter().map(|belief| belief.net_belief).sum::<f64>()
+        bp.beliefs
+            .iter()
+            .map(|belief| belief.net_belief)
+            .sum::<f64>()
             / bp.beliefs.len() as f64
     };
 
@@ -127,6 +137,7 @@ pub fn compile_project(project: Value) -> Result<Value, String> {
 /// Intent-driven layout: read mode + params from one `views[]` entry, then
 /// compute → fallback → override with pinned coordinates only.
 #[tauri::command]
+#[allow(dead_code)] // superseded by compile_project + frontend layout; retained for compiler parity
 pub fn layout_project_view(
     project: Value,
     view: Value,
@@ -149,7 +160,8 @@ mod tests {
             ],
             "edges": [{"id": "x", "type": "supports", "source": "a", "target": "b", "directed": true}]
         });
-        let result = compute_graph_layout(project, "evidence-chain".to_string(), None, None).unwrap();
+        let result =
+            compute_graph_layout(project, "evidence-chain".to_string(), None, None).unwrap();
         let object = result.as_object().expect("result is an object");
         assert_eq!(object["mode"], "evidence-chain");
         assert!(object.get("positions").is_some());
@@ -263,7 +275,10 @@ mod tests {
             "project": project.clone()
         });
         let result = compute_diff(wrapped, project.clone()).unwrap();
-        assert!(result.as_object().unwrap()["addedNodes"].as_array().unwrap().is_empty());
+        assert!(result.as_object().unwrap()["addedNodes"]
+            .as_array()
+            .unwrap()
+            .is_empty());
 
         // 包装形式必须通过 fileHash 自校验；篡改内容应报错。
         let tampered = serde_json::json!({
@@ -275,11 +290,9 @@ mod tests {
 
     #[test]
     fn compute_diff_rejects_bare_filehash_and_oversized_projects() {
-        assert!(compute_diff(
-            serde_json::json!("0123456789abcdef"),
-            serde_json::json!({})
-        )
-        .is_err());
+        assert!(
+            compute_diff(serde_json::json!("0123456789abcdef"), serde_json::json!({})).is_err()
+        );
         let big_nodes: Vec<Value> = (0..100_001)
             .map(|index| serde_json::json!({"id": format!("n{index}"), "type": "note"}))
             .collect();

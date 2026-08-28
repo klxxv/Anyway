@@ -29,3 +29,21 @@ pub struct MatrixAnalysis {
 pub fn analyze_matrix(_scenarios: &[Value]) -> MatrixAnalysis {
     MatrixAnalysis::default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scenario_comparison_stub_is_empty() {
+        let result = compare_scenario(&Value::Null, &Value::Null);
+        assert!(result.directly_disabled.is_empty());
+        assert!(result.newly_unreachable.is_empty());
+    }
+
+    #[test]
+    fn matrix_analysis_stub_is_empty() {
+        let result = analyze_matrix(&[]);
+        assert!(result.missing_cells.is_empty());
+    }
+}

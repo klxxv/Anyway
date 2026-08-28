@@ -71,9 +71,9 @@ fn json_report_matches_kernel_api() {
         serde_json::to_value(&compiled.violations).unwrap()
     );
 
-    // 项目摘要：fixture 元数据。
+    // 项目摘要：fixture 元数据(v2 fixture 经 GC-01 迁移后以 v3 编译)。
     assert_eq!(report["project"]["id"], json!("pinn-plugin-architecture"));
-    assert_eq!(report["project"]["schemaVersion"], json!(2));
+    assert_eq!(report["project"]["schemaVersion"], json!(3));
     assert_eq!(report["project"]["counts"]["nodes"], json!(12));
     assert_eq!(report["project"]["counts"]["edges"], json!(11));
 
@@ -143,9 +143,15 @@ fn analysis_sections_match_kernel_output() {
     );
     let contradictions = research_graph_compiler::factor::contradiction::find_contradictions(
         &compiled.project,
-        16,
+        &research_graph_compiler::factor::contradiction::ContradictionOptions {
+            max_depth: 16,
+            ..Default::default()
+        },
     );
-    let beliefs = research_graph_compiler::factor::bp::tree_belief_propagation(&factor_graph);
+    let beliefs = research_graph_compiler::factor::bp::belief_propagation(
+        &factor_graph,
+        &research_graph_compiler::factor::bp::BpOptions::default(),
+    );
     let layout = research_graph_compiler::layout::compute_layout(
         &compiled.project,
         research_graph_compiler::layout::LayoutMode::Hierarchical,
@@ -226,19 +232,38 @@ fn strict_mode_fails_on_warning_fixture() {
     assert_eq!(strict_code, 1, "--strict fails on any diagnostic");
 }
 
-#[test]
-fn parse_failure_reports_diagnostic_and_exits_one() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("broken.mycproj");
-    std::fs::write(&path, b"{ not valid json").unwrap();
+    #[test]
+    fn parse_failure_reports_diagnostic_and_exits_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken.mycproj");
+        std::fs::write(&path, b"{ not valid json").unwrap();
 
-    let (stdout, _, code) = run_compile(&[path.to_str().unwrap()]);
-    assert_eq!(code, 1);
-    let report: Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(report["ok"], json!(false));
-    assert_eq!(report["diagnostics"][0]["code"], json!("parse-error"));
-    assert_eq!(report["diagnostics"][0]["severity"], json!("error"));
-}
+        let (stdout, _, code) = run_compile(&[path.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        let report: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(report["ok"], json!(false));
+        assert_eq!(report["diagnostics"][0]["code"], json!("parse-error"));
+        assert_eq!(report["diagnostics"][0]["severity"], json!("error"));
+    }
+
+    #[test]
+    fn parse_failure_with_mermaid_output_is_not_silent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken.mycproj");
+        std::fs::write(&path, b"{ not valid json").unwrap();
+
+        let (stdout, stderr, code) = run_compile(&[
+            path.to_str().unwrap(),
+            "--output",
+            "mermaid",
+        ]);
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty(), "mermaid output must be empty on parse failure");
+        assert!(
+            stderr.contains("parse failed") || stderr.contains("parse-error"),
+            "stderr must propagate parse failure: {stderr}"
+        );
+    }
 
 #[test]
 fn io_error_exits_three() {
@@ -265,17 +290,20 @@ fn mermaid_is_deterministic_and_sorted() {
     let compiled = compile_fixture();
     let mermaid = export_mermaid(&compiled.project);
     assert!(mermaid.starts_with("flowchart LR\n"));
-    // 节点行按 id 排序：第一行应为字母序最前的节点。
-    let mut lines: Vec<&str> = mermaid.lines().skip(1).collect();
-    let Some(first) = lines.first() else {
-        panic!("mermaid has no node lines");
-    };
-    assert!(first.contains("auto-weighted-loss"), "first node {first}");
-    let node_lines: Vec<&str> = lines
-        .drain(..)
+    // 节点行按 id 排序(v2 fixture 迁移后为内容派生哈希 id):逐行校验有序。
+    let node_lines: Vec<&str> = mermaid
+        .lines()
+        .skip(1)
         .filter(|line| line.contains("[\""))
         .collect();
     assert_eq!(node_lines.len(), 12);
+    let ids: Vec<String> = node_lines
+        .iter()
+        .filter_map(|line| line.split("[\"").next().map(str::trim).map(str::to_string))
+        .collect();
+    let mut sorted_ids = ids.clone();
+    sorted_ids.sort();
+    assert_eq!(ids, sorted_ids, "node lines must be sorted by id: {ids:?}");
     // 边行引用合法端点。
     assert!(mermaid.lines().any(|line| line.contains("-->|controls|")));
     assert!(mermaid.lines().any(|line| line.contains("-->|derived_from|")));

@@ -43,10 +43,87 @@ export function createLocalStorageProjectStorage(
   };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+/**
+ * 轻量结构校验：保证关键字段存在且类型正确，避免损坏/恶意数据污染状态。
+ * Lightweight structural validation: ensures key fields exist and have correct types.
+ */
+export function validateProjectState(value: unknown): ProjectState | null {
+  if (!isPlainObject(value)) return null;
+  if (typeof value.schemaVersion !== "number") return null;
+  if (typeof value.id !== "string" || value.id.length === 0) return null;
+  if (typeof value.title !== "string") return null;
+  if (typeof value.discipline !== "string") return null;
+  if (typeof value.updatedAt !== "string") return null;
+  if (typeof value.revision !== "number") return null;
+  if (!Array.isArray(value.nodes)) return null;
+  if (!Array.isArray(value.edges)) return null;
+  if (!Array.isArray(value.evidence)) return null;
+  if (!Array.isArray(value.placements)) return null;
+  if (!Array.isArray(value.scenarios)) return null;
+  if (!Array.isArray(value.activity)) return null;
+
+  for (const node of value.nodes) {
+    if (!isPlainObject(node)) return null;
+    if (typeof node.id !== "string" || node.id.length === 0) return null;
+    if (typeof node.type !== "string") return null;
+    if (typeof node.title !== "string") return null;
+    if (typeof node.body !== "string") return null;
+    if (!Array.isArray(node.tags)) return null;
+    if (typeof node.status !== "string") return null;
+    if (!Array.isArray(node.evidenceIds)) return null;
+    if (!isPlainObject(node.data)) return null;
+    if (!isPlainObject(node.provenance)) return null;
+    if (typeof node.createdAt !== "string") return null;
+    if (typeof node.updatedAt !== "string") return null;
+  }
+
+  for (const edge of value.edges) {
+    if (!isPlainObject(edge)) return null;
+    if (typeof edge.id !== "string" || edge.id.length === 0) return null;
+    if (typeof edge.type !== "string") return null;
+    if (typeof edge.source !== "string") return null;
+    if (typeof edge.target !== "string") return null;
+    if (typeof edge.directed !== "boolean") return null;
+    if (typeof edge.polarity !== "string") return null;
+    if (!Array.isArray(edge.conditions)) return null;
+    if (!Array.isArray(edge.evidenceIds)) return null;
+    if (!isPlainObject(edge.provenance)) return null;
+  }
+
+  for (const placement of value.placements) {
+    if (!isPlainObject(placement)) return null;
+    if (typeof placement.id !== "string" || placement.id.length === 0) return null;
+    if (typeof placement.viewId !== "string") return null;
+    if (typeof placement.nodeId !== "string") return null;
+    if (typeof placement.x !== "number" || !Number.isFinite(placement.x)) return null;
+    if (typeof placement.y !== "number" || !Number.isFinite(placement.y)) return null;
+    if (typeof placement.width !== "number" || !Number.isFinite(placement.width)) return null;
+    if (typeof placement.height !== "number" || !Number.isFinite(placement.height)) return null;
+  }
+
+  const navigation = value.navigation;
+  if (navigation !== undefined) {
+    if (!isPlainObject(navigation)) return null;
+    if (!isStringArray(navigation.recentNodeIds)) return null;
+    if (!isStringArray(navigation.pinnedNodeIds)) return null;
+  }
+
+  return value as unknown as ProjectState;
+}
+
 /** 解析原始 JSON；损坏数据返回 null 而非抛出 / Parses raw JSON; corrupt data yields null. */
 export function parseStoredProject(raw: string): ProjectState | null {
   try {
-    return JSON.parse(raw) as ProjectState;
+    const parsed = JSON.parse(raw) as unknown;
+    return validateProjectState(parsed);
   } catch {
     return null;
   }

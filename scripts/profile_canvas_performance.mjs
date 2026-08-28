@@ -1,6 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unused-expressions -- playwright-cli loads this file as a function expression. */
 async (page) => {
-  const node = page.locator(".react-flow__node").nth(2);
+  const node = page.locator(".vue-flow__node").nth(2);
   const box = await node.boundingBox();
   if (!box) throw new Error("Benchmark node not found");
 

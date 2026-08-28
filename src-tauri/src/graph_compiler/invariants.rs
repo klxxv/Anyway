@@ -299,8 +299,18 @@ pub fn check_invariants(project: &Value) -> Vec<InvariantViolation> {
                 }
             }
             for (key, set, code, label) in [
-                ("nodeOverrides", &node_ids, "dangling-node-reference", "node"),
-                ("edgeOverrides", &edge_ids, "dangling-edge-reference", "edge"),
+                (
+                    "nodeOverrides",
+                    &node_ids,
+                    "dangling-node-reference",
+                    "node",
+                ),
+                (
+                    "edgeOverrides",
+                    &edge_ids,
+                    "dangling-edge-reference",
+                    "edge",
+                ),
             ] {
                 if let Some(overrides) = scenario.get(key).and_then(Value::as_object) {
                     for override_id in overrides.keys() {
@@ -379,12 +389,19 @@ mod tests {
         assert!(codes.contains(&"missing-id"), "{codes:?}");
         assert!(codes.contains(&"dangling-node-reference"), "{codes:?}");
         assert!(codes.contains(&"dangling-edge-reference"), "{codes:?}");
-        assert!(codes.contains(&"unresolved-evidence-reference"), "{codes:?}");
+        assert!(
+            codes.contains(&"unresolved-evidence-reference"),
+            "{codes:?}"
+        );
         assert!(codes.contains(&"uncited-evidence"), "{codes:?}");
         assert!(codes.contains(&"polarity-conflict"), "{codes:?}");
         // dangling 位置标注正确。
-        assert!(violations.iter().any(|v| v.entity == "edge:x1" && v.code == "dangling-node-reference"));
-        assert!(violations.iter().any(|v| v.entity == "placement:pl" && v.code == "dangling-node-reference"));
+        assert!(violations
+            .iter()
+            .any(|v| v.entity == "edge:x1" && v.code == "dangling-node-reference"));
+        assert!(violations
+            .iter()
+            .any(|v| v.entity == "placement:pl" && v.code == "dangling-node-reference"));
     }
 
     #[test]

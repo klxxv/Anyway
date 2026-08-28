@@ -3,10 +3,6 @@ import type {
   PluginManifest,
   ThemeManifest,
 } from "../lib/research-types";
-import {
-  AGENT_CAPABILITIES,
-  AGENT_PERMISSIONS,
-} from "./agent-contracts";
 
 export const builtInPluginCatalog: PluginManifest[] = [
   {
@@ -33,52 +29,6 @@ export const builtInPluginCatalog: PluginManifest[] = [
     publisher: "Research Canvas",
   },
   {
-    id: "zotero-source",
-    name: "Zotero Source",
-    version: "0.1.0-reserved",
-    category: "source",
-    description: "Reserved source adapter for collections, citations, PDFs, and stable item keys.",
-    status: "reserved",
-    permissions: ["Zotero library read (future opt-in)"],
-    capabilities: ["paper.import", "evidence.locator"],
-    publisher: "Research Canvas",
-  },
-  {
-    id: "mcp-bridge",
-    name: "MCP Bridge",
-    version: "0.1.0-reserved",
-    category: "connector",
-    description: "Reserved boundary for Model Context Protocol servers and explicit tool grants.",
-    status: "reserved",
-    permissions: ["Per-server grants (future opt-in)"],
-    capabilities: ["mcp.server", "graph.patch.propose"],
-    publisher: "Research Canvas",
-  },
-  {
-    id: "agent-runtime",
-    name: "Agent Runtime",
-    version: "0.1.0-reserved",
-    category: "agent",
-    description:
-      "Review-gated agent boundary. Agents may propose GraphPatch objects but cannot mutate the graph.",
-    status: "reserved",
-    permissions: ["GraphPatch proposal only"],
-    capabilities: ["graph.patch.propose", "human.approval.required"],
-    publisher: "Research Canvas",
-  },
-  {
-    id: "pdf-canvas-agent",
-    name: "PDF Canvas Agent",
-    version: "0.1.0",
-    category: "agent",
-    description:
-      "从 PDF 论文中提取 DocumentMap → 语义结构 → 审阅门控的 GraphPatch。Agent 不持有 API Key、文件句柄或网络权限；宿主管理一切，Agent 输出仅可进入 reviewRequired GraphPatch。",
-    status: "installed",
-    permissions: [...AGENT_PERMISSIONS],
-    capabilities: [...AGENT_CAPABILITIES],
-    publisher: "Research Canvas",
-  },
-  {
     id: "graph-audit",
     name: "Graph Audit",
     version: "0.1.0",
@@ -88,6 +38,30 @@ export const builtInPluginCatalog: PluginManifest[] = [
     permissions: ["Read current project"],
     capabilities: ["graph.validate", "chain.score"],
     publisher: "Research Canvas Labs",
+    developer: "Research Canvas Labs",
+    update: {
+      latestVersion: "0.2.0",
+      releaseNotes: "Adds alternate-route scoring and configurable audit depth.",
+    },
+    settings: [
+      {
+        id: "audit-depth",
+        label: "Audit depth",
+        description: "How many relationship hops the audit should inspect.",
+        type: "number",
+        default: 3,
+        min: 1,
+        max: 12,
+        step: 1,
+      },
+      {
+        id: "include-alternate-routes",
+        label: "Include alternate routes",
+        description: "Report secondary evidence paths in the audit summary.",
+        type: "boolean",
+        default: true,
+      },
+    ],
   },
 ];
 
@@ -154,10 +128,11 @@ export const builtInEdgeStyleCatalog: EdgeStyleManifest[] = [
       opacity: 0.88,
     },
     relations: {
-      supports: { color: "#25836f", width: 1.8 },
-      contradicts: { color: "#c14457", width: 1.8, dash: [7, 4] },
-      controls: { color: "#7d8796", dash: [3, 4] },
-      measures: { color: "#6d5bc1" },
+      T: { color: "#5271c7", width: 1.8 },
+      K: { color: "#25836f", width: 1.8 },
+      I: { color: "#c98a2b", width: 1.8, dash: [7, 4] },
+      M: { color: "#7d8796", dash: [3, 4] },
+      Q: { color: "#6d5bc1" },
     },
     marker: { type: "closed-arrow", size: 15 },
   },
@@ -177,11 +152,11 @@ export const builtInEdgeStyleCatalog: EdgeStyleManifest[] = [
       offset: 24,
     },
     relations: {
-      supports: { color: "#16866e", width: 1.9 },
-      contradicts: { color: "#cf4056", width: 2, dash: [8, 4] },
-      depends_on: { color: "#5271c7" },
-      controls: { color: "#8993a3", dash: [3, 4] },
-      measures: { color: "#755fc7" },
+      T: { color: "#5271c7" },
+      K: { color: "#16866e", width: 1.9 },
+      I: { color: "#c98a2b", width: 2, dash: [8, 4] },
+      M: { color: "#8993a3", dash: [3, 4] },
+      Q: { color: "#755fc7" },
     },
     marker: { type: "closed-arrow", size: 15 },
   },
@@ -199,8 +174,9 @@ export const builtInEdgeStyleCatalog: EdgeStyleManifest[] = [
       opacity: 0.86,
     },
     relations: {
-      supports: { color: "#248672" },
-      contradicts: { color: "#c34b5e", dash: [6, 4] },
+      T: { color: "#5271c7" },
+      K: { color: "#248672" },
+      I: { color: "#c98a2b", dash: [6, 4] },
     },
     marker: { type: "arrow", size: 14 },
   },

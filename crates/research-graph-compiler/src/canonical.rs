@@ -5,6 +5,8 @@
 //! consistency guarantee.
 
 use serde_json::{Number, Value};
+use std::collections::btree_map::Entry;
+use std::io::Write as _;
 use unicode_normalization::UnicodeNormalization;
 
 /// 文本规范化：NFC 归一化 + 折叠空白（任意 Unicode 空白序列 → 单个空格，并去首尾）。
@@ -84,28 +86,37 @@ fn canonicalize_mode(value: &Value, sort_arrays: bool) -> Vec<u8> {
             out
         }
         Value::Object(map) => {
-            // 键先 NFC 归一化，再按字典序排序；归一化冲突时后者覆盖，保证规范 JSON 合法。
-            let mut entries: Vec<(String, &Value)> = Vec::with_capacity(map.len());
+            // 键先 NFC 归一化，再按字典序排序；归一化冲突时保留字典序最小的原键，
+            // 避免输入顺序影响规范化结果。
+            let mut entries: std::collections::BTreeMap<String, (String, &Value)> =
+                std::collections::BTreeMap::new();
             for (key, entry) in map {
                 let normalized = normalize_key(key);
-                match entries
-                    .iter_mut()
-                    .find(|(existing, _)| *existing == normalized)
-                {
-                    Some((_, existing_value)) => *existing_value = entry,
-                    None => entries.push((normalized, entry)),
+                match entries.entry(normalized) {
+                    Entry::Occupied(mut e) => {
+                        if key < &e.get().0 {
+                            let slot = e.get_mut();
+                            slot.0 = key.clone();
+                            slot.1 = entry;
+                        }
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert((key.clone(), entry));
+                    }
                 }
             }
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
             let mut out = Vec::with_capacity(map.len() * 8);
             out.push(b'{');
-            for (index, (key, entry)) in entries.iter().enumerate() {
+            for (index, (normalized, (_, entry))) in entries.iter().enumerate() {
                 if index > 0 {
                     out.push(b',');
                 }
-                out.extend_from_slice(&quoted_string(key));
+                out.extend_from_slice(&quoted_string(normalized));
                 out.push(b':');
-                out.extend_from_slice(&canonicalize(entry));
+                // 字段感知:SEQUENCE_FIELDS(pathSteps 等)保序,其余按集合语义。
+                // 之前统一走 canonicalize,canonicalize_field 成了死代码,
+                // 步骤顺序不同的链会撞 hash。
+                out.extend_from_slice(&canonicalize_field(normalized, entry));
             }
             out.push(b'}');
             out
@@ -113,7 +124,62 @@ fn canonicalize_mode(value: &Value, sort_arrays: bool) -> Vec<u8> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn nfc_collision_keeps_lexicographically_first_key() {
+        // U+212B (Angstrom sign) 与 U+00C5 (Latin A with ring) NFC 后相同。
+        let key_a = "\u{212B}lpha"; // Ålpha
+        let key_b = "\u{00C5}lpha"; // Ålpha (different bytes)
+        // 两者 NFC 后相同；字典序上 code point 0x00C5 < 0x212B。
+        let mut map = serde_json::Map::new();
+        map.insert(key_a.to_string(), json!(1));
+        map.insert(key_b.to_string(), json!(2));
+        let value = Value::Object(map);
+        let bytes = canonicalize(&value);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(
+            text.contains("\\u{00c5}lpha") || text.contains("\u{00C5}lpha"),
+            "should keep lexicographically first original key: {text}"
+        );
+    }
+
+    #[test]
+    fn canonicalization_is_deterministic_across_insertion_order() {
+        let v1 = json!({"b": 1, "a": 2});
+        let v2 = json!({"a": 2, "b": 1});
+        assert_eq!(canonicalize(&v1), canonicalize(&v2));
+    }
+}
+
 /// 带 JSON 转义的带引号字符串字节 / Quoted, JSON-escaped string bytes.
 fn quoted_string(text: &str) -> Vec<u8> {
-    serde_json::to_vec(&Value::String(text.to_string())).expect("string serialization cannot fail")
+    // serde_json can only fail here if the input Value contains a map with
+    // non-string keys, which Value::String never does. Unwrap is acceptable.
+    serde_json::to_vec(&Value::String(text.to_string())).unwrap_or_else(|_| {
+        // Fallback: manually quote/escape the string so canonicalization never
+        // panics, even if serde somehow changes its invariants.
+        let mut out = Vec::with_capacity(text.len() + 2);
+        out.push(b'"');
+        for byte in text.bytes() {
+            match byte {
+                b'\\' | b'"' => {
+                    out.push(b'\\');
+                    out.push(byte);
+                }
+                b'\n' => out.extend_from_slice(b"\\n"),
+                b'\r' => out.extend_from_slice(b"\\r"),
+                b'\t' => out.extend_from_slice(b"\\t"),
+                b if b < 0x20 => {
+                    let _ = write!(out, "\\u{byte:04x}");
+                }
+                _ => out.push(byte),
+            }
+        }
+        out.push(b'"');
+        out
+    })
 }

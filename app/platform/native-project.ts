@@ -10,6 +10,8 @@ import {
   projectExportFileName,
   renderProjectExport,
 } from "../plugins/workspace";
+import { HostSdk, type HostBlobRef } from "./host-sdk";
+import { createDefaultTauriHostSdkTransport } from "./host-sdk-tauri";
 
 export interface FolderProjectSummary {
   path: string;
@@ -19,6 +21,14 @@ export interface FolderProjectSummary {
   updatedAt: string;
   nodeCount: number;
   edgeCount: number;
+}
+
+export interface FolderTreeEntry {
+  path: string;
+  name: string;
+  kind: "directory" | "file";
+  size: number;
+  modifiedAt: number | null;
 }
 
 export interface GitCommitRecord {
@@ -71,19 +81,35 @@ async function desktopModules() {
   return { invoke, dialog };
 }
 
+let desktopHostSdk: HostSdk | undefined;
+
+function getDesktopHostSdk(): HostSdk {
+  desktopHostSdk ??= new HostSdk(createDefaultTauriHostSdkTransport());
+  return desktopHostSdk;
+}
+
+const BLOB_UPLOAD_CHUNK_BYTES = 16 * 1024;
+
+/** Encode one upload slice as base64; btoa over a binary string is fine here. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 export async function saveProjectNative(project: ProjectState) {
-  const { invoke, dialog } = await desktopModules();
+  const { dialog } = await desktopModules();
   const path = await dialog.save({
     title: "Save Research Canvas project",
     defaultPath: `${projectFileStem(project)}.mycproj`,
     filters: [{ name: "Research Canvas project", extensions: [...projectFileExtensions] }],
   });
   if (!path) return null;
-  return invoke<NativeProjectFileResult>("save_project_file", { path, project });
+  return getDesktopHostSdk().call<NativeProjectFileResult>("project.save", { path, project });
 }
 
 export async function importProjectNative() {
-  const { invoke, dialog } = await desktopModules();
+  const { dialog } = await desktopModules();
   const path = await dialog.open({
     title: "Import Research Canvas project",
     multiple: false,
@@ -91,15 +117,12 @@ export async function importProjectNative() {
     filters: [{ name: "Research Canvas project", extensions: [...projectFileExtensions] }],
   });
   if (!path || Array.isArray(path)) return null;
-  return importProjectAtPath(path, invoke);
+  return importProjectAtPath(path);
 }
 
-export async function importProjectAtPath(
-  path: string,
-  suppliedInvoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
-) {
-  const invoke = suppliedInvoke ?? (await desktopModules()).invoke;
-  const result = await invoke<NativeProjectFileResult>("import_project_file", { path });
+export async function importProjectAtPath(path: string) {
+  await desktopModules();
+  const result = await getDesktopHostSdk().call<NativeProjectFileResult>("project.import", { path });
   if (!isProjectState(result.project)) throw new Error("PROJECT_FILE_INVALID");
   return { path: result.path, project: result.project };
 }
@@ -110,7 +133,7 @@ export async function exportProjectWithPlugin(
   format: "pdf" | "svg" | "png",
 ) {
   if (!command.formats?.includes(format)) throw new Error("PLUGIN_FORMAT_NOT_DECLARED");
-  const { invoke, dialog } = await desktopModules();
+  const { dialog } = await desktopModules();
   const path = await dialog.save({
     title: command.label,
     defaultPath: projectExportFileName(project, format),
@@ -118,12 +141,31 @@ export async function exportProjectWithPlugin(
   });
   if (!path) return null;
   const data = await renderProjectExport(project, format);
-  return invoke<string>("save_plugin_artifact", {
+  const mediaType =
+    format === "pdf" ? "application/pdf" : format === "png" ? "image/png" : "image/svg+xml";
+  const sdk = getDesktopHostSdk();
+  // The artifact can reach 32 MB, far beyond the 64 KB Host SDK inline limit,
+  // so the bytes go through the Blob Store as a multi-chunk upload and the
+  // committed reference is handed to plugin.artifact.save.
+  const { leaseId } = await sdk.call<{ leaseId: string | number }>("blob.upload.begin", {
+    scope: "plugin",
+    mediaType,
+    size: data.byteLength,
+  });
+  for (let offset = 0; offset < data.byteLength; offset += BLOB_UPLOAD_CHUNK_BYTES) {
+    const chunk = data.subarray(offset, offset + BLOB_UPLOAD_CHUNK_BYTES);
+    await sdk.call("blob.upload.chunk", {
+      leaseId,
+      contentBase64: bytesToBase64(chunk),
+    });
+  }
+  const blobRef = await sdk.call<HostBlobRef>("blob.upload.commit", { leaseId });
+  return sdk.call<string>("plugin.artifact.save", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
     format,
     path,
-    data: Array.from(data),
+    blobRef,
   });
 }
 
@@ -136,20 +178,37 @@ async function chooseDirectory(title: string) {
 export async function openFolderWorkspace(command: EnabledWorkspaceCommand) {
   const path = await chooseDirectory(command.label);
   if (!path) return null;
-  const { invoke } = await desktopModules();
-  const projects = await invoke<FolderProjectSummary[]>("scan_project_folder", {
+  await desktopModules();
+  const projects = await getDesktopHostSdk().call<FolderProjectSummary[]>(
+    "workspace.folder.scan",
+    {
+      pluginId: command.plugin.id,
+      pluginVersion: command.plugin.version,
+      path,
+    },
+  );
+  return { path, projects };
+}
+
+export async function listFolderEntries(
+  command: EnabledWorkspaceCommand,
+  root: string,
+  path = root,
+) {
+  await desktopModules();
+  return getDesktopHostSdk().call<FolderTreeEntry[]>("workspace.folder.list", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
+    root,
     path,
   });
-  return { path, projects };
 }
 
 export async function openGitWorkspace(command: EnabledWorkspaceCommand) {
   const path = await chooseDirectory(command.label);
   if (!path) return null;
-  const { invoke } = await desktopModules();
-  return invoke<GitWorkspaceSnapshot>("read_git_workspace", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitWorkspaceSnapshot>("workspace.git.read", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
     path,
@@ -160,8 +219,8 @@ export async function initializeGitWorkspace(
   command: EnabledWorkspaceCommand,
   path: string,
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitWorkspaceSnapshot>("initialize_git_workspace", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitWorkspaceSnapshot>("workspace.git.init", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
     path,
@@ -169,16 +228,16 @@ export async function initializeGitWorkspace(
 }
 
 export async function readGitHubAccount(command: EnabledWorkspaceCommand) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("read_github_account", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>("workspace.github.read", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
   });
 }
 
 export async function loginGitHubAccount(command: EnabledWorkspaceCommand) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("login_github_account", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>("workspace.github.login", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
   });
@@ -188,20 +247,23 @@ export async function generateGitHubSshKey(
   command: EnabledWorkspaceCommand,
   comment: string,
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("generate_github_ssh_key", {
-    pluginId: command.plugin.id,
-    pluginVersion: command.plugin.version,
-    comment,
-  });
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>(
+    "workspace.github.ssh.generate",
+    {
+      pluginId: command.plugin.id,
+      pluginVersion: command.plugin.version,
+      comment,
+    },
+  );
 }
 
 export async function uploadGitHubSshKey(
   command: EnabledWorkspaceCommand,
   path: string,
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitHubAccountStatus>("upload_github_ssh_key", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitHubAccountStatus>("workspace.github.ssh.upload", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
     path,
@@ -214,8 +276,8 @@ export async function gitAutosaveProject(
   project: ProjectState,
   message = "Research Canvas autosave",
 ) {
-  const { invoke } = await desktopModules();
-  return invoke<GitWorkspaceSnapshot>("git_autosave_project", {
+  await desktopModules();
+  return getDesktopHostSdk().call<GitWorkspaceSnapshot>("workspace.git.autosave", {
     pluginId: command.plugin.id,
     pluginVersion: command.plugin.version,
     repoPath,

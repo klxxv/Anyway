@@ -19,7 +19,7 @@
 
 ```bash
 npm install
-npm run dev:desktop-web    # 启动 Next.js 开发服务器
+npm run dev:desktop-web    # 启动 Vite 开发服务器
 npm run desktop:dev        # 启动 Tauri 桌面应用
 ```
 
@@ -29,7 +29,7 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 
 | 命令 | 说明 |
 |---|---|
-| `npm run dev:desktop-web` | Next.js 开发服务器 |
+| `npm run dev:desktop-web` | Vite 开发服务器 |
 | `npm run build:desktop` | Tauri 生产构建 |
 | `npm run desktop:dev` | Tauri 桌面开发模式 |
 | `npm test` | 完整测试套件 |
@@ -39,7 +39,7 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 
 ## `.myc` 插件格式
 
-`.myc` 是一个以 `plugin.yml` 为根清单的 ZIP 归档文件。插件在安装时经过多层验证：
+`.myc` 是一个以 `plugin.json` 为根清单的 ZIP 归档文件。插件在安装时经过多层验证：
 
 - **清单校验** — API 版本、插件类型、能力声明
 - **签名验证** — 对清单内容的 Ed25519 签名进行验证，与受信任的发布者公钥比对
@@ -49,9 +49,9 @@ npm run desktop:dev        # 启动 Tauri 桌面应用
 构建插件：
 
 ```bash
-python scripts/build_myc_plugin.py \
-  plugins/sources/researchcanvas.onedarkpro \
-  plugins/packages/researchcanvas.onedarkpro@1.0.0.myc
+node scripts/pack-plugin.mjs \
+  my-plugins/anPdfsolver \
+  plugins/packages/myc.pdf-canvas-agent@0.5.3.myc
 ```
 
 插件类型：
@@ -67,7 +67,9 @@ python scripts/build_myc_plugin.py \
 ## 架构
 
 ```
-app/                  TypeScript 前端（Next.js + React Flow）
+src/                  Vue 3 渲染层（Vite + Vue Flow + Pinia）
+  vue/                工作区组件、组合式函数与状态仓库
+app/                  与渲染层无关的 TypeScript 领域与平台层
   lib/
     graph/            图算法（遍历、环、路径、可达性）
     layout/           确定性布局投影
@@ -90,7 +92,7 @@ TypeScript 和 Rust 两端图算法实现通过编译器逐位比对测试（`te
 
 | 层 | 技术 |
 |---|---|
-| 前端 | Next.js、React、React Flow、Tailwind CSS |
+| 前端 | Vue 3、Vite、Vue Flow、Pinia、Tailwind CSS |
 | 桌面 | Tauri 2、WebView2（Windows） |
 | 图算法（TS） | TypeScript，纯函数 |
 | 图算法（Rust） | Rust、serde、sha2 |

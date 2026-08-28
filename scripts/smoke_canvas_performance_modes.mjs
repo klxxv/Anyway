@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-expressions -- playwright-cli loads this file as a function expression. */
 async (page) => {
   await page.getByRole("button", { name: "新增", exact: true }).click();
   const radial = page.locator(".zen-pie-menu");
@@ -11,10 +10,10 @@ async (page) => {
   );
   await radial.locator(".zen-pie-center").click();
 
-  const node = page.locator(".react-flow__node").nth(2);
+  const node = page.locator(".vue-flow__node").nth(2);
   const box = await node.boundingBox();
   if (!box) throw new Error("Smoke-test node not found");
-  const labels = page.locator(".react-flow__edgelabel-renderer span");
+  const labels = page.locator(".vue-flow__edge-label");
   const beforeLabels = await labels.count();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();

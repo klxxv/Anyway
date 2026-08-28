@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createPinia, setActivePinia } from "pinia";
+import { computed, nextTick } from "vue";
 import {
   localeCatalog,
   normalizeLocale,
   translate,
 } from "../app/i18n/catalog";
+import { builtInPluginCatalog } from "../app/plugins/catalog";
 import {
   MYC_API_VERSION,
+  MYC_API_VERSION_V2,
   isMycFileName,
   normalizeInstalledEdgeStyle,
   normalizeInstalledTheme,
@@ -22,9 +26,10 @@ import {
   migrateEnabledPluginKeys,
   pluginCompatibility,
   pluginKey,
+  supersededCompatiblePlugins,
   updateEnabledPluginKeys,
 } from "../app/plugins/identity";
-import { resolveTheme, themeCssVariables } from "../app/plugins/theme";
+import { resolveTheme, sanitizeCssColor, themeCssVariables } from "../app/plugins/theme";
 import { isProjectState } from "../app/lib/project-io";
 import type { ProjectState } from "../app/lib/research-types";
 import {
@@ -33,6 +38,8 @@ import {
   projectToSvg,
   workspaceCommandsFromPlugins,
 } from "../app/plugins/workspace";
+import { createPluginHostValue } from "../src/vue/runtime/plugin-host";
+import { useRuntimePluginHostStore } from "../src/vue/stores/runtime-plugin-host";
 
 test("locale normalization and Simplified Chinese catalog are deterministic", () => {
   assert.equal(normalizeLocale("zh-CN"), "zh-CN");
@@ -53,14 +60,65 @@ test("locale normalization and Simplified Chinese catalog are deterministic", ()
   }
 });
 
+test("live plugin host capability gates update when an installed AgentPlugin is enabled", async () => {
+  setActivePinia(createPinia());
+  const store = useRuntimePluginHostStore();
+  const agent: InstalledMycPlugin = {
+    installPath: "plugins/installed/myc.pdf-agent@1.0.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "AgentPlugin",
+      metadata: {
+        id: "myc.pdf-agent",
+        name: "PDF Agent",
+        version: "1.0.0",
+        publisher: "Research Canvas",
+        developer: "Research Canvas",
+        description: "Review-gated PDF graph agent",
+      },
+      spec: {
+        engine: "host-mediated",
+        entry: "agent.json",
+        capabilities: ["agent.graph.patch.propose"],
+        permissions: [],
+      },
+    },
+    agent: {
+      schemaVersion: 1,
+      mode: "agent",
+      reviewGated: true,
+    },
+  };
+
+  store.installedPlugins = [agent];
+  const pluginHost = createPluginHostValue(store);
+  const hasPdfAgent = computed(() =>
+    pluginHost.activePlugins.some(
+      (plugin) =>
+        plugin.manifest.kind === "AgentPlugin" &&
+        plugin.manifest.spec.capabilities.includes("agent.graph.patch.propose"),
+    ),
+  );
+
+  assert.equal(hasPdfAgent.value, false);
+  store.setPluginEnabled(agent, true);
+  await nextTick();
+  assert.equal(hasPdfAgent.value, true);
+  assert.deepEqual([...pluginHost.activePluginKeys], ["myc.pdf-agent@1.0.0"]);
+
+  store.setPluginEnabled(agent, false);
+  await nextTick();
+  assert.equal(hasPdfAgent.value, false);
+});
+
 test("installed EdgeStylePlugin metadata owns the registered style identity", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.circuit-orthogonal@1.0.0",
+    installPath: "plugins/installed/myc.circuit-orthogonal@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "EdgeStylePlugin",
       metadata: {
-        id: "researchcanvas.circuit-orthogonal",
+        id: "myc.circuit-orthogonal",
         name: "Circuit Orthogonal",
         version: "1.0.0",
         publisher: "Research Canvas Community",
@@ -87,15 +145,15 @@ test("installed EdgeStylePlugin metadata owns the registered style identity", ()
         cornerRadius: 0,
       },
       relations: {
-        supports: { color: "#56b6c2" },
-        contradicts: { color: "#e06c75", dash: [8, 4] },
+        K: { color: "#56b6c2" },
+        Q: { color: "#e06c75", dash: [8, 4] },
       },
       marker: { type: "closed-arrow", size: 16 },
     },
   };
 
   const edgeStyle = normalizeInstalledEdgeStyle(plugin);
-  assert.equal(edgeStyle?.id, "researchcanvas.circuit-orthogonal");
+  assert.equal(edgeStyle?.id, "myc.circuit-orthogonal");
   assert.equal(edgeStyle?.name, "Circuit Orthogonal");
   assert.equal(edgeStyle?.version, "1.0.0");
   assert.equal(edgeStyle?.routing, "orthogonal");
@@ -103,26 +161,26 @@ test("installed EdgeStylePlugin metadata owns the registered style identity", ()
   assert.equal(pluginCompatibility(plugin).compatible, true);
   assert.equal(
     resolveEdgeStyle([plugin]).id,
-    "researchcanvas.circuit-orthogonal",
+    "myc.circuit-orthogonal",
   );
   assert.equal(resolveEdgeStyle([]).id, "research-orthogonal");
   assert.equal(resolveEdgeStyle([]).stroke.cornerRadius, 12);
 });
 
 test(".myc filenames are recognized case-insensitively", () => {
-  assert.equal(isMycFileName("researchcanvas.onedarkpro@1.0.0.myc"), true);
+  assert.equal(isMycFileName("myc.onedarkpro@1.0.0.myc"), true);
   assert.equal(isMycFileName("THEME.MYC"), true);
   assert.equal(isMycFileName("theme.zip"), false);
 });
 
 test("installed ThemePlugin metadata owns the registered theme identity", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.onedarkpro@1.0.0",
+    installPath: "plugins/installed/myc.onedarkpro@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "ThemePlugin",
       metadata: {
-        id: "researchcanvas.onedarkpro",
+        id: "myc.onedarkpro",
         name: "One Dark Pro",
         version: "1.0.0",
         publisher: "Research Canvas Community",
@@ -170,12 +228,12 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   };
 
   const theme = normalizeInstalledTheme(plugin);
-  assert.equal(theme?.id, "researchcanvas.onedarkpro");
+  assert.equal(theme?.id, "myc.onedarkpro");
   assert.equal(theme?.name, "One Dark Pro");
   assert.equal(theme?.version, "1.0.0");
   assert.equal(theme?.source, "myc");
   assert.equal(pluginCompatibility(plugin).compatible, true);
-  assert.equal(resolveTheme([plugin])?.id, "researchcanvas.onedarkpro");
+  assert.equal(resolveTheme([plugin])?.id, "myc.onedarkpro");
   assert.equal(themeCssVariables(theme)?.["--color-blue"], "#61afef");
   assert.equal(themeCssVariables(theme)?.["--toast-background"], "#20242c");
   assert.equal(themeCssVariables(theme)?.["--minimap-relation"], "#596170");
@@ -184,6 +242,26 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   assert.equal(themeCssVariables(theme)?.["--radial-menu-active"], "#61afef");
   assert.equal(themeCssVariables(theme)?.["--radial-menu-center-background"], "#21252b");
   assert.equal(theme?.components?.miniMap?.showRelations, true);
+
+  const maliciousTheme = {
+    ...theme,
+    colors: {
+      app: "#1e222a",
+      panel: "#282c34; --evil: url(https://example.com/leak)",
+      canvas: "#21252b",
+      text: "#abb2bf",
+      muted: "#7f8797",
+      accent: "#61afef",
+      border: "#3e4451",
+    },
+  };
+  assert.equal(themeCssVariables(maliciousTheme), undefined);
+  assert.equal(sanitizeCssColor("red"), "red");
+  assert.equal(sanitizeCssColor("  #fff  "), "#fff");
+  assert.equal(sanitizeCssColor("rgb(0,0,0)"), "rgb(0,0,0)");
+  assert.equal(sanitizeCssColor("rgb(0, 0, 0); background: red"), undefined);
+  assert.equal(sanitizeCssColor("var(--x)"), undefined);
+  assert.equal(sanitizeCssColor("url(https://x)"), undefined);
 
   const older: InstalledMycPlugin = {
     ...plugin,
@@ -194,6 +272,7 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
   };
   const allKeys = enableLatestPluginKeys([older, plugin]);
   assert.deepEqual([...allKeys], [pluginKey(plugin)]);
+  assert.deepEqual(supersededCompatiblePlugins([older, plugin]), [older]);
   assert.deepEqual(activePlugins([older, plugin], new Set([pluginKey(older), pluginKey(plugin)])), [plugin]);
   assert.deepEqual(
     [...updateEnabledPluginKeys([older, plugin], new Set([pluginKey(older)]), plugin, true)],
@@ -207,12 +286,12 @@ test("installed ThemePlugin metadata owns the registered theme identity", () => 
 
 test("runtime plugin metadata exposes only the verified wasm boundary", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.runtime-smoke@1.0.0",
+    installPath: "plugins/installed/myc.runtime-smoke@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "AnalysisPlugin",
       metadata: {
-        id: "researchcanvas.runtime-smoke",
+        id: "myc.runtime-smoke",
         name: "Runtime Smoke",
         version: "1.0.0",
         publisher: "Research Canvas",
@@ -248,12 +327,12 @@ test("active plugin context menus require runtime and an explicit capability", (
     icon: "sparkles",
   };
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.context@1.0.0",
+    installPath: "plugins/installed/myc.context@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "AnalysisPlugin",
       metadata: {
-        id: "researchcanvas.context",
+        id: "myc.context",
         name: "Context analyst",
         version: "1.0.0",
         publisher: "Research Canvas",
@@ -280,17 +359,17 @@ test("active plugin context menus require runtime and an explicit capability", (
   assert.equal(actions.length, 1);
   assert.equal(actions[0]?.contributionId, "inspect-context");
   assert.equal(actions[0]?.scope, "node");
-  assert.equal(actions[0]?.plugin.id, "researchcanvas.context");
+  assert.equal(actions[0]?.plugin.id, "myc.context");
 });
 
 test("community locale plugins extend the UI without changing the built-in language set", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.i18n-ja@1.0.0",
+    installPath: "plugins/installed/myc.i18n-ja@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "LocalePlugin",
       metadata: {
-        id: "researchcanvas.i18n-ja",
+        id: "myc.i18n-ja",
         name: "Japanese UI",
         version: "1.0.0",
         publisher: "Research Canvas Community",
@@ -319,12 +398,12 @@ test("community locale plugins extend the UI without changing the built-in langu
 
 test("active workspace commands require their matching declared capability", () => {
   const plugin: InstalledMycPlugin = {
-    installPath: "plugins/installed/researchcanvas.export-suite@1.0.0",
+    installPath: "plugins/installed/myc.export-suite@1.0.0",
     manifest: {
       apiVersion: MYC_API_VERSION,
       kind: "WorkspacePlugin",
       metadata: {
-        id: "researchcanvas.export-suite",
+        id: "myc.export-suite",
         name: "Export Suite",
         version: "1.0.0",
         publisher: "Research Canvas",
@@ -386,9 +465,9 @@ test("the three workspace plugins share a complete PINN architecture fixture", (
   assert.equal(nodes.get("pinn-backbone")?.data.framework, "torch");
 
   for (const pluginId of [
-    "researchcanvas.export-suite",
-    "researchcanvas.folder-workspaces",
-    "researchcanvas.git-workspace",
+    "myc.export-suite",
+    "myc.folder-workspaces",
+    "myc.git-workspace",
   ]) {
     const descriptor = JSON.parse(
       readFileSync(`plugins/sources/${pluginId}/workspace-plugin.json`, "utf8"),
@@ -431,4 +510,172 @@ test("GraphPatch proposals are review-gated and structurally validated", () => {
     }),
     null,
   );
+
+  // 文本字段有界；超长 body/note 应被拒绝。
+  assert.equal(
+    normalizePluginGraphPatch({
+      ...patch,
+      operations: [
+        {
+          op: "add-node",
+          node: {
+            id: "long-body",
+            type: "note",
+            title: "Long body",
+            body: "x".repeat(10_001),
+          },
+        },
+      ],
+    }),
+    null,
+  );
+  assert.equal(
+    normalizePluginGraphPatch({
+      ...patch,
+      operations: [
+        {
+          op: "add-edge",
+          edge: {
+            id: "long-note",
+            source: "a",
+            target: "b",
+            type: "K",
+            note: "x".repeat(2_001),
+          },
+        },
+      ],
+    }),
+    null,
+  );
+});
+
+test("built-in plugin catalog only advertises implemented or clearly reserved packages", () => {
+  const ids = builtInPluginCatalog.map((plugin) => plugin.id);
+  assert.ok(!ids.includes("pdf-canvas-agent"));
+  assert.ok(!ids.includes("zotero-source"));
+  assert.ok(!ids.includes("mcp-bridge"));
+  assert.ok(!ids.includes("agent-runtime"));
+});
+
+test("AgentPlugin and ProviderPlugin are activatable install kinds", () => {
+  const agent: InstalledMycPlugin = {
+    installPath: "plugins/installed/myc.pdf-canvas-agent@0.1.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "AgentPlugin",
+      metadata: {
+        id: "myc.pdf-canvas-agent",
+        name: "PDF Canvas Agent",
+        version: "0.1.0",
+        publisher: "Research Canvas",
+        developer: "Agent Platform Team",
+        description: "Review-gated PDF canvas agent.",
+      },
+      spec: {
+        engine: "host-mediated",
+        entry: "agent-manifest.json",
+        capabilities: [
+          "agent.pdf.read",
+          "agent.graph.patch.propose",
+          "agent.review.request",
+        ],
+        permissions: [],
+      },
+    },
+    agent: { schemaVersion: 1, mode: "agent", reviewGated: true },
+  };
+  assert.equal(pluginCompatibility(agent).compatible, true);
+
+  const v2Agent: InstalledMycPlugin = {
+    ...agent,
+    installPath: "plugins/installed/myc.pdf-canvas-agent@0.5.3",
+    manifest: {
+      ...agent.manifest,
+      apiVersion: MYC_API_VERSION_V2,
+      metadata: {
+        ...agent.manifest.metadata,
+        version: "0.5.3",
+      },
+      spec: {
+        ...agent.manifest.spec,
+        capabilities: [
+          "plugin.files.pick",
+          "plugin.worker.open",
+          "plugin.worker.call",
+          "plugin.worker.cancel",
+          "plugin.worker.close",
+          "graph.patch.propose",
+          "graph.patch.get",
+          "graph.patch.review",
+        ],
+      },
+    },
+  };
+  assert.deepEqual(pluginCompatibility(v2Agent), { compatible: true, issues: [] });
+
+  assert.equal(
+    pluginCompatibility({
+      ...agent,
+      agent: { schemaVersion: 1, mode: "agent", reviewGated: false as never },
+    }).compatible,
+    false,
+  );
+  assert.equal(
+    pluginCompatibility({ ...agent, agent: undefined }).compatible,
+    false,
+  );
+
+  const provider: InstalledMycPlugin = {
+    installPath: "plugins/installed/myc.test-provider@1.0.0",
+    manifest: {
+      apiVersion: MYC_API_VERSION,
+      kind: "ProviderPlugin",
+      metadata: {
+        id: "myc.test-provider",
+        name: "Test Provider",
+        version: "1.0.0",
+        publisher: "Research Canvas",
+        developer: "Provider Tests",
+        description: "Test LLM provider.",
+      },
+      spec: {
+        engine: "host-mediated",
+        entry: "provider.json",
+        capabilities: ["llm.chat"],
+        permissions: [],
+      },
+    },
+    provider: {
+      schemaVersion: 1,
+      provider: {
+        type: "openai-compatible",
+        baseUrl: "https://api.example.com",
+        chatCompletionsPath: "/v1/chat/completions",
+        defaultRouting: {
+          extraction: { model: "m", thinking: false, jsonOutput: true },
+          synthesis: { model: "m", thinking: false, jsonOutput: true },
+          recovery: { model: "m", thinking: false, jsonOutput: false },
+        },
+        requiresApiKey: true,
+      },
+    },
+  };
+  assert.equal(pluginCompatibility(provider).compatible, true);
+  assert.equal(
+    pluginCompatibility({ ...provider, provider: undefined }).compatible,
+    false,
+  );
+
+  // The shipped anPdfsolver source stays review-gated while using the generic
+  // trusted-plugin frontend/worker contract instead of a Host PDF engine.
+  const descriptor = JSON.parse(
+    readFileSync("my-plugins/anPdfsolver/agent-manifest.json", "utf8"),
+  ) as { mode?: string; reviewGated?: boolean };
+  assert.equal(descriptor.mode, "trusted-plugin");
+  assert.equal(descriptor.reviewGated, true);
+  const manifest = JSON.parse(
+    readFileSync("my-plugins/anPdfsolver/plugin.json", "utf8"),
+  ) as { categories?: string[]; engines?: { engine?: string } };
+  assert.ok((manifest.categories ?? []).includes("AgentPlugin"));
+  assert.equal(manifest.engines?.engine, "trusted-plugin");
 });
