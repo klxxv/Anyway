@@ -50,7 +50,7 @@ function installedFromManifest(manifest: AnPdfsolverManifest): InstalledMycPlugi
         },
       },
     },
-  } as InstalledMycPlugin;
+  } as unknown as InstalledMycPlugin;
 }
 
 test("anPdfsolver manifest declares trusted Vue frontend, physical slots, worker and direct network", () => {

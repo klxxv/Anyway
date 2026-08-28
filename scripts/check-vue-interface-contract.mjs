@@ -44,16 +44,6 @@ export const REQUIRED_EXPORTS = Object.freeze({
   ],
   "app/lib/layout/compute.ts": ["computeLayout"],
   "app/lib/research-types.ts": ["NODE_TYPES", "EDGE_TYPES", "LAYOUT_MODES"],
-  "app/platform/agent-client.ts": [
-    "startPdfJob",
-    "getPdfJobStatus",
-    "reviewPdfPatch",
-    "cancelPdfJob",
-    "compileProject",
-    "pickPdfFile",
-    "listenForPdfDrops",
-    "patchOperationsOf",
-  ],
   "app/platform/native-project.ts": [
     "saveProjectNative",
     "importProjectNative",
@@ -71,19 +61,12 @@ export const REQUIRED_EXPORTS = Object.freeze({
   "app/platform/trackpad.ts": ["listenForNativeTrackpadFrames"],
   "app/plugins/contracts.ts": [
     "MYC_API_VERSION",
+    "MYC_API_VERSION_V2",
     "PLUGIN_CALL_API_VERSION",
     "pluginReference",
     "isMycFileName",
     "normalizeInstalledTheme",
     "normalizeInstalledEdgeStyle",
-  ],
-  "app/plugins/agent-contracts.ts": [
-    "AGENT_CAPABILITIES",
-    "AGENT_PERMISSIONS",
-    "AGENT_PLUGIN_CATEGORY",
-    "PDF_CANVAS_AGENT_MANIFEST",
-    "isJobTerminal",
-    "isJobAwaitingReview",
   ],
   "app/plugins/provider-contracts.ts": ["PROVIDER_CAPABILITIES"],
   "app/plugins/catalog.ts": [
@@ -130,7 +113,6 @@ export const REQUIRED_EXPORTS = Object.freeze({
 
 export const REQUIRED_TAURI_COMMANDS = Object.freeze({
   "app/platform/native-project.ts": [],
-  "app/platform/agent-client.ts": [],
   "app/plugins/tauri-client.ts": [],
 });
 
@@ -159,11 +141,6 @@ export const REQUIRED_STRING_CONSTANTS = Object.freeze([
     file: "app/plugins/contracts.ts",
     label: "GraphPatch apiVersion",
     pattern: /apiVersion\s*:\s*["']researchcanvas\.dev\/graph-patch\/v1alpha1["']/,
-  },
-  {
-    file: "app/plugins/agent-contracts.ts",
-    label: "AGENT_PLUGIN_CATEGORY",
-    pattern: /export\s+const\s+AGENT_PLUGIN_CATEGORY\s*=\s*["']agent["']/,
   },
   {
     file: "app/plugins/context-menu.ts",
@@ -216,20 +193,7 @@ export const REQUIRED_ARRAY_CONSTANTS = Object.freeze([
   {
     file: "app/lib/research-types.ts",
     name: "EDGE_TYPES",
-    values: [
-      "causes",
-      "correlates",
-      "supports",
-      "contradicts",
-      "depends_on",
-      "derived_from",
-      "part_of",
-      "controls",
-      "mediates",
-      "moderates",
-      "uses",
-      "measures",
-    ],
+    values: ["T", "K", "I", "M", "Q"],
   },
   {
     file: "app/lib/research-types.ts",
@@ -242,11 +206,6 @@ export const REQUIRED_ARRAY_CONSTANTS = Object.freeze([
       "table",
       "neural-network",
     ],
-  },
-  {
-    file: "app/plugins/agent-contracts.ts",
-    name: "AGENT_CAPABILITIES",
-    values: ["agent.pdf.read", "agent.graph.patch.propose", "agent.review.request"],
   },
   {
     file: "app/plugins/provider-contracts.ts",

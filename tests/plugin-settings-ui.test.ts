@@ -8,6 +8,7 @@ import {
   normalizePluginSettingDefinitions,
   resolvePluginPrivateText,
   settingsWriteFromDraft,
+  type HostPluginConnectionDefinition,
   validatePluginSettingsDraft,
 } from "../src/vue/components/panel-types";
 import { normalizePluginSettings } from "../app/plugins/contracts";
@@ -80,12 +81,12 @@ test("connection test actions are read from manifest declarations without provid
     id: "custom-service",
     label: "Custom service",
     testAction: { id: "manifest-smoke", label: "Run manifest smoke test" },
-  } as never;
+  } as unknown as HostPluginConnectionDefinition;
   assert.deepEqual(connectionTestActions(legacy), [legacy.testAction]);
   const modern = { ...legacy, testAction: undefined, testActions: [
     { id: "manifest-connectivity", label: "Check connectivity" },
     { id: "manifest-runtime", label: "Check runtime" },
-  ] } as never;
+  ] } as HostPluginConnectionDefinition;
   assert.deepEqual(connectionTestActions(modern).map((action) => action.id), [
     "manifest-connectivity",
     "manifest-runtime",

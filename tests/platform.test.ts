@@ -145,8 +145,8 @@ test("installed EdgeStylePlugin metadata owns the registered style identity", ()
         cornerRadius: 0,
       },
       relations: {
-        supports: { color: "#56b6c2" },
-        contradicts: { color: "#e06c75", dash: [8, 4] },
+        K: { color: "#56b6c2" },
+        Q: { color: "#e06c75", dash: [8, 4] },
       },
       marker: { type: "closed-arrow", size: 16 },
     },

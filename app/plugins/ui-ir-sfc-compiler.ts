@@ -1,5 +1,15 @@
-import { baseParse, NodeTypes, type RootNode, type TemplateChildNode } from "@vue/compiler-dom";
-import { parse as parseSfc, type SFCElement, type SFCParseResult } from "@vue/compiler-sfc";
+import {
+  baseParse,
+  NodeTypes,
+  type ElementNode,
+  type RootNode,
+  type TemplateChildNode,
+} from "@vue/compiler-dom";
+import {
+  parse as parseSfc,
+  type SFCParseResult,
+  type SFCTemplateBlock,
+} from "@vue/compiler-sfc";
 import {
   UI_IR_API_VERSION,
   type UiIrActionBinding,
@@ -44,7 +54,7 @@ function nodeLocation(node: TemplateChildNode, path: string): string {
   return start ? path + "@" + start.line + ":" + start.column : path;
 }
 
-function readTemplate(source: string, filename: string): SFCElement {
+function readTemplate(source: string, filename: string): SFCTemplateBlock {
   let parsed: SFCParseResult;
   try {
     parsed = parseSfc(source, { filename });
@@ -63,7 +73,7 @@ function readTemplate(source: string, filename: string): SFCElement {
   return descriptor.template;
 }
 
-function parseProps(element: SFCElement, path: string): Props {
+function parseProps(element: ElementNode, path: string): Props {
   const attributes = new Map<string, Attribute>();
   const bindings = new Map<string, Binding>();
   const parameters: Record<string, string> = {};
@@ -85,7 +95,9 @@ function parseProps(element: SFCElement, path: string): Props {
       fail("directive-forbidden", path, "only modifier-free :prop bindings are allowed");
     }
     const name = prop.arg.content;
-    const expression = prop.exp && prop.exp.content ? prop.exp.content.trim() : "";
+    const expression = prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION
+      ? prop.exp.content.trim()
+      : "";
     if (!SAFE_IDENTIFIER.test(name) || !SAFE_PATH.test(expression)) {
       fail("expression-forbidden", path + "." + name, "binding must be a simple state.safe.dotted.path");
     }
@@ -146,7 +158,7 @@ function booleanProp(props: Props, name: string, path: string): boolean | UiIrSt
   return binding(props, name);
 }
 
-function textChildren(element: SFCElement, path: string): string | undefined {
+function textChildren(element: ElementNode, path: string): string | undefined {
   const values: string[] = [];
   for (const child of element.children) {
     if (child.type === NodeTypes.TEXT) {
@@ -162,7 +174,7 @@ function textChildren(element: SFCElement, path: string): string | undefined {
   return values.length ? values.join(" ") : undefined;
 }
 
-function childNodes(element: SFCElement, path: string): UiIrNode[] {
+function childNodes(element: ElementNode, path: string): UiIrNode[] {
   return element.children
     .filter((child) => child.type !== NodeTypes.TEXT || child.content.trim().length > 0)
     .filter((child) => child.type !== NodeTypes.COMMENT)

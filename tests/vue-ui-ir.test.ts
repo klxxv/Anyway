@@ -11,7 +11,7 @@ import {
   parseUiIR,
   renderUiIR,
 } from "../src/vue/runtime/vue-ir";
-import { Comment } from "vue";
+import { Comment, isVNode } from "vue";
 
 const permissions = {
   allowedActions: ["settings.save", "settings.change"],
@@ -163,7 +163,7 @@ test("安全 Vue UI IR accepts the minimum union and renders allowlisted element
     allowedSlots: ["toolbar"],
     dispatchAction: (request) => requests.push(request),
   });
-  assert.equal(vnode && typeof vnode === "object" ? vnode.type : undefined, "div");
+  assert.equal(isVNode(vnode) ? vnode.type : undefined, "div");
 
   const stackChildren = (vnode as { children: unknown[] }).children;
   const grid = stackChildren[1] as { type: unknown; children: unknown[] };
@@ -187,7 +187,7 @@ test("安全 Vue UI IR accepts the minimum union and renders allowlisted element
 test("安全 Vue UI IR denies unknown slots and function RPC parameters", () => {
   const ir = parseUiIR(documentWith({ type: "slot", name: "secret", children: [] }));
   const vnode = renderUiIR(ir, { pluginId: "example.plugin", allowedSlots: [] });
-  assert.equal(vnode && typeof vnode === "object" ? vnode.type : undefined, Comment);
+  assert.equal(isVNode(vnode) ? vnode.type : undefined, Comment);
 
   assert.throws(
     () => createUiIrActionRequest(

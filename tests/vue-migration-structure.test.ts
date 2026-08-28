@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const sourceRoot = resolve(repositoryRoot, "src");
 
-function walkFiles(root) {
+function walkFiles(root: string): string[] {
   if (!existsSync(root)) return [];
-  const files = [];
+  const files: string[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const absolutePath = join(root, entry.name);
     if (entry.isDirectory()) files.push(...walkFiles(absolutePath));
@@ -18,14 +18,14 @@ function walkFiles(root) {
   return files;
 }
 
-const sourceFiles = () => walkFiles(sourceRoot);
-const sourceRelativePath = (file) => relative(repositoryRoot, file).replaceAll("\\", "/");
+const sourceFiles = (): string[] => walkFiles(sourceRoot);
+const sourceRelativePath = (file: string): string => relative(repositoryRoot, file).replaceAll("\\", "/");
 
-function findByCandidates(candidates) {
+function findByCandidates(candidates: readonly string[]): string | undefined {
   return candidates.find((candidate) => existsSync(resolve(repositoryRoot, candidate)));
 }
 
-function findVueFile(names, requiredPathPart) {
+function findVueFile(names: readonly string[], requiredPathPart?: string): string | undefined {
   const normalizedNames = new Set(names.map((name) => name.toLowerCase()));
   return sourceFiles().find((file) => {
     const relativePath = sourceRelativePath(file).toLowerCase();
@@ -37,13 +37,13 @@ function findVueFile(names, requiredPathPart) {
 }
 
 test("Vue/Vite entry and runtime adapters exist", () => {
-  const missing = [];
+  const missing: string[] = [];
   if (!findByCandidates(["src/main.ts"])) missing.push("src/main.ts");
   if (!findByCandidates(["src/App.vue"])) missing.push("src/App.vue");
   if (!findByCandidates(["src/vue/runtime", "src/runtime"])) {
     missing.push("src/vue/runtime/ (or src/runtime/)");
   }
-  for (const [label, candidates] of [
+  const runtimeAdapters: ReadonlyArray<readonly [string, readonly string[]]> = [
     ["i18n runtime adapter", ["src/vue/runtime/i18n.ts", "src/runtime/i18n.ts"]],
     [
       "plugin host runtime adapter",
@@ -53,15 +53,16 @@ test("Vue/Vite entry and runtime adapters exist", () => {
       "Tauri platform runtime adapter",
       ["src/vue/runtime/tauri-client.ts", "src/runtime/tauri-client.ts"],
     ],
-  ]) {
+  ];
+  for (const [label, candidates] of runtimeAdapters) {
     if (!findByCandidates(candidates)) missing.push(`${label}: ${candidates.join(" or ")}`);
   }
   assert.deepEqual(missing, [], `Missing Vue runtime structure:\n${missing.map((item) => `- ${item}`).join("\n")}`);
 });
 
 test("workspace composables, canvas, workspace shell, and panels exist", () => {
-  const missing = [];
-  for (const [label, names, pathPart] of [
+  const missing: string[] = [];
+  const requiredVueFiles: ReadonlyArray<readonly [string, readonly string[], string]> = [
     ["workspace project composable", ["use-workspace-project.ts", "useWorkspaceProject.ts"], "composable"],
     ["canvas diff composable", ["use-canvas-diff.ts", "useCanvasDiff.ts"], "composable"],
     ["trackpad composable", ["use-trackpad-pinch.ts", "useTrackpadPinch.ts"], "composable"],
@@ -74,7 +75,8 @@ test("workspace composables, canvas, workspace shell, and panels exist", () => {
     ["plugin contribution slot", ["plugin-contribution-slot.vue", "PluginContributionSlot.vue"], ""],
     ["diff panel", ["diff-panel.vue", "DiffPanel.vue"], ""],
     ["plugin store dialog", ["plugin-store-dialog.vue", "PluginStoreDialog.vue"], ""],
-  ]) {
+  ];
+  for (const [label, names, pathPart] of requiredVueFiles) {
     if (!findVueFile(names, pathPart)) missing.push(`${label}: ${names.join(" or ")}`);
   }
   assert.deepEqual(
